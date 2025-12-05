@@ -4,14 +4,7 @@
  * 提供 Agent 接口的基础实现，处理通用字段、生命周期钩子与日志上下文
  */
 
-import type {
-  Agent,
-  AgentType,
-  AgentConfig,
-  Task,
-  TaskResult,
-  TraceData,
-} from '../types';
+import type { Agent, AgentType, AgentConfig, Task, TaskResult, TraceData } from '../types';
 
 // ============================================================================
 // 类型定义
@@ -89,8 +82,9 @@ function createTraceData(operation: string, agentId: string): TraceData {
  *     super(id, 'orchestrator', config);
  *   }
  *
- *   protected async executeTask(task: Task): Promise<TaskResult> {
+ *   protected async executeTask(task: Task, signal: AbortSignal): Promise<TaskResult> {
  *     // 实现具体的任务执行逻辑
+ *     // 在长时间操作中检查 signal.aborted
  *   }
  * }
  * ```
@@ -108,6 +102,9 @@ export abstract class BaseAgent implements Agent {
 
   /** 生命周期钩子 */
   protected hooks: AgentLifecycleHooks = {};
+
+  /** 中断控制器 */
+  private abortController: AbortController | null = null;
 
   constructor(id: string, type: AgentType, config: AgentConfig) {
     this.id = id;
@@ -134,6 +131,7 @@ export abstract class BaseAgent implements Agent {
     // 更新状态
     this.state = 'running';
     this.currentTask = task;
+    this.abortController = new AbortController();
 
     const startTime = Date.now();
     const trace = createTraceData(`agent.${this.type}.run`, this.id);
@@ -143,19 +141,27 @@ export abstract class BaseAgent implements Agent {
       await this.hooks.onBeforeRun?.(task);
 
       // 执行任务（由子类实现）
-      const result = await this.executeTask(task);
+      const result = await this.executeTask(task, this.abortController.signal);
 
-      // 更新追踪数据
+      // 更新追踪数据 (优先保留子类的 trace/metrics)
       const endTime = Date.now();
+
+      // 合并 Trace - 优先保留子类的值
       result.trace = {
-        ...trace,
-        duration: endTime - startTime,
+        traceId: result.trace?.traceId ?? task.context?.traceId ?? trace.traceId,
+        spanId: result.trace?.spanId ?? trace.spanId,
+        operation: result.trace?.operation ?? trace.operation,
+        attributes: { ...trace.attributes, ...result.trace?.attributes },
+        events: result.trace?.events ?? trace.events,
+        duration: result.trace?.duration ?? endTime - startTime,
       };
+
+      // 合并 Metrics - 优先保留子类的值
       result.metrics = {
         ...result.metrics,
-        startTime,
-        endTime,
-        duration: endTime - startTime,
+        startTime: result.metrics?.startTime ?? startTime,
+        endTime: result.metrics?.endTime ?? endTime,
+        duration: result.metrics?.duration ?? endTime - startTime,
       };
 
       // 调用后置钩子
@@ -195,6 +201,7 @@ export abstract class BaseAgent implements Agent {
       // 重置状态
       this.state = 'idle';
       this.currentTask = null;
+      this.abortController = null;
     }
   }
 
@@ -208,6 +215,9 @@ export abstract class BaseAgent implements Agent {
 
     this.state = 'stopping';
 
+    // 触发中断信号
+    this.abortController?.abort();
+
     try {
       // 调用停止钩子
       await this.hooks.onStop?.();
@@ -217,6 +227,7 @@ export abstract class BaseAgent implements Agent {
     } finally {
       this.state = 'stopped';
       this.currentTask = null;
+      this.abortController = null;
     }
   }
 
@@ -257,9 +268,10 @@ export abstract class BaseAgent implements Agent {
   /**
    * 执行任务的具体逻辑
    * @param task - 要执行的任务
+   * @param signal - 中断信号，子类应在长时间操作中检查 signal.aborted
    * @returns 任务结果
    */
-  protected abstract executeTask(task: Task): Promise<TaskResult>;
+  protected abstract executeTask(task: Task, signal: AbortSignal): Promise<TaskResult>;
 
   // ==========================================================================
   // 可选的生命周期方法（子类可以覆盖）
@@ -273,4 +285,3 @@ export abstract class BaseAgent implements Agent {
     // 默认不做任何事情
   }
 }
-

@@ -169,8 +169,8 @@ describe('createAgent', () => {
     defaultRegistry.clear();
   });
 
-  it('应创建 Stub Agent（默认行为）', () => {
-    const agent = createAgent('orchestrator');
+  it('应创建 Stub Agent（显式启用 stub）', () => {
+    const agent = createAgent('orchestrator', { useStub: true });
 
     expect(agent).toBeInstanceOf(StubAgent);
     expect(agent.type).toBe('orchestrator');
@@ -178,7 +178,7 @@ describe('createAgent', () => {
   });
 
   it('应使用自定义 ID', () => {
-    const agent = createAgent('worker', { id: 'custom-id' });
+    const agent = createAgent('worker', { id: 'custom-id', useStub: true });
 
     expect(agent.id).toBe('custom-id');
   });
@@ -189,7 +189,7 @@ describe('createAgent', () => {
       { loadFromEnvironment: false }
     );
 
-    const agent = createAgent('worker', { config: customConfig });
+    const agent = createAgent('worker', { config: customConfig, useStub: true });
 
     expect(agent.config.model).toBe('custom-model');
   });
@@ -220,15 +220,15 @@ describe('createSandbox', () => {
     defaultRegistry.clear();
   });
 
-  it('应创建 Stub Sandbox（默认行为）', () => {
-    const sandbox = createSandbox();
+  it('应创建 Stub Sandbox（显式启用 stub）', () => {
+    const sandbox = createSandbox({ useStub: true });
 
     expect(sandbox).toBeInstanceOf(StubSandbox);
     expect(sandbox.status).toBe('running');
   });
 
   it('应使用自定义 ID', () => {
-    const sandbox = createSandbox({ id: 'custom-sandbox' });
+    const sandbox = createSandbox({ id: 'custom-sandbox', useStub: true });
 
     expect(sandbox.id).toBe('custom-sandbox');
   });
@@ -240,14 +240,14 @@ describe('createContextManager', () => {
     defaultRegistry.clear();
   });
 
-  it('应创建 Stub ContextManager（默认行为）', () => {
-    const contextManager = createContextManager();
+  it('应创建 Stub ContextManager（显式启用 stub）', () => {
+    const contextManager = createContextManager({ useStub: true });
 
     expect(contextManager).toBeInstanceOf(StubContextManager);
   });
 
   it('应使用自定义会话 ID', () => {
-    const contextManager = createContextManager({ sessionId: 'session-123' });
+    const contextManager = createContextManager({ sessionId: 'session-123', useStub: true });
     const context = contextManager.getContext();
 
     expect(context.sessionId).toBe('session-123');
@@ -261,25 +261,25 @@ describe('便捷创建函数', () => {
   });
 
   it('createOrchestrator 应创建 orchestrator 类型', () => {
-    const agent = createOrchestrator();
+    const agent = createOrchestrator({ useStub: true });
     expect(agent.type).toBe('orchestrator');
     expect(agent.config.model).toBe('claude-opus-4');
   });
 
   it('createWorker 应创建 worker 类型', () => {
-    const agent = createWorker();
+    const agent = createWorker({ useStub: true });
     expect(agent.type).toBe('worker');
     expect(agent.config.model).toBe('claude-sonnet-4');
   });
 
   it('createPlanner 应创建 planner 类型', () => {
-    const agent = createPlanner();
+    const agent = createPlanner({ useStub: true });
     expect(agent.type).toBe('planner');
     expect(agent.config.model).toBe('claude-haiku-3.5');
   });
 
   it('createMemoryAgent 应创建 memory 类型', () => {
-    const agent = createMemoryAgent();
+    const agent = createMemoryAgent({ useStub: true });
     expect(agent.type).toBe('memory');
   });
 });
@@ -487,7 +487,7 @@ describe('全局配置', () => {
 
     setGlobalConfig(customConfig);
 
-    const agent = createOrchestrator();
+    const agent = createOrchestrator({ useStub: true });
     expect(agent.config.model).toBe('global-model');
   });
 
@@ -500,7 +500,7 @@ describe('全局配置', () => {
     setGlobalConfig(customConfig);
     resetGlobalConfig();
 
-    const agent = createOrchestrator();
+    const agent = createOrchestrator({ useStub: true });
     expect(agent.config.model).toBe('claude-opus-4');
   });
 });

@@ -23,7 +23,11 @@ export {
 export {
   BaseContextManager,
   SimpleContextManager,
+  defaultTokenEstimator,
   type ContextManagerHooks,
   type ContextManagerLogContext,
+  type TokenEstimator,
+  type ContextManagerOptions,
 } from './base-context-manager';
+
 

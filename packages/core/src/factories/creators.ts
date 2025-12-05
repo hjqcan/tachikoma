@@ -40,7 +40,7 @@ export interface CreateAgentOptions extends AgentFactoryOptions {
   config?: Config;
   /** 使用的注册表（可选，默认使用全局注册表） */
   registry?: FactoryRegistry;
-  /** 是否在未找到注册实现时使用 stub（默认 true） */
+  /** 是否在未找到注册实现时使用 stub（生产环境默认 false，可通过 TACHIKOMA_USE_STUBS 环境变量控制） */
   useStub?: boolean;
 }
 
@@ -54,7 +54,7 @@ export interface CreateSandboxOptions {
   config?: Config;
   /** 使用的注册表（可选，默认使用全局注册表） */
   registry?: FactoryRegistry;
-  /** 是否在未找到注册实现时使用 stub（默认 true） */
+  /** 是否在未找到注册实现时使用 stub（生产环境默认 false，可通过 TACHIKOMA_USE_STUBS 环境变量控制） */
   useStub?: boolean;
 }
 
@@ -68,7 +68,7 @@ export interface CreateContextManagerOptions {
   config?: Config;
   /** 使用的注册表（可选，默认使用全局注册表） */
   registry?: FactoryRegistry;
-  /** 是否在未找到注册实现时使用 stub（默认 true） */
+  /** 是否在未找到注册实现时使用 stub（生产环境默认 false，可通过 TACHIKOMA_USE_STUBS 环境变量控制） */
   useStub?: boolean;
 }
 
@@ -82,6 +82,15 @@ export interface CreateContextManagerOptions {
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
+
+/**
+ * 获取默认的 useStub 值
+ * 默认为 false（生产环境安全），可通过 TACHIKOMA_USE_STUBS=true 环境变量启用
+ */
+function getDefaultUseStub(): boolean {
+  return process.env.TACHIKOMA_USE_STUBS === 'true';
+}
+
 
 /**
  * 将 ModelConfig 转换为 AgentConfig
@@ -172,7 +181,7 @@ export function createAgent(
     id = generateId(type),
     config = getGlobalConfig(),
     registry = defaultRegistry,
-    useStub = true,
+    useStub = getDefaultUseStub(),
     ...factoryOptions
   } = options;
 
@@ -218,7 +227,7 @@ export function createSandbox(options: CreateSandboxOptions = {}): Sandbox {
     id = generateId('sandbox'),
     config = getGlobalConfig(),
     registry = defaultRegistry,
-    useStub = true,
+    useStub = getDefaultUseStub(),
   } = options;
 
   // 尝试从注册表获取工厂
@@ -261,7 +270,7 @@ export function createContextManager(
     sessionId = generateId('session'),
     config = getGlobalConfig(),
     registry = defaultRegistry,
-    useStub = true,
+    useStub = getDefaultUseStub(),
   } = options;
 
   // 尝试从注册表获取工厂

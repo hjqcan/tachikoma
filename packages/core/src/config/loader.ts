@@ -91,6 +91,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * 深度克隆对象（兼容性实现）
+ * 在支持 structuredClone 的环境中使用它，否则回退到 JSON 方式
+ */
+function deepClone<T>(obj: T): T {
+  if (typeof globalThis.structuredClone === 'function') {
+    return globalThis.structuredClone(obj);
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
+
+
+/**
  * 根据路径设置对象的嵌套属性
  */
 function setNestedValue(
@@ -245,9 +257,19 @@ function validateContextThresholds(config: ContextThresholds): void {
       'context.compactionTrigger should not exceed rotThreshold'
     );
   }
+  if (config.rotThreshold > config.hardLimit) {
+    throw new ConfigValidationError(
+      'context.rotThreshold should not exceed hardLimit'
+    );
+  }
   if (config.summarizationTrigger > config.hardLimit) {
     throw new ConfigValidationError(
       'context.summarizationTrigger should not exceed hardLimit'
+    );
+  }
+  if (config.summarizationTrigger < config.compactionTrigger) {
+    throw new ConfigValidationError(
+      'context.summarizationTrigger should be >= compactionTrigger'
     );
   }
 }
@@ -373,8 +395,8 @@ export function loadConfig(
     skipValidation = false,
   } = options;
 
-  // 从默认配置开始
-  let config: Config = structuredClone(DEFAULT_CONFIG);
+  // 从默认配置开始 (使用兼容性深拷贝)
+  let config: Config = deepClone(DEFAULT_CONFIG);
 
   // 应用环境变量覆盖
   if (loadFromEnvironment) {

@@ -51,6 +51,19 @@ export interface ContextManagerLogContext {
   [key: string]: unknown;
 }
 
+/**
+ * Token 估算函数类型
+ */
+export type TokenEstimator = (text: string) => number;
+
+/**
+ * ContextManager 选项
+ */
+export interface ContextManagerOptions {
+  /** Token 估算函数（可选，默认使用 4字符/token 估算） */
+  tokenEstimator?: TokenEstimator;
+}
+
 // ============================================================================
 // 工具函数
 // ============================================================================
@@ -63,13 +76,10 @@ function generateId(prefix: string): string {
 }
 
 /**
- * 估算文本的 token 数量
- * 简单实现，实际应使用 tiktoken 等库
+ * 默认 Token 估算实现
+ * 粗略估算：平均每 4 个字符一个 token
  */
-function estimateTokens(text: string): number {
-  // 粗略估算：平均每 4 个字符一个 token
-  return Math.ceil(text.length / 4);
-}
+export const defaultTokenEstimator: TokenEstimator = (text: string) => Math.ceil(text.length / 4);
 
 // ============================================================================
 // 抽象基类
@@ -82,19 +92,13 @@ function estimateTokens(text: string): number {
  *
  * @example
  * ```ts
- * class RedisContextManager extends BaseContextManager {
- *   constructor(sessionId: string, thresholds: ContextThresholds) {
- *     super(sessionId, thresholds);
- *   }
- *
- *   protected async doCompact(strategy: CompactionStrategy): Promise<number> {
- *     // Redis 特定的压缩逻辑
- *   }
- *
- *   protected async doSummarize(schema: SummarySchema): Promise<ConversationSummary> {
- *     // 使用 LLM 生成摘要
- *   }
- * }
+ * // 使用自定义 token 估算器
+ * import { encoding_for_model } from 'tiktoken';
+ * 
+ * const enc = encoding_for_model('gpt-4');
+ * const manager = new SimpleContextManager('session-1', thresholds, {
+ *   tokenEstimator: (text) => enc.encode(text).length,
+ * });
  * ```
  */
 export abstract class BaseContextManager implements ContextManager {
@@ -103,6 +107,9 @@ export abstract class BaseContextManager implements ContextManager {
 
   /** 阈值配置 */
   protected readonly thresholds: ContextThresholds;
+
+  /** Token 估算函数 */
+  protected readonly tokenEstimator: TokenEstimator;
 
   /** 消息列表 */
   protected messages: Message[] = [];
@@ -119,9 +126,14 @@ export abstract class BaseContextManager implements ContextManager {
   /** 生命周期钩子 */
   protected hooks: ContextManagerHooks = {};
 
-  constructor(sessionId: string, thresholds: ContextThresholds) {
+  constructor(
+    sessionId: string,
+    thresholds: ContextThresholds,
+    options: ContextManagerOptions = {}
+  ) {
     this.sessionId = sessionId;
     this.thresholds = thresholds;
+    this.tokenEstimator = options.tokenEstimator ?? defaultTokenEstimator;
   }
 
   // ==========================================================================
@@ -162,7 +174,7 @@ export abstract class BaseContextManager implements ContextManager {
     this.messages.push(msg);
 
     // 更新 token 计数
-    const messageTokens = estimateTokens(msg.content);
+    const messageTokens = this.tokenEstimator(msg.content);
     this.tokenCount += messageTokens;
 
     // 如果是工具消息，记录工具调用
@@ -187,7 +199,7 @@ export abstract class BaseContextManager implements ContextManager {
 
     // 重新计算 token 数量
     this.tokenCount = this.messages.reduce(
-      (sum, msg) => sum + estimateTokens(msg.content),
+      (sum, msg) => sum + this.tokenEstimator(msg.content),
       0
     );
 
@@ -312,8 +324,12 @@ export abstract class BaseContextManager implements ContextManager {
  * 提供基础的压缩和摘要功能
  */
 export class SimpleContextManager extends BaseContextManager {
-  constructor(sessionId: string, thresholds: ContextThresholds) {
-    super(sessionId, thresholds);
+  constructor(
+    sessionId: string,
+    thresholds: ContextThresholds,
+    options?: ContextManagerOptions
+  ) {
+    super(sessionId, thresholds, options);
   }
 
   /**
@@ -345,9 +361,8 @@ export class SimpleContextManager extends BaseContextManager {
   protected doSummarize(schema: SummarySchema): ConversationSummary {
     // 提取用户消息作为目标
     const userMessages = this.messages.filter(m => m.role === 'user');
-    const firstUserMessage = userMessages[0];
-    const userGoal = schema.includeUserGoal && firstUserMessage
-      ? firstUserMessage.content.slice(0, 200)
+    const userGoal = schema.includeUserGoal && userMessages.length > 0
+      ? userMessages[0]?.content.slice(0, 200) ?? ''
       : '';
 
     // 获取最后一条消息作为停止点
@@ -366,4 +381,3 @@ export class SimpleContextManager extends BaseContextManager {
     };
   }
 }
-

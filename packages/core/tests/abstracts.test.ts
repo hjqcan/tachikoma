@@ -43,7 +43,7 @@ class TestAgent extends BaseAgent {
     this.executionDelay = delay;
   }
 
-  protected async executeTask(task: Task): Promise<TaskResult> {
+  protected async executeTask(task: Task, _signal: AbortSignal): Promise<TaskResult> {
     if (this.executionDelay > 0) {
       await new Promise(resolve => setTimeout(resolve, this.executionDelay));
     }
