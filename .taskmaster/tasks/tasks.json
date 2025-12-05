@@ -339,59 +339,71 @@
           {
             "id": 1,
             "title": "定义沙盒抽象与配置契约",
-            "description": "梳理 SandboxConfig/SandboxResources 需求并补充核心类型，设计 Sandbox 接口签名（init/execute/runCommand/readFile/writeFile/dispose），规划 Docker/Firecracker/Bun 运行时枚举与网络 allowlist 表达方式。",
+            "description": "梳理 SandboxConfig/SandboxResources 类型，设计 Sandbox 接口签名",
             "dependencies": [],
-            "details": "在 packages/core/src 下新增 sandbox 类型文件或扩展 types.ts，描述资源限额、超时、网络模式、预装工具列表以及 artifacts/metrics 输出结构，并预留错误/重试策略字段。",
+            "details": "在 packages/core/src/sandbox 新增类型文件，声明 Sandbox 接口（init/execute/runCommand/readFile/writeFile/dispose）、SandboxConfig（runtime/timeout/resources/network）、SandboxResources（cpu/memory/storage）；定义运行时枚举（docker/firecracker/local）与网络模式（none/restricted/full）",
             "status": "pending",
-            "testStrategy": "类型层面添加 Vitest 类型快照或接口编译检查确保导出一致。",
+            "testStrategy": "类型检查通过；配置快照测试验证默认值",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现沙盒驱动与生命周期管理",
-            "description": "基于定义的接口创建 SandboxManager 和具体 Docker/Firecracker 适配器，负责启动/复用/销毁沙盒实例，配置 Bun runtime、cpu/mem/storage/timeout 以及 restricted 网络 allowlist。",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/sandbox 目录实现驱动，封装容器/VM 拉起、命名、工作目录挂载、环境变量注入、命令执行、文件读写、日志收集、资源使用统计及超时终止；缺省可提供本地 stub 便于测试。",
+            "title": "实现 Docker 沙盒驱动",
+            "description": "基于 Docker API 实现沙盒生命周期管理",
+            "dependencies": [1],
+            "details": "在 packages/core/src/sandbox/drivers/docker.ts 实现 DockerSandbox 类；封装容器创建（镜像、工作目录挂载、环境变量）、命令执行（exec）、文件读写（cp）、资源限制（--cpus/--memory）、网络配置（--network）、超时终止；提供连接池复用机制",
             "status": "pending",
-            "testStrategy": "使用 Vitest mock 掉进程调用，断言创建/执行/销毁序列及资源/网络参数传递正确，超时触发能终止。",
+            "testStrategy": "单元测试：mock Docker API 验证参数传递；集成测试：本地 Docker 运行简单命令",
             "parentId": "undefined"
           },
           {
             "id": 3,
-            "title": "开发 Worker 执行器与任务处理流程",
-            "description": "实现 Worker 类接收子任务/工具列表，调度 sandbox.execute 或 runCommand/writeFile/readFile，处理工具初始化、上下文注入、错误捕获与自动重试。",
-            "dependencies": [
-              2
-            ],
-            "details": "在 packages/core/src/agents 新增 worker.ts，利用 Task/DelegationConfig/RetryPolicy，封装重试退避、输出 artifacts/metrics、返回 TaskResult；确保与 SandboxManager 解耦并暴露事件钩子。",
+            "title": "实现本地 Stub 沙盒驱动",
+            "description": "提供无 Docker 依赖的本地沙盒实现，用于开发和测试",
+            "dependencies": [1],
+            "details": "在 packages/core/src/sandbox/drivers/local.ts 实现 LocalSandbox 类；直接使用 Bun.spawn 执行命令，限制工作目录，提供基础超时控制；标记为仅开发/测试使用，生产环境应使用 Docker",
             "status": "pending",
-            "testStrategy": "编写单元测试 mock sandbox 驱动，验证任务调用参数、重试次数、错误传播与 artifacts 聚合。",
+            "testStrategy": "单元测试：验证命令执行、文件读写、超时终止",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "接入执行日志与可观测性管线",
-            "description": "为 sandbox 与 Worker 执行链路添加结构化日志、错误码、span/tag 以及资源消耗 metrics，生成 artifacts 元数据以便 AgentOps 汇聚。",
-            "dependencies": [
-              3
-            ],
-            "details": "在 core 中新增轻量 logger/metrics 封装或引用 packages/agentops 占位，记录 taskId/agentId/sandboxId/latency/stdout/stderr，支持日志缓冲与失败快照输出。",
+            "title": "实现 Worker 执行器核心流程",
+            "description": "开发 Worker 类，接收子任务并在沙盒中执行",
+            "dependencies": [2, 3],
+            "details": "在 packages/core/src/agents/worker.ts 实现 Worker 类，继承 BaseAgent；run() 方法初始化沙盒、加载工具列表、按任务指令执行操作；实现重试退避（RetryPolicy）、错误捕获、artifacts/metrics 收集；暴露生命周期钩子",
             "status": "pending",
-            "testStrategy": "通过单元测试验证日志字段完整性和指标计数更新，模拟失败路径确保错误信息被捕获并包含上下文。",
+            "testStrategy": "单元测试：mock 沙盒验证任务执行流程、重试逻辑、错误传播",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "导出接口并补充文档与集成验证",
-            "description": "将 sandbox 与 Worker 模块对外导出，编写 README/PRD 对应段落的使用示例与 API 说明，提供最小集成样例运行路径。",
-            "dependencies": [
-              4
-            ],
-            "details": "更新 packages/core/src/index.ts 导出，必要时在 sandbox/ 或 packages/core 添加示例脚本或 docs，说明如何配置沙盒资源与执行命令；保证与现有包结构一致。",
+            "title": "实现 Worker 与工具层集成",
+            "description": "Worker 调用 Task 6 工具注册表执行原子操作",
+            "dependencies": [4],
+            "details": "在 Worker 执行流程中集成工具调用层；根据任务指令解析工具名称，从注册表获取工具定义，校验权限后在沙盒中执行；支持工具链串联（前一个工具输出作为下一个输入）；记录每个工具调用的 metrics",
             "status": "pending",
-            "testStrategy": "编写集成测试用 stub sandbox 跑简单 TS 代码，确认导出的 API 可被导入调用；文档校验无构建错误。",
+            "testStrategy": "集成测试：验证工具链执行、权限拒绝、输出传递",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "实现 Worker 与 Orchestrator 通信协议",
+            "description": "定义 Worker 接收任务和返回结果的接口契约",
+            "dependencies": [4],
+            "details": "在 packages/core/src/orchestrator/protocol.ts 定义 WorkerMessage 类型（assign/progress/complete/error）；Worker 实现消息处理器，支持任务接收、进度上报、结果返回；与 Task 4 的 WorkerPool 对接",
+            "status": "pending",
+            "testStrategy": "契约测试：验证消息格式与 Task 4 WorkerPool 兼容",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "接入可观测性与集成验证",
+            "description": "添加日志/metrics/tracing，完成导出与文档",
+            "dependencies": [5, 6],
+            "details": "为 Sandbox 和 Worker 执行链路添加结构化日志、span/tag、资源消耗 metrics；更新 packages/core/src/index.ts 导出；编写 README 示例与使用说明；运行完整集成测试",
+            "status": "pending",
+            "testStrategy": "集成测试：端到端验证 Worker 执行任务、工具调用、结果返回；日志字段完整",
             "parentId": "undefined"
           }
         ]
@@ -408,63 +420,82 @@
         "subtasks": [
           {
             "id": 1,
-            "title": "梳理核心类型与工具模块结构",
-            "description": "审视当前packages/core类型与导出，确定工具与沙盒目录设计",
+            "title": "定义工具抽象与统一 Schema 规范",
+            "description": "设计 Tool 接口、输入输出 JSONSchema 规范与权限模型",
             "dependencies": [],
-            "details": "对packages/core/src/index.ts与types.ts的JSONSchema、ExecutionContext、SandboxConfig等类型进行对齐，制定tools与sandbox子目录的文件划分、命名约定和导出入口，明确每个工具需要的输入输出Schema及权限字段基线",
+            "details": "在 packages/core/src/tools/types.ts 定义 Tool 接口（name/description/inputSchema/outputSchema/permissions/execute）、Permission 枚举（fs/network/shell）、ToolResult 类型；设计统一的 JSONSchema 格式规范，确保与 MCP 兼容",
             "status": "pending",
-            "testStrategy": "评审类型定义并确保现有代码typecheck通过",
+            "testStrategy": "类型检查通过；Schema 格式符合 JSON Schema Draft 7",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现Layer1原子工具函数与统一Schema",
-            "description": "在核心包内补齐read/write/glob/grep/shell等原子工具实现",
-            "dependencies": [
-              1
-            ],
-            "details": "在packages/core/src/tools下新增各原子工具文件，覆盖read_file、write_file、glob_search、grep_search、execute_shell、browser_navigate等，使用统一的输入/输出JSONSchema描述与类型约束，并确保遵循工作目录与环境变量来源的ExecutionContext",
+            "title": "实现文件系统工具集",
+            "description": "开发 read_file、write_file、glob_search、grep_search 工具",
+            "dependencies": [1],
+            "details": "在 packages/core/src/tools/fs/ 目录实现四个工具：read_file（读取文件内容，支持行范围）、write_file（创建/覆盖/追加文件）、glob_search（模式匹配搜索）、grep_search（内容搜索）；每个工具定义 inputSchema/outputSchema，声明 fs 权限",
             "status": "pending",
-            "testStrategy": "为每个工具编写成功与异常路径的单元测试，校验Schema校验逻辑",
+            "testStrategy": "单元测试：成功读写、文件不存在、权限不足路径",
             "parentId": "undefined"
           },
           {
             "id": 3,
-            "title": "构建Schema约束的工具注册表与权限校验",
-            "description": "实现按名称解析工具并校验network/fs/shell权限",
-            "dependencies": [
-              2
-            ],
-            "details": "新增工具注册表模块，支持注册/查询工具定义，基于工具声明的权限与传入ExecutionContext进行校验，拒绝未授权的network/fs/shell访问，并提供标准错误返回；更新core导出入口供外部使用",
+            "title": "实现命令执行工具",
+            "description": "开发 execute_shell 工具，在沙盒中执行命令",
+            "dependencies": [1],
+            "details": "在 packages/core/src/tools/shell/execute.ts 实现 execute_shell 工具；接收命令字符串和工作目录，通过沙盒 runCommand 执行；捕获 stdout/stderr/exitCode/duration；声明 shell 权限；支持超时控制",
             "status": "pending",
-            "testStrategy": "编写注册表单元测试，覆盖注册、重复注册、权限拒绝与成功解析场景",
+            "testStrategy": "单元测试：成功执行、非零退出码、超时终止、禁止命令",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "实现Layer2沙盒shell工具封装",
-            "description": "封装在沙盒中执行命令的工具并捕获stdout/stderr/exitCode",
-            "dependencies": [
-              2,
-              3
-            ],
-            "details": "在packages/core/src/sandbox或tools层实现沙盒shell适配器，接受命令与执行选项，限制在sandbox/workDir内运行，捕获stdout、stderr、exitCode与duration，复用注册表权限校验并对超时或非零退出码返回结构化错误",
+            "title": "实现浏览器工具（可选）",
+            "description": "开发 browser_navigate 工具，支持网页交互",
+            "dependencies": [1],
+            "details": "在 packages/core/src/tools/browser/ 实现 browser_navigate 工具；集成 Puppeteer/Playwright（可选依赖）；支持导航、截图、元素点击、表单填写；声明 network 权限；标记为可选功能，缺失依赖时优雅降级",
             "status": "pending",
-            "testStrategy": "添加针对沙盒shell的单元/轻量集成测试，模拟成功、超时、非零退出码与禁止路径访问",
+            "testStrategy": "集成测试：mock 浏览器验证操作序列；依赖缺失时返回 unsupported",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "完善导出、文档与集成链路测试",
-            "description": "将新工具与注册表纳入入口导出并补充文档和集成测试",
-            "dependencies": [
-              2,
-              3,
-              4
-            ],
-            "details": "更新packages/core/src/index.ts与README，暴露tools与sandbox相关入口；补充集成级测试验证工具链在worker/任务上下文中串联执行并能拒绝非法命令或路径，确保bun test/typecheck通过",
+            "title": "构建工具注册表与权限校验",
+            "description": "实现工具注册、查询与权限拦截",
+            "dependencies": [2, 3],
+            "details": "在 packages/core/src/tools/registry.ts 实现 ToolRegistry 类；支持注册工具定义、按名称查询、列出所有工具；execute 前校验 ExecutionContext 中的权限与工具声明匹配；拒绝未授权调用并返回标准错误",
             "status": "pending",
-            "testStrategy": "运行bun test与typecheck，编写集成用例验证串联调用与安全拒绝路径",
+            "testStrategy": "单元测试：注册/查询、重复注册、权限拒绝、成功执行",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "实现 Layer2 沙盒工具封装",
+            "description": "将原子工具包装为沙盒内执行版本",
+            "dependencies": [3, 5],
+            "details": "在 packages/core/src/tools/sandbox-wrapper.ts 实现 SandboxToolWrapper；将 Layer1 工具的执行委托给沙盒；确保工作目录隔离、环境变量注入、资源限制生效；包装 stdout/stderr 为标准 ToolResult",
+            "status": "pending",
+            "testStrategy": "集成测试：沙盒内执行命令、文件操作，验证隔离与资源限制",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "实现工具链串联执行",
+            "description": "支持多工具顺序执行与输出传递",
+            "dependencies": [5, 6],
+            "details": "在 packages/core/src/tools/chain.ts 实现 ToolChain 类；接收工具调用序列，前一个工具输出作为下一个输入（通过 context 或参数映射）；收集每步 metrics；任一工具失败时中断并返回部分结果",
+            "status": "pending",
+            "testStrategy": "单元测试：串联执行、中间失败、输出传递",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "完善导出与集成验证",
+            "description": "更新入口导出，编写文档与集成测试",
+            "dependencies": [5, 6, 7],
+            "details": "更新 packages/core/src/index.ts 导出工具模块；与 Task 5 Worker 集成验证；编写 README 示例展示注册自定义工具与执行链；确保 bun test 通过",
+            "status": "pending",
+            "testStrategy": "集成测试：Worker 调用工具链端到端；安全拒绝路径验证",
             "parentId": "undefined"
           }
         ]
@@ -627,61 +658,81 @@
           {
             "id": 1,
             "title": "定义记忆与 Skills 接口类型",
-            "description": "在核心包补充记忆与技能渐进加载所需的接口与模型定义，并更新导出入口。",
+            "description": "设计 MemoryProvider、MemoryEntry、SkillMetadata 等核心类型",
             "dependencies": [],
-            "details": "于 `packages/core/src/types.ts` 增加 MemoryProvider、MemoryEntry、MemoryScope（会话/声明式/过程式/集体反馈）、SkillMetadata/Instruction/Resource 分层结构，以及 saveMemory/retrieve/loadSkillByTrigger API 签名，确保 `index.ts` 导出。",
+            "details": "在 packages/core/src/memory/types.ts 定义 MemoryProvider 接口、MemoryEntry（id/content/embedding/metadata）、MemoryScope 枚举（session/declarative/procedural/collective）；在 packages/core/src/skills/types.ts 定义 SkillMetadata/Instruction/Resource 分层结构与 loadSkillByTrigger API 签名",
             "status": "pending",
-            "testStrategy": "运行 `bun tsc -b` 确认类型通过。",
+            "testStrategy": "类型检查通过；接口符合 PRD 定义",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现存储适配层骨架",
-            "description": "为 Redis 会话缓存、LevelDB 持久化、Qdrant/Chroma 向量检索实现可插拔适配器。",
-            "dependencies": [
-              1
-            ],
-            "details": "在核心新增 memory/providers 目录，分别实现 RedisSessionCache、LevelDBStore、VectorSearchProvider（Qdrant/Chroma 可配置），支持初始化配置、健康检查、基础 CRUD/向量写入检索，并提供空实现或 mock 方便无依赖运行。",
+            "title": "实现 Redis 会话缓存适配器",
+            "description": "开发 Redis 适配器用于会话级记忆缓存",
+            "dependencies": [1],
+            "details": "在 packages/core/src/memory/providers/redis.ts 实现 RedisSessionCache 类；封装连接池、get/set/delete 操作、TTL 管理；支持健康检查与重连；提供配置化 Redis URL/密码",
             "status": "pending",
-            "testStrategy": "使用 Vitest/或 stub 测试验证各适配器接口方法被调用、错误路径优雅降级。",
+            "testStrategy": "单元测试：mock Redis 验证操作序列；集成测试：本地 Redis 读写",
             "parentId": "undefined"
           },
           {
             "id": 3,
-            "title": "构建统一 MemoryService",
-            "description": "编排四类记忆的存取流程，封装 saveMemory 与 retrieve API。",
-            "dependencies": [
-              2
-            ],
-            "details": "在核心实现 MemoryService，接入会话缓存+LevelDB+向量检索，区分 session/声明式/过程式/集体反馈存储策略，支持 topK 检索与去重，缺失后端时降级为内存实现，并暴露配置化注入。",
+            "title": "实现 LevelDB 持久化适配器",
+            "description": "开发 LevelDB 适配器用于声明式/过程式记忆持久化",
+            "dependencies": [1],
+            "details": "在 packages/core/src/memory/providers/leveldb.ts 实现 LevelDBStore 类；封装打开/关闭、put/get/delete/batch 操作；支持按 scope 前缀隔离；处理并发写入与损坏恢复",
             "status": "pending",
-            "testStrategy": "编写单元测试覆盖 save/retrieve 不同 scope、topK 返回顺序、后端失效时的降级路径。",
+            "testStrategy": "单元测试：验证 CRUD 操作、scope 隔离、错误处理",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "开发 Skills 渐进加载器",
-            "description": "按三层模型加载 Skills 目录并基于 trigger 选择性注入上下文。",
-            "dependencies": [
-              1,
-              3
-            ],
-            "details": "在核心新增 skills/loader 模块，扫描 `skills/` 目录读取 metadata，触发时加载 SKILL.md 指令，引用时按需读取资源文件，支持 loadSkillByTrigger(trigger) 返回指令/资源路径，缺失文件时回退提示。",
+            "title": "实现向量检索适配器",
+            "description": "开发 Qdrant/Chroma 适配器用于语义检索",
+            "dependencies": [1],
+            "details": "在 packages/core/src/memory/providers/vector.ts 实现 VectorSearchProvider 类；支持 Qdrant 和 Chroma 两种后端（可配置）；封装 upsert/search/delete 操作；支持 topK 检索与相似度阈值过滤",
             "status": "pending",
-            "testStrategy": "单元测试覆盖 trigger 匹配、分层加载不跨阈值、缺失资源时的 fallback 行为。",
+            "testStrategy": "单元测试：mock 向量数据库验证查询参数；集成测试：本地 Qdrant 插入检索",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "对外 API/路由与导出接线",
-            "description": "将记忆与 Skills 能力暴露为可用 API，并完成工作区导出。",
-            "dependencies": [
-              3,
-              4
-            ],
-            "details": "在 core 导出 MemoryService 与 SkillsLoader 工厂；在 gateway 增加占位路由或 handler 调用 saveMemory/retrieve/loadSkillByTrigger；更新 README/文档简述用法以便 CLI/其他包复用。",
+            "title": "实现内存 Stub 适配器",
+            "description": "提供无外部依赖的内存实现，用于开发和测试",
+            "dependencies": [1],
+            "details": "在 packages/core/src/memory/providers/memory.ts 实现 InMemoryProvider 类；使用 Map 存储数据，简单向量相似度计算（余弦相似度）；作为缺失后端时的降级方案",
             "status": "pending",
-            "testStrategy": "集成测试或契约测试验证路由/接口能调用核心服务，返回结构符合约定；缺失后端依赖时保证响应可降级。",
+            "testStrategy": "单元测试：验证 CRUD 和 topK 检索",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "构建统一 MemoryService",
+            "description": "编排四类记忆的存取流程，封装 saveMemory/retrieve API",
+            "dependencies": [2, 3, 4, 5],
+            "details": "在 packages/core/src/memory/service.ts 实现 MemoryService 类；根据 MemoryScope 路由到对应适配器；session 用 Redis，declarative/procedural 用 LevelDB+向量，collective 用向量检索；支持 topK 去重、后端失效降级",
+            "status": "pending",
+            "testStrategy": "集成测试：验证 save/retrieve 跨 scope、topK 排序、降级逻辑",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "开发 Skills 渐进加载器",
+            "description": "按三层模型加载 Skills 目录并基于 trigger 选择性注入",
+            "dependencies": [1],
+            "details": "在 packages/core/src/skills/loader.ts 实现 SkillsLoader 类；扫描 skills/ 目录读取 metadata.json；loadSkillByTrigger(trigger) 返回匹配的 SKILL.md 指令；按需加载资源文件；缓存已加载技能；缺失文件时返回空指令",
+            "status": "pending",
+            "testStrategy": "单元测试：trigger 匹配、分层加载、缓存命中、缺失资源降级",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "对外 API 导出与集成验证",
+            "description": "更新入口导出，编写文档与集成测试",
+            "dependencies": [6, 7],
+            "details": "更新 packages/core/src/index.ts 导出 MemoryService 与 SkillsLoader；在 gateway 增加占位路由调用 saveMemory/retrieve/loadSkillByTrigger；编写 README 示例；确保 bun test 通过",
+            "status": "pending",
+            "testStrategy": "集成测试：端到端验证记忆存取与技能加载；缺失后端时降级响应",
             "parentId": "undefined"
           }
         ]
@@ -698,63 +749,92 @@
         "subtasks": [
           {
             "id": 1,
-            "title": "搭建 agentops 观测性模块骨架与依赖",
-            "description": "为可观测性套件创建基础目录/导出与依赖，并对齐现有配置类型。",
+            "title": "搭建 agentops 模块骨架与依赖",
+            "description": "创建基础目录结构与依赖配置",
             "dependencies": [],
-            "details": "在 packages/agentops 下新增 tracing/logging/metrics/eval 目录及 index.ts，安装 OpenTelemetry/Prometheus 等依赖，更新 package.json exports；校对 core/src/types.ts 中 AgentOpsConfig 定义，编写默认配置与初始化入口。",
+            "details": "在 packages/agentops 下新增 tracing/logging/metrics/eval 目录及 index.ts；安装 @opentelemetry/sdk-trace-base、@opentelemetry/exporter-trace-otlp-http、prom-client 等依赖；校对 core/src/types.ts 中 AgentOpsConfig 定义；编写默认配置与初始化入口",
             "status": "pending",
-            "testStrategy": "bun typecheck 与最小单元测试确保导出与配置类型匹配",
+            "testStrategy": "bun typecheck 确保导出与配置类型匹配",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现 OTEL 追踪封装",
-            "description": "为 orchestrator/worker/tool/sandbox 调用创建 span 并注入上下文字段。",
-            "dependencies": [
-              1
-            ],
-            "details": "使用 @opentelemetry/sdk-trace-base 与 context APIs 封装 tracer 初始化，定义 createSpan/helpers 统一附加 taskId/agentId/latency/status 等 attributes，提供 middleware/函数包装器供各包调用，并支持 OTLP endpoint/serviceName 配置。",
+            "title": "实现 OpenTelemetry 追踪封装",
+            "description": "为各组件调用创建 span 并注入上下文",
+            "dependencies": [1],
+            "details": "在 packages/agentops/src/tracing/tracer.ts 实现 TracerWrapper 类；封装 tracer 初始化（OTLP exporter）、createSpan/endSpan helpers；统一附加 taskId/agentId/latency/status 等 attributes；提供函数装饰器 @traced() 与中间件",
             "status": "pending",
-            "testStrategy": "mock tracer 验证 span 属性写入与错误时状态标记",
+            "testStrategy": "单元测试：mock tracer 验证 span 属性写入与错误状态标记",
             "parentId": "undefined"
           },
           {
             "id": 3,
             "title": "实现结构化 JSON 日志",
-            "description": "提供带链路 ID 的 JSON 日志工具，支持 debug/info/warn/error。",
-            "dependencies": [
-              2
-            ],
-            "details": "封装 logger 工具，自动注入 traceId/spanId/taskId/agentId，上下文字段合并；支持 Bun stdout 集中输出与可插拔 sink，配置格式与级别遵循 LoggingConfig，提供 gateway/core 示例调用。",
+            "description": "提供带链路 ID 的 JSON 日志工具",
+            "dependencies": [2],
+            "details": "在 packages/agentops/src/logging/logger.ts 实现 Logger 类；自动注入 traceId/spanId/taskId/agentId；支持 debug/info/warn/error 级别；Bun stdout 集中输出；可插拔 sink（文件、远程）；配置遵循 LoggingConfig",
             "status": "pending",
-            "testStrategy": "单元测试验证不同级别输出格式、上下文字段与链路 ID 存在",
+            "testStrategy": "单元测试：验证不同级别输出格式、上下文字段完整",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "实现 Prometheus 指标暴露与更新",
-            "description": "注册核心指标并提供更新 API 及采集端点。",
-            "dependencies": [
-              2,
-              3
-            ],
-            "details": "使用 prom-client 定义 latency 直方图、errorRate 计数器、tokensPerTask 直方图、taskCompletion 仪表；封装 metrics recorder 和 HTTP 暴露 handler，确保与 MetricsConfig.endpoint 配置对齐并提供示例集成。",
+            "title": "实现 Prometheus 指标注册与暴露",
+            "description": "定义核心指标并提供 HTTP 采集端点",
+            "dependencies": [2, 3],
+            "details": "在 packages/agentops/src/metrics/prometheus.ts 使用 prom-client 定义 latency 直方图、errorRate 计数器、tokensPerTask 直方图、taskCompletion 仪表；封装 MetricsRecorder 类；实现 /metrics HTTP handler；支持自定义标签",
             "status": "pending",
-            "testStrategy": "单元测试指标注册/标签更新正确；通过本地 fetch 暴露端点验证格式",
+            "testStrategy": "单元测试：指标注册/更新正确；本地 fetch /metrics 验证格式",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "构建评估与质量飞轮闭环",
-            "description": "添加 Outside-In/Inside-Out/LLM-as-Judge hooks 与回归测试入口及仪表盘示例。",
-            "dependencies": [
-              2,
-              3,
-              4
-            ],
-            "details": "定义评估接口与生命周期钩子，收集失败案例生成回归测试样板；集成日志/trace/metrics 数据用于评分，提供 Grafana dashboard json 示例与 README 使用说明，演示在示例任务中触发评估流水线。",
+            "title": "定义评估接口与生命周期钩子",
+            "description": "设计评估框架的类型与钩子机制",
+            "dependencies": [2, 3, 4],
+            "details": "在 packages/agentops/src/eval/types.ts 定义 Evaluator 接口、EvaluationResult、EvaluationHook；支持 onTaskStart/onTaskEnd/onToolCall/onError 钩子；收集 trace/metrics/logs 数据用于评分",
             "status": "pending",
-            "testStrategy": "集成测试跑示例任务验证评估钩子被调用并生成回归记录；文档检查仪表盘配置可被导入",
+            "testStrategy": "类型检查通过；钩子注册与触发逻辑单元测试",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "实现 Outside-In 评估（黑盒测试）",
+            "description": "基于输入输出的端到端评估",
+            "dependencies": [5],
+            "details": "在 packages/agentops/src/eval/outside-in.ts 实现 OutsideInEvaluator；比对任务输入与最终输出；支持自定义断言函数；记录成功/失败案例",
+            "status": "pending",
+            "testStrategy": "单元测试：mock 任务执行验证评估结果",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "实现 Inside-Out 评估（白盒断点）",
+            "description": "基于执行轨迹的中间步骤评估",
+            "dependencies": [5],
+            "details": "在 packages/agentops/src/eval/inside-out.ts 实现 InsideOutEvaluator；在关键断点检查中间状态（工具调用结果、上下文变化）；支持断点条件表达式",
+            "status": "pending",
+            "testStrategy": "单元测试：验证断点触发与状态检查",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "实现 LLM-as-Judge 评估",
+            "description": "使用 LLM 对任务结果进行评分",
+            "dependencies": [5],
+            "details": "在 packages/agentops/src/eval/llm-judge.ts 实现 LLMJudgeEvaluator；构造评估 prompt，将任务目标与结果提交给 LLM 评分；解析评分结果（1-10 分制 + 理由）；支持自定义评估 prompt",
+            "status": "pending",
+            "testStrategy": "单元测试：mock LLM 响应验证评分解析",
+            "parentId": "undefined"
+          },
+          {
+            "id": 9,
+            "title": "构建回归测试生成与仪表板",
+            "description": "收集失败案例生成测试，提供 Grafana 配置",
+            "dependencies": [6, 7, 8],
+            "details": "在 packages/agentops/src/eval/regression.ts 实现失败案例收集与回归测试代码生成；在 packages/agentops/dashboards/ 提供 Grafana dashboard JSON 示例；编写 README 使用说明；确保 bun test 通过",
+            "status": "pending",
+            "testStrategy": "集成测试：验证失败案例生成回归记录；仪表板 JSON 可导入 Grafana",
             "parentId": "undefined"
           }
         ]
