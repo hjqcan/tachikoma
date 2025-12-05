@@ -1,0 +1,54 @@
+{
+  "name": "@tachikoma/agentops",
+  "version": "0.1.0",
+  "description": "Tachikoma AgentOps - 可观测性、追踪、指标、评估",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tracing": {
+      "import": "./dist/tracing/index.js",
+      "types": "./dist/tracing/index.d.ts"
+    },
+    "./logging": {
+      "import": "./dist/logging/index.js",
+      "types": "./dist/logging/index.d.ts"
+    },
+    "./metrics": {
+      "import": "./dist/metrics/index.js",
+      "types": "./dist/metrics/index.d.ts"
+    },
+    "./eval": {
+      "import": "./dist/eval/index.js",
+      "types": "./dist/eval/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun",
+    "build:types": "tsc -p tsconfig.build.json",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [
+    "tachikoma",
+    "agentops",
+    "observability",
+    "tracing"
+  ],
+  "license": "MIT"
+}

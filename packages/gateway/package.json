@@ -1,0 +1,44 @@
+{
+  "name": "@tachikoma/gateway",
+  "version": "0.1.0",
+  "description": "Tachikoma API 网关 - HTTP 服务、安全中间件、身份认证",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun",
+    "build:types": "tsc -p tsconfig.build.json",
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@tachikoma/core": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "keywords": [
+    "tachikoma",
+    "gateway",
+    "api",
+    "hono"
+  ],
+  "license": "MIT"
+}

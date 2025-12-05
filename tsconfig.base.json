@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // 目标与模块
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ESNext"],
+
+    // 严格模式
+    "strict": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+
+    // 类型检查
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+
+    // 输出
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+
+    // 路径映射（基础）
+    "baseUrl": ".",
+    "paths": {
+      "@tachikoma/core": ["packages/core/src"],
+      "@tachikoma/core/*": ["packages/core/src/*"],
+      "@tachikoma/gateway": ["packages/gateway/src"],
+      "@tachikoma/gateway/*": ["packages/gateway/src/*"],
+      "@tachikoma/agentops": ["packages/agentops/src"],
+      "@tachikoma/agentops/*": ["packages/agentops/src/*"],
+      "@tachikoma/cli": ["packages/cli/src"],
+      "@tachikoma/cli/*": ["packages/cli/src/*"]
+    },
+
+    // Bun 和 Node 类型支持
+    "types": ["bun", "node"]
+  },
+  "exclude": ["node_modules", "dist", "coverage", "**/*.test.ts", "**/*.spec.ts"]
+}

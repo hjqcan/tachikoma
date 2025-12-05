@@ -1,0 +1,26 @@
+# Bun 配置文件
+# https://bun.sh/docs/runtime/bunfig
+
+# 包管理器配置
+[install]
+# 使用 bun.lockb 锁定依赖版本
+lockfile = "bun.lockb"
+
+# 安装优化
+production = false
+
+# 测试配置
+[test]
+# 测试覆盖率
+coverage = false
+
+# 测试超时（毫秒）
+timeout = 30000
+
+# 运行时配置
+[run]
+# 环境变量文件
+# env-file = ".env"
+
+# Telemetry（可选禁用）
+telemetry = false

@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Lock files
+bun.lockb
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Coverage
+coverage/
+
+# Cache
+.cache/
+.turbo/
+
+# Generated files
+*.d.ts.map
+
+# Markdown files that shouldn't be formatted
+CHANGELOG.md
+
+# Task Master files
+.taskmaster/
+
+# Cursor files
+.cursor/

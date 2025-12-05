@@ -39,7 +39,8 @@
 基于 Anthropic 的研究成果和 Manus 的实践经验，本系统采用以下核心理念：
 
 1. **统筹者-工作者模式（Orchestrator-Worker）**: 人类设定高层目标，AI 智能体自主执行实施细节
-2. **上下文工程（Context Engineering）**: 精心策划有限的上下文窗口，确保每个时刻都为智能体提供做出正确决策所需的信息
+2. **上下文工程（Context
+   Engineering）**: 精心策划有限的上下文窗口，确保每个时刻都为智能体提供做出正确决策所需的信息
 3. **Code Execution with MCP**: 通过代码执行而非直接工具调用来提高效率，减少 Token 消耗
 4. **分层式行为空间（Layered Action Space）**: 原子函数调用 → 沙盒工具 → 软件包/API 的三层抽象
 5. **AgentOps**: 将可观测性、评估和持续改进作为系统运营的核心纪律
@@ -132,8 +133,8 @@ interface SecurityPolicy {
 
   // 权限控制
   permissions: {
-    networkAccess: "none" | "allowlist" | "all";
-    fileSystemAccess: "sandbox" | "readonly" | "full";
+    networkAccess: 'none' | 'allowlist' | 'all';
+    fileSystemAccess: 'sandbox' | 'readonly' | 'full';
     shellExecution: boolean;
   };
 }
@@ -156,8 +157,8 @@ interface SecurityPolicy {
 interface OrchestratorTask {
   // 任务元数据
   id: string;
-  priority: "critical" | "high" | "medium" | "low";
-  complexity: "simple" | "moderate" | "complex";
+  priority: 'critical' | 'high' | 'medium' | 'low';
+  complexity: 'simple' | 'moderate' | 'complex';
 
   // 任务规范
   objective: string;
@@ -166,7 +167,7 @@ interface OrchestratorTask {
 
   // 委托配置
   delegation: {
-    mode: "communication" | "shared-memory";
+    mode: 'communication' | 'shared-memory';
     workerCount: number;
     timeout: number;
     retryPolicy: RetryPolicy;
@@ -179,7 +180,6 @@ interface OrchestratorTask {
 基于 Anthropic 的最佳实践，实现以下机制：
 
 1. **初始化智能体行为**:
-
    - 创建功能需求列表 (`features.json`)
    - 生成初始化脚本 (`init.sh`)
    - 建立进度日志 (`progress.txt`)
@@ -207,29 +207,29 @@ interface OrchestratorTask {
 // 核心原子函数定义
 const ATOMIC_FUNCTIONS = {
   // 文件操作
-  read_file: { description: "读取文件内容", params: ["path", "encoding?"] },
-  write_file: { description: "写入文件内容", params: ["path", "content"] },
-  glob_search: { description: "Glob模式文件搜索", params: ["pattern", "cwd?"] },
+  read_file: { description: '读取文件内容', params: ['path', 'encoding?'] },
+  write_file: { description: '写入文件内容', params: ['path', 'content'] },
+  glob_search: { description: 'Glob模式文件搜索', params: ['pattern', 'cwd?'] },
   grep_search: {
-    description: "正则表达式内容搜索",
-    params: ["pattern", "path?"],
+    description: '正则表达式内容搜索',
+    params: ['pattern', 'path?'],
   },
 
   // Shell操作
-  execute_shell: { description: "执行Shell命令", params: ["command", "cwd?"] },
+  execute_shell: { description: '执行Shell命令', params: ['command', 'cwd?'] },
 
   // 浏览器操作
-  browser_navigate: { description: "导航到URL", params: ["url"] },
-  browser_click: { description: "点击元素", params: ["selector"] },
-  browser_input: { description: "输入文本", params: ["selector", "text"] },
-  browser_screenshot: { description: "截取屏幕快照", params: ["fullPage?"] },
+  browser_navigate: { description: '导航到URL', params: ['url'] },
+  browser_click: { description: '点击元素', params: ['selector'] },
+  browser_input: { description: '输入文本', params: ['selector', 'text'] },
+  browser_screenshot: { description: '截取屏幕快照', params: ['fullPage?'] },
 
   // 搜索操作
-  web_search: { description: "网络搜索", params: ["query", "limit?"] },
+  web_search: { description: '网络搜索', params: ['query', 'limit?'] },
 
   // 智能体操作
-  spawn_subagent: { description: "创建子智能体", params: ["task", "config"] },
-  submit_result: { description: "提交结果", params: ["result", "schema"] },
+  spawn_subagent: { description: '创建子智能体', params: ['task', 'config'] },
+  submit_result: { description: '提交结果', params: ['result', 'schema'] },
 };
 ```
 
@@ -248,14 +248,14 @@ const ATOMIC_FUNCTIONS = {
 //   └── ...
 
 // 使用示例（智能体生成的代码）
-import * as gdrive from "./servers/google-drive";
-import * as salesforce from "./servers/salesforce";
+import * as gdrive from './servers/google-drive';
+import * as salesforce from './servers/salesforce';
 
 // 读取文档并更新到CRM
-const transcript = (await gdrive.getDocument({ documentId: "abc123" })).content;
+const transcript = (await gdrive.getDocument({ documentId: 'abc123' })).content;
 await salesforce.updateRecord({
-  objectType: "SalesMeeting",
-  recordId: "00Q5f000001abcXYZ",
+  objectType: 'SalesMeeting',
+  recordId: '00Q5f000001abcXYZ',
   data: { Notes: transcript },
 });
 ```
@@ -265,24 +265,24 @@ await salesforce.updateRecord({
 ```yaml
 # 沙盒配置
 sandbox:
-  runtime: "bun" # Bun运行时
-  os: "linux-alpine"
+  runtime: 'bun' # Bun运行时
+  os: 'linux-alpine'
   resources:
-    cpu: "2 cores"
-    memory: "4GB"
-    storage: "10GB"
-    timeout: "30min"
+    cpu: '2 cores'
+    memory: '4GB'
+    storage: '10GB'
+    timeout: '30min'
   network:
-    mode: "restricted" # none | restricted | full
+    mode: 'restricted' # none | restricted | full
     allowlist:
-      - "api.anthropic.com"
-      - "api.openai.com"
+      - 'api.anthropic.com'
+      - 'api.openai.com'
   filesystem:
-    workdir: "/workspace"
+    workdir: '/workspace'
     mounts:
-      - source: "./project"
-        target: "/workspace/project"
-        mode: "rw"
+      - source: './project'
+        target: '/workspace/project'
+        mode: 'rw'
   preinstalled_tools:
     - grep
     - glob
@@ -365,18 +365,9 @@ interface ConversationSummary {
 ```markdown
 # Skills 目录结构
 
-/skills/
-├── code-review/
-│ ├── SKILL.md # 指令文件
-│ ├── security-checklist.ts # 可执行脚本
-│ └── examples/ # 示例文件
-├── data-analysis/
-│ ├── SKILL.md
-│ └── pandas-patterns.py
-└── brand-guidelines/
-├── SKILL.md
-├── color-palette.json
-└── templates/
+/skills/ ├── code-review/ │ ├── SKILL.md # 指令文件 │ ├── security-checklist.ts # 可执行脚本 │ └──
+examples/ # 示例文件 ├── data-analysis/ │ ├── SKILL.md │ └── pandas-patterns.py └──
+brand-guidelines/ ├── SKILL.md ├── color-palette.json └── templates/
 ```
 
 ```typescript
@@ -421,7 +412,7 @@ interface AgentTracing {
 
   // Logging: 结构化日志
   log: {
-    level: "debug" | "info" | "warn" | "error";
+    level: 'debug' | 'info' | 'warn' | 'error';
     message: string;
     context: {
       agentId: string;
@@ -716,7 +707,7 @@ tachikoma/
 // 智能体基础接口
 interface Agent {
   id: string;
-  type: "orchestrator" | "worker" | "planner" | "memory";
+  type: 'orchestrator' | 'worker' | 'planner' | 'memory';
   config: AgentConfig;
 
   run(task: Task): Promise<TaskResult>;
@@ -726,7 +717,7 @@ interface Agent {
 // 任务定义
 interface Task {
   id: string;
-  type: "atomic" | "composite";
+  type: 'atomic' | 'composite';
   objective: string;
   constraints: string[];
   outputSchema?: JSONSchema;
@@ -737,7 +728,7 @@ interface Task {
 // 任务结果
 interface TaskResult {
   taskId: string;
-  status: "success" | "failure" | "partial";
+  status: 'success' | 'failure' | 'partial';
   output: any;
   artifacts: Artifact[];
   metrics: TaskMetrics;
@@ -766,7 +757,7 @@ interface ContextManager {
 // 沙盒执行
 interface Sandbox {
   id: string;
-  status: "creating" | "running" | "stopped";
+  status: 'creating' | 'running' | 'stopped';
 
   execute(code: string, options: ExecutionOptions): Promise<ExecutionResult>;
   writeFile(path: string, content: string): Promise<void>;
@@ -785,18 +776,18 @@ export const config = {
   // 模型配置
   models: {
     orchestrator: {
-      provider: "anthropic",
-      model: "claude-opus-4",
+      provider: 'anthropic',
+      model: 'claude-opus-4',
       maxTokens: 8192,
     },
     worker: {
-      provider: "anthropic",
-      model: "claude-sonnet-4",
+      provider: 'anthropic',
+      model: 'claude-sonnet-4',
       maxTokens: 4096,
     },
     planner: {
-      provider: "anthropic",
-      model: "claude-haiku-3.5",
+      provider: 'anthropic',
+      model: 'claude-haiku-3.5',
       maxTokens: 2048,
     },
   },
@@ -812,15 +803,15 @@ export const config = {
 
   // 沙盒配置
   sandbox: {
-    runtime: "bun",
+    runtime: 'bun',
     timeout: 1800_000, // 30 minutes
     resources: {
-      cpu: "2",
-      memory: "4G",
-      storage: "10G",
+      cpu: '2',
+      memory: '4G',
+      storage: '10G',
     },
     network: {
-      mode: "restricted",
+      mode: 'restricted',
       allowlist: [],
     },
   },
@@ -829,16 +820,16 @@ export const config = {
   agentops: {
     tracing: {
       enabled: true,
-      endpoint: "http://localhost:4317",
-      serviceName: "tachikoma",
+      endpoint: 'http://localhost:4317',
+      serviceName: 'tachikoma',
     },
     logging: {
-      level: "info",
-      format: "json",
+      level: 'info',
+      format: 'json',
     },
     metrics: {
       enabled: true,
-      endpoint: "/metrics",
+      endpoint: '/metrics',
     },
   },
 };

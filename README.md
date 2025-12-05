@@ -8,7 +8,8 @@
 
 ## 🎯 项目简介
 
-**Tachikoma** 是一个基于统筹者-工作者（Orchestrator-Worker）模式的多智能体编码系统。名称取自《攻壳机动队》中的思考战车 AI，象征具有自主思考能力的智能代理系统。
+**Tachikoma**
+是一个基于统筹者-工作者（Orchestrator-Worker）模式的多智能体编码系统。名称取自《攻壳机动队》中的思考战车 AI，象征具有自主思考能力的智能代理系统。
 
 ### 核心特性
 
@@ -59,7 +60,7 @@
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/tachikoma.git
+git clone https://github.com/hjqcan/tachikoma.git
 cd tachikoma
 
 # 安装依赖
@@ -101,8 +102,8 @@ tachikoma/
 
 参考 Anthropic 的 Orchestrator-Workers 模式：
 
-- **统筹者**: 负责复杂推理、任务规划和协调 (低频, ~7-9Hz)
-- **工作者**: 负责具体任务执行 (高频, ~50-200Hz)
+- **统筹者**: 负责复杂推理、任务规划和协调 (低频)
+- **工作者**: 负责具体任务执行 (高频)
 
 ### 2. 上下文工程五大策略
 

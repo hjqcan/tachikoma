@@ -1,0 +1,739 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "Bun Monorepo 基础脚手架与工程规范",
+        "description": "建立 Bun+TypeScript 多包工作区、统一 tsconfig/bunfig、ESLint/Prettier/Vitest 配置，并准备 CI 脚本。",
+        "details": "- 目录：packages/{core,gateway,agentops,cli}, skills/, servers/, sandbox/；根级 bunfig.toml、tsconfig.base.json、eslint/prettier 配置。\n- package.json 配置 Bun workspaces，安装 typescript@latest、hono/elysia 类型、eslint+@typescript-eslint、prettier、vitest、bun test。\n- 提供 CI 脚本：lint、typecheck、test、build（核心包）。\n- 输出 .env.example，声明模型/API key、Redis、Qdrant/Chroma、OTLP 端点等环境变量。",
+        "testStrategy": "- 运行 `bun test` 验证基础测试通过。\n- 运行 `bun lint` 确认无 lint 错误。\n- `bun tsc -b` 校验多包类型一致性。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "初始化 Bun 工作区与目录骨架",
+            "description": "创建 packages/{core,gateway,agentops,cli}、skills、servers、sandbox 等目录并在根 package.json 配置 Bun workspaces 与基础元数据",
+            "dependencies": [],
+            "details": "新增根 package.json 设置 workspaces 指向 packages/*、skills、servers、sandbox；声明 type=module；添加 scripts 雏形（lint/typecheck/test/build 占位）；确保 bun install 可运行并生成 lock；准备 .gitignore 覆盖 node_modules、.turbo 等缓存；创建各包目录含空 src/README 以便后续配置",
+            "status": "pending",
+            "testStrategy": "运行 bun install 验证 workspace 解析无误",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "统一 tsconfig 与 bunfig 配置",
+            "description": "编写 tsconfig.base.json 与各包 tsconfig 引用，配置 bunfig.toml 统一运行时与路径映射",
+            "dependencies": [
+              1
+            ],
+            "details": "在根添加 tsconfig.base.json（目标 ESNext、moduleResolution bundler、严格模式、paths 映射 packages/*）；为每个包添加 tsconfig.json 扩展 base 并输出到 dist；配置 bunfig.toml 启用 workspace、test runner、默认 tsconfig；更新 package.json scripts 使用 bun tsc -b 运行多包编译检查",
+            "status": "done",
+            "testStrategy": "执行 bun run tsc -b 或 bun tsc -b 验证类型检查通过",
+            "updatedAt": "2025-12-05T03:00:04.033Z",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "建立 ESLint 与 Prettier 规范",
+            "description": "添加 ESLint/Prettier 配置并在 package.json 提供 lint/format 脚本覆盖多包 TypeScript",
+            "dependencies": [
+              2
+            ],
+            "details": "创建根级 eslint 配置（@typescript-eslint、import 规则、bun 环境、vitest 插件）；设置 .eslintignore 忽略 dist/coverage；添加 prettier 配置（单引号、trailing comma 等）及 .prettierignore；更新 package.json scripts: bun lint、bun format 并为各包添加本地配置继承根规则",
+            "status": "in-progress",
+            "testStrategy": "运行 bun lint 确认无语法或风格错误",
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T03:00:05.566Z"
+          },
+          {
+            "id": 4,
+            "title": "配置 Vitest 与基础测试样例",
+            "description": "引入 vitest/bun test 配置并为核心包放置示例测试确保测试链路可运行",
+            "dependencies": [
+              3
+            ],
+            "details": "安装 vitest、@types/node、testing-library 类型依赖；在根添加 vitest.config.ts 支持 TypeScript 路径别名与覆盖率输出；为 packages/core 创建示例 src/index.ts 与 tests/index.test.ts；更新 scripts:test 使用 bun test 并保证 workspace 继承配置",
+            "status": "done",
+            "testStrategy": "执行 bun test 验证示例测试通过并生成覆盖率输出",
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T03:18:03.890Z"
+          },
+          {
+            "id": 5,
+            "title": "准备 CI 脚本与环境变量示例",
+            "description": "提供 lint/typecheck/test/build 流水线脚本和 .env.example 列出所需 API/存储配置",
+            "dependencies": [
+              4
+            ],
+            "details": "在根添加 CI 配置（例如 GitHub Actions 或本地脚本）按顺序运行 bun install、bun lint、bun tsc -b、bun test、核心包 bun run build；更新 package.json scripts 对应步骤；撰写 .env.example 声明模型/API key、Redis、Qdrant/Chroma、OTLP 端点等变量，并在 README 或 CI 注释中引用",
+            "status": "done",
+            "testStrategy": "本地执行 CI 脚本或依次运行 lint/typecheck/test/build 确认流水线可串行完成",
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T03:22:58.593Z"
+          }
+        ],
+        "updatedAt": "2025-12-05T03:23:00.029Z"
+      },
+      {
+        "id": "2",
+        "title": "交互与安全网关层 (API Gateway)",
+        "description": "实现 Hono/Elysia HTTP 服务，涵盖身份认证、输入/输出过滤、安全策略与分布式追踪。",
+        "details": "- 选择 Hono（bun 原生）构建服务，路由划分：/api/tasks, /api/agents, /api/execute。\n- 中间件：TraceID 生成 + OTEL span，JWT/OAuth2 校验 + RBAC（最小权限），请求大小限制。\n- 输入过滤：提示注入检测、正则 allowlist、最大长度；输出过滤：PII 检测+脱敏、token 泄漏防护。\n- A2A/MCP 网关代理层：对外部调用做 allowlist；集中日志输出 JSON。",
+        "testStrategy": "- 单元测试中间件：鉴权失败返回 401，注入检测命中返回 400。\n- 集成测试：完整请求链路包含 TraceID/Span；PII 文本被掩码。\n- 性能冒烟：并发 100 请求 P95 < 2s（本地基准）。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "搭建 gateway 包与 Hono 服务入口",
+            "description": "创建 packages/gateway 包并初始化 Hono HTTP 服务骨架及基础配置",
+            "dependencies": [],
+            "details": "在 packages/gateway 建立 src/server.ts 以 Hono 实例化应用，预留 /api/tasks、/api/agents、/api/execute 路由占位；配置 package.json 脚本（dev/start/test）与 Bun workspace 对齐；准备环境变量加载与基础响应格式（统一错误/成功 payload）。",
+            "status": "pending",
+            "testStrategy": "编写 smoke 测试确保 server 实例可启动并返回 200 ping",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "添加 TraceID、OTEL Span 与 JSON 日志中间件",
+            "description": "实现链路追踪与结构化日志中间件，含请求大小限制",
+            "dependencies": [
+              1
+            ],
+            "details": "在 server 启动时生成 TraceID 注入请求上下文与响应头，集成 OTEL tracer 创建 span，设置请求体大小限制；实现集中式 JSON 日志（含 traceId、route、duration、status）并作为全局中间件接入。",
+            "status": "pending",
+            "testStrategy": "单元测试验证 TraceID/Span 写入、超限请求被拒绝并记录 JSON 日志字段",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现 JWT/OAuth2 鉴权与 RBAC 最小权限控制",
+            "description": "为路由增加身份验证与角色权限校验",
+            "dependencies": [
+              2
+            ],
+            "details": "引入 JWT/OAuth2 校验中间件，解析 token 得到 subject/roles，基于路由元数据执行 RBAC（最小权限）；定义 401/403 标准错误响应与可配置公钥/issuer；将中间件绑定到 /api/* 受保护路由。",
+            "status": "pending",
+            "testStrategy": "单元测试：无效/缺失 token 返回 401，角色不足返回 403，合法凭证通过",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "输入/输出安全过滤与数据脱敏",
+            "description": "实现提示注入检测、正则 allowlist、长度限制及 PII/token 脱敏",
+            "dependencies": [
+              3
+            ],
+            "details": "编写输入过滤中间件：检测提示注入特征、按 allowlist 正则与最大长度校验，违规返回 400；实现输出过滤层，对 PII 和疑似密钥/token 进行检测与掩码；支持策略配置并将结果写入日志与 span。",
+            "status": "pending",
+            "testStrategy": "单元测试：构造注入样例触发 400，输出包含邮箱/密钥时被掩码；校验日志记录过滤动作",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "接入业务路由与 A2A/MCP 代理允许列表",
+            "description": "/api/tasks、/api/agents、/api/execute 接入上下文并代理外部调用",
+            "dependencies": [
+              4
+            ],
+            "details": "为三条路由实现占位处理器，串联前述中间件链；增加 A2A/MCP 调用代理层，对外部主机/路径做 allowlist 校验并记录调用事件；定义统一响应 schema 与错误处理，输出集中 JSON 日志，确保 TraceID 贯穿。",
+            "status": "pending",
+            "testStrategy": "集成测试：命中受保护路由返回包含 TraceID/Span 的响应；非法外呼被拒绝，允许列表目标通过；路由调用链不破坏过滤与鉴权",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "3",
+        "title": "Agent 抽象与配置加载",
+        "description": "在 core 包实现 Agent/Task/Tool/Sandbox 等基础接口及运行时配置加载。",
+        "details": "- 定义 interfaces: Agent, Task, TaskResult, Tool, ContextManager, Sandbox 等（见 PRD types）。\n- config 模块：读取 config/default.ts + 环境覆盖，暴露模型、上下文阈值、sandbox、AgentOps 配置。\n- 提供工厂：createAgent(type), createSandbox(), createContextManager()，支持依赖注入。",
+        "testStrategy": "- 类型测试：接口兼容 PRD 定义。\n- 单元测试：config 合并覆盖；工厂返回实例具备必需方法。\n- 快照：默认配置与预期一致。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "梳理并落地核心接口类型定义",
+            "description": "在 core 包创建 types 文件，完整声明 PRD 中的 Agent/Task/TaskResult/Tool/ContextManager/Sandbox 等接口",
+            "dependencies": [],
+            "details": "建立 packages/core/src/types.ts（或现有位置），对照 PRD 6.3 定义所有接口及相关类型别名（JSONSchema、ExecutionContext、DelegationConfig 等），补充状态/枚举常量并导出统一类型入口以便后续工厂和实现复用",
+            "status": "pending",
+            "testStrategy": "类型检查：确保接口满足 PRD 字段且无 TS 错误",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现配置模块与环境覆盖加载",
+            "description": "构建 config/default.ts 并实现加载函数，将默认配置与环境变量/运行时覆盖合并后输出",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/config 添加 default.ts 与 loader（如 loadConfig），读取默认模型/上下文/沙盒/AgentOps 配置，支持从 process.env 或传入的 overrides 进行深度合并，暴露类型安全的 Config 对象与校验（必填字段、枚举值范围）",
+            "status": "pending",
+            "testStrategy": "单元测试：验证环境变量覆盖优先级与默认值保持一致；快照默认配置对象",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "提供 Agent/Sandbox/ContextManager 工厂方法",
+            "description": "基于类型与配置实现 createAgent/createSandbox/createContextManager，支持依赖注入与可扩展注册表",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "在 packages/core/src/factories 构建工厂：接受配置与可选 DI 容器/注册表，按 type 选择具体实现或占位 stub，注入模型/上下文阈值/沙盒选项，抛出未知类型错误；确保返回对象符合已定义接口",
+            "status": "pending",
+            "testStrategy": "单元测试：工厂传入已注册类型能生成实例，未知类型报错；实例具备接口方法签名",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "整合导出入口与基础抽象实现",
+            "description": "整理 core 包入口，导出类型、配置、工厂，并提供基础抽象类或适配层便于后续具体实现扩展",
+            "dependencies": [
+              1,
+              2,
+              3
+            ],
+            "details": "在 packages/core/src/index.ts 暴露 types/config/factories；添加抽象基类（例如 BaseAgent/BaseSandbox/BaseContextManager）处理通用字段（id/status/config）、生命周期钩子与日志上下文占位，保持与工厂返回类型一致",
+            "status": "pending",
+            "testStrategy": "类型/接口测试：基类可被继承并满足接口；入口导出可被外部引用通过 TS 编译",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "完善配置与工厂的测试与文档",
+            "description": "补充 Vitest 测试覆盖配置合并、工厂路径及类型对齐，并在 README/注释记录使用方式",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "在 packages/core/tests 添加配置覆盖、工厂创建、抽象类继承场景测试，更新 README 或 package-level 文档说明配置字段、依赖注入与扩展方式；确保测试使用 bun test/vitest 可运行",
+            "status": "pending",
+            "testStrategy": "单元与快照测试：验证合并结果、实例方法存在、导出列表匹配预期",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "4",
+        "title": "统筹者智能体与任务规划",
+        "description": "实现统筹者（System2）规划/分解/委托逻辑，含任务规范与委托模型。",
+        "details": "- Orchestrator 类：接收高层 Task，输出子任务列表与委托计划 (OrchestratorTask)。\n- 规划器：基于 objective/constraints 生成工作者任务；支持 delegation.mode (communication/shared-memory)、workerCount、timeout、retryPolicy。\n- 长时任务挂钩：初始化智能体创建 features.json/init.sh/progress.txt，写入 Git 提交点。\n- 伪代码：`plan(task)->subtasks; assign(workerPool); aggregate(results)`，失败时触发重试/降级。",
+        "testStrategy": "- 单元：输入复杂任务，断言分解结果 schema 正确、包含 delegation 配置。\n- 集成：mock worker 执行，验证聚合输出与任务成功率逻辑。\n- 回归：长时任务恢复时可读取 checkpoint 继续。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义统筹者与委托模型类型与配置入口",
+            "description": "在 core 层建立 Orchestrator/Planner/Delegation 相关类型与默认配置，覆盖 OrchestratorTask、RetryPolicy、委托模式与长时任务元数据",
+            "dependencies": [],
+            "details": "在 packages/core（或待创建目录）添加 types/planning.ts，声明 OrchestratorTask、RetryPolicy、DelegationConfig、PlannerInput/Output 等类型并导出；提供默认配置常量（workerCount/timeout/retryPolicy）与 JSONSchema 辅助；确保与 PRD 3.3 规范字段一致并预留扩展字段",
+            "status": "pending",
+            "testStrategy": "类型与配置单元测试：验证字段必填/枚举约束与默认配置快照",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现任务规划器 plan() 生成子任务与委托计划",
+            "description": "基于 objective/constraints 编写 Planner，实现 plan(task)->subtasks+delegation，支持 communication/shared-memory、workerCount、timeout、retryPolicy 计算与降级逻辑",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/planner 或类似目录实现 Planner 类/函数，接收高层 Task/OrchestratorTask 输入，按规则拆解 subtasks（含 objective、outputSchema、constraints）、填充 delegation 配置，处理复杂度映射 workerCount/timeout，提供重试/降级策略（超时或失败时缩减 workerCount 或切换 shared-memory），输出可供 Orchestrator 使用的计划对象",
+            "status": "pending",
+            "testStrategy": "Planner 单元测试：给定复杂任务输入，断言 subtasks 结构与 delegation 配置符合预期；覆盖降级/超时策略分支",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现 Orchestrator 流程：分配、调度与聚合",
+            "description": "编写 Orchestrator 类，调用 planner 生成计划，按 delegation 分配给 worker 池并聚合结果，处理重试与失败回退",
+            "dependencies": [
+              2
+            ],
+            "details": "在 packages/core/agents 或 orchestrator 目录实现 Orchestrator，包含 plan->assign->aggregate 主流程；抽象 workerPool 接口以便后续 System1 对接；支持并行/共享内存模式下的执行调度、重试次数控制、失败时降级模式切换；聚合 worker 结果为 TaskResult，返回状态/metrics",
+            "status": "pending",
+            "testStrategy": "集成级模拟测试：使用 mock workerPool 验证 assign 被按 delegation 参数调用、失败触发重试与降级、aggregate 输出符合 schema",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "落地长时任务挂钩与检查点管理",
+            "description": "实现初始化智能体与长时任务恢复：创建 features.json/init.sh/progress.txt，记录 Git checkpoint 并支持重启恢复",
+            "dependencies": [
+              3
+            ],
+            "details": "在 orchestrator/initialization 模块添加 hooks：首次运行生成 features.json/init.sh/progress.txt 并写入初始提交点；在计划/执行前后写入进度（如当前子任务、重试次数、worker 状态）到进度文件；提供从 checkpoint 读取恢复上下文的函数，允许 Orchestrator 在重启时继续未完成子任务",
+            "status": "pending",
+            "testStrategy": "恢复与持久化测试：mock 文件系统/Git 接口，验证初始化文件创建、checkpoint 记录与重启后能恢复任务上下文",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "完善测试矩阵与文档示例",
+            "description": "补充单元/集成/回归测试与使用示例，确保规划与长时任务行为可验证",
+            "dependencies": [
+              4
+            ],
+            "details": "在 tests 目录添加规划器/Orchestrator/长时任务的测试覆盖，含 schema 验证、重试降级、checkpoint 恢复；编写 README 或 package-level 文档示例展示 plan->assign->aggregate 流程与长时任务启动方法；确保测试使用 bun test/vitest 可运行并标记待实现的 worker mock",
+            "status": "pending",
+            "testStrategy": "运行 bun test/vitest 全量用例，覆盖 schema 校验、重试降级路径、checkpoint 恢复与文档示例代码片段构建",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "5",
+        "title": "工作者智能体与沙盒执行",
+        "description": "实现工作者（System1）执行器，管理沙盒生命周期、命令执行与资源限制。",
+        "details": "- Sandbox 管理：封装 Docker/Firecracker，配置 Bun runtime、资源 (cpu/mem/storage/timeout)、restricted 网络 allowlist。\n- Worker 类：接收子任务，加载工具列表，调用 sandbox.execute/runCommand/writeFile/readFile。\n- 支持执行日志收集、错误捕获与自动重试；输出 artifacts 与 metrics。",
+        "testStrategy": "- 单元：sandbox API mock，验证 execute/文件读写/命令调用参数正确。\n- 集成：在本地 Docker 运行简单 TS 代码，确保隔离与超时生效。\n- 安全：故障注入测试禁止越权文件访问。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义沙盒抽象与配置契约",
+            "description": "梳理 SandboxConfig/SandboxResources 需求并补充核心类型，设计 Sandbox 接口签名（init/execute/runCommand/readFile/writeFile/dispose），规划 Docker/Firecracker/Bun 运行时枚举与网络 allowlist 表达方式。",
+            "dependencies": [],
+            "details": "在 packages/core/src 下新增 sandbox 类型文件或扩展 types.ts，描述资源限额、超时、网络模式、预装工具列表以及 artifacts/metrics 输出结构，并预留错误/重试策略字段。",
+            "status": "pending",
+            "testStrategy": "类型层面添加 Vitest 类型快照或接口编译检查确保导出一致。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现沙盒驱动与生命周期管理",
+            "description": "基于定义的接口创建 SandboxManager 和具体 Docker/Firecracker 适配器，负责启动/复用/销毁沙盒实例，配置 Bun runtime、cpu/mem/storage/timeout 以及 restricted 网络 allowlist。",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/sandbox 目录实现驱动，封装容器/VM 拉起、命名、工作目录挂载、环境变量注入、命令执行、文件读写、日志收集、资源使用统计及超时终止；缺省可提供本地 stub 便于测试。",
+            "status": "pending",
+            "testStrategy": "使用 Vitest mock 掉进程调用，断言创建/执行/销毁序列及资源/网络参数传递正确，超时触发能终止。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "开发 Worker 执行器与任务处理流程",
+            "description": "实现 Worker 类接收子任务/工具列表，调度 sandbox.execute 或 runCommand/writeFile/readFile，处理工具初始化、上下文注入、错误捕获与自动重试。",
+            "dependencies": [
+              2
+            ],
+            "details": "在 packages/core/src/agents 新增 worker.ts，利用 Task/DelegationConfig/RetryPolicy，封装重试退避、输出 artifacts/metrics、返回 TaskResult；确保与 SandboxManager 解耦并暴露事件钩子。",
+            "status": "pending",
+            "testStrategy": "编写单元测试 mock sandbox 驱动，验证任务调用参数、重试次数、错误传播与 artifacts 聚合。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "接入执行日志与可观测性管线",
+            "description": "为 sandbox 与 Worker 执行链路添加结构化日志、错误码、span/tag 以及资源消耗 metrics，生成 artifacts 元数据以便 AgentOps 汇聚。",
+            "dependencies": [
+              3
+            ],
+            "details": "在 core 中新增轻量 logger/metrics 封装或引用 packages/agentops 占位，记录 taskId/agentId/sandboxId/latency/stdout/stderr，支持日志缓冲与失败快照输出。",
+            "status": "pending",
+            "testStrategy": "通过单元测试验证日志字段完整性和指标计数更新，模拟失败路径确保错误信息被捕获并包含上下文。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "导出接口并补充文档与集成验证",
+            "description": "将 sandbox 与 Worker 模块对外导出，编写 README/PRD 对应段落的使用示例与 API 说明，提供最小集成样例运行路径。",
+            "dependencies": [
+              4
+            ],
+            "details": "更新 packages/core/src/index.ts 导出，必要时在 sandbox/ 或 packages/core 添加示例脚本或 docs，说明如何配置沙盒资源与执行命令；保证与现有包结构一致。",
+            "status": "pending",
+            "testStrategy": "编写集成测试用 stub sandbox 跑简单 TS 代码，确认导出的 API 可被导入调用；文档校验无构建错误。",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "6",
+        "title": "原子工具库与分层式行为空间",
+        "description": "实现 Layer1 原子函数与 Layer2 沙盒工具，提供 Schema 约束的工具注册表。",
+        "details": "- 原子函数：read_file/write_file/glob_search/grep_search/execute_shell/browser_navigate/...，统一 Input/Output JSONSchema。\n- 工具注册表：基于名称解析并校验权限（network/fs/shell）。\n- Layer2 shell 工具：在 sandbox 中执行，捕获 stdout/stderr/exitCode。\n- Layer3 预授权包/APIs 入口预留。",
+        "testStrategy": "- 单元：每个工具的入参校验与成功/失败路径覆盖。\n- 集成：通过 worker 执行工具链，验证串联数据传递。\n- 安全：非法路径/命令被拒绝。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "梳理核心类型与工具模块结构",
+            "description": "审视当前packages/core类型与导出，确定工具与沙盒目录设计",
+            "dependencies": [],
+            "details": "对packages/core/src/index.ts与types.ts的JSONSchema、ExecutionContext、SandboxConfig等类型进行对齐，制定tools与sandbox子目录的文件划分、命名约定和导出入口，明确每个工具需要的输入输出Schema及权限字段基线",
+            "status": "pending",
+            "testStrategy": "评审类型定义并确保现有代码typecheck通过",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现Layer1原子工具函数与统一Schema",
+            "description": "在核心包内补齐read/write/glob/grep/shell等原子工具实现",
+            "dependencies": [
+              1
+            ],
+            "details": "在packages/core/src/tools下新增各原子工具文件，覆盖read_file、write_file、glob_search、grep_search、execute_shell、browser_navigate等，使用统一的输入/输出JSONSchema描述与类型约束，并确保遵循工作目录与环境变量来源的ExecutionContext",
+            "status": "pending",
+            "testStrategy": "为每个工具编写成功与异常路径的单元测试，校验Schema校验逻辑",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "构建Schema约束的工具注册表与权限校验",
+            "description": "实现按名称解析工具并校验network/fs/shell权限",
+            "dependencies": [
+              2
+            ],
+            "details": "新增工具注册表模块，支持注册/查询工具定义，基于工具声明的权限与传入ExecutionContext进行校验，拒绝未授权的network/fs/shell访问，并提供标准错误返回；更新core导出入口供外部使用",
+            "status": "pending",
+            "testStrategy": "编写注册表单元测试，覆盖注册、重复注册、权限拒绝与成功解析场景",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现Layer2沙盒shell工具封装",
+            "description": "封装在沙盒中执行命令的工具并捕获stdout/stderr/exitCode",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "在packages/core/src/sandbox或tools层实现沙盒shell适配器，接受命令与执行选项，限制在sandbox/workDir内运行，捕获stdout、stderr、exitCode与duration，复用注册表权限校验并对超时或非零退出码返回结构化错误",
+            "status": "pending",
+            "testStrategy": "添加针对沙盒shell的单元/轻量集成测试，模拟成功、超时、非零退出码与禁止路径访问",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "完善导出、文档与集成链路测试",
+            "description": "将新工具与注册表纳入入口导出并补充文档和集成测试",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "更新packages/core/src/index.ts与README，暴露tools与sandbox相关入口；补充集成级测试验证工具链在worker/任务上下文中串联执行并能拒绝非法命令或路径，确保bun test/typecheck通过",
+            "status": "pending",
+            "testStrategy": "运行bun test与typecheck，编写集成用例验证串联调用与安全拒绝路径",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "7",
+        "title": "MCP 客户端与代码生成集成",
+        "description": "实现 MCP 动态发现/加载，支持代码生成与工具调用的 Token 高效路径。",
+        "details": "- MCP 客户端：读取 ./servers/* 目录，加载工具定义；支持热插拔新增服务器。\n- 代码生成模块：根据工具 schema 生成 TS 调用包装（示例 gdrive.getDocument/salesforce.updateRecord）。\n- 与 Worker 集成：选择 MCP 工具优先，fallback 原子工具；记录调用开销以评估 Token 节省。",
+        "testStrategy": "- 单元：加载 mock MCP server，验证工具列表解析与调用参数。\n- 集成：示例 server 执行读取->写入流水线，检查代码生成输出可编译执行。\n- 回归：新增 server 后无需重启即可被发现。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "实现 MCP 服务器发现与元数据装载",
+            "description": "在 core 包内完成 servers 目录下 MCP 工具的动态发现与解析。",
+            "dependencies": [],
+            "details": "新增 packages/core/src/mcp/loader.ts，扫描 ./servers/* 读取 manifest/tool schema，构建 Tool 描述与注册表，使用 fs.watch 监听新增/变更/删除实现热插拔并输出加载错误。",
+            "status": "pending",
+            "testStrategy": "单元：mock servers 目录触发加载/卸载事件，校验工具列表与错误处理。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "建立 MCP 客户端连接与工具调用适配器",
+            "description": "实现与已发现的 MCP server 建立会话并封装工具调用接口。",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/mcp/client.ts 提供连接管理、工具调用函数和缓存，复用 Tool 输入/输出 schema，支持并发请求、超时/重试、故障摘除，并记录每次调用的 token/时延统计。",
+            "status": "pending",
+            "testStrategy": "单元：mock server 响应，验证调用参数映射、重试与指标记录；超时/错误路径被正确处理。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "代码生成模块产出 TS 工具包装",
+            "description": "根据 MCP 工具 schema 自动生成类型安全的调用包装并生成示例。",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "新增 packages/core/src/mcp/codegen.ts 与脚本入口，读取注册表 schema 生成 packages/core/src/mcp/generated/*.ts 调用包装（含 gdrive.getDocument、salesforce.updateRecord 示例），支持增量更新与导出索引供消费。",
+            "status": "pending",
+            "testStrategy": "集成：运行 codegen 后执行 tsc 编译通过，示例包装可调用 mock client 成功返回。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "Worker 路由集成优先使用 MCP 工具",
+            "description": "在执行路径中优先选择 MCP 工具，缺失时回退到原子工具并记录成本。",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "在 packages/core/src/worker/runner.ts（或现有执行器）增加工具路由层，优先调用 MCP registry/包装，若不可用则调用本地 Tool；记录 token/时延写入 TaskMetrics 以便评估节省，并暴露开关配置。",
+            "status": "pending",
+            "testStrategy": "集成：模拟任务执行验证 MCP 优先、回退逻辑及指标累积；错误时不会阻塞任务。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "添加示例服务器与端到端验证",
+            "description": "提供可运行的示例 MCP server 与完整测试确保热插拔与生成链路可用。",
+            "dependencies": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "details": "在 servers/mock-* 下新增示例 server（含 manifest+schema+简单处理），编写 bun test 覆盖 loader/watch、client 调用与 worker 路由；补充 README/CLI 使用指南说明如何生成包装与热插拔验证。",
+            "status": "pending",
+            "testStrategy": "端到端：启动示例 server，观察热插拔检测、生成功能、包装调用链路，确保测试全通过。",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "8",
+        "title": "上下文工程与阈值管理",
+        "description": "实现上下文压缩/摘要/卸载流水线，遵循 rot/compaction/summarization 阈值。",
+        "details": "- ContextManager：维护消息/工具调用记录，计算 token 数；阈值：rot=200k, compaction=128k, summarization=150k, hardLimit=1M。\n- 压缩：生成可逆 compact 结构 (input/output full+compact)；摘要：ConversationSummary schema。\n- 卸载：超大输出写入文件并引用路径；最近工具调用保留 5 条。",
+        "testStrategy": "- 单元：构造超阈值历史，断言触发压缩/摘要/卸载，数据可恢复。\n- 性能：大记录列表处理时间在可接受范围内。\n- 回归：compact->restore 与 summary 结构符合定义。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "建立 ContextManager 实现骨架与阈值配置",
+            "description": "在 core 包新增上下文管理实现，初始化消息、工具调用、阈值默认值与状态存储。",
+            "dependencies": [],
+            "details": "在 packages/core 下创建 context 模块，提供类实现现有 ContextManager 接口；接受 ContextThresholds 配置，设定 rot=200k、compaction=128k、summarization=150k、hardLimit=1M、保留最近5条工具调用；准备消息/工具调用列表与摘要占位。",
+            "status": "pending",
+            "testStrategy": "类型层面初始化测试，确保默认阈值与空上下文符合接口定义。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现 Token 计算与硬上限守卫",
+            "description": "为消息与工具调用新增 token 计数更新逻辑，并在添加时进行阈值检测。",
+            "dependencies": [
+              1
+            ],
+            "details": "提供 getTokenCount/内部累加方法，按消息和工具输入输出内容估算 token（可采用长度/4 近似），每次 addMessage/记录工具调用后更新总数；若超过 hardLimit=1M 触发防护逻辑（如拒收或标记需要卸载）；到达 rot 阈值为后续压缩/摘要提供信号。",
+            "status": "pending",
+            "testStrategy": "构造多条消息累积超阈值，断言 token 计算正确且触发硬上限守卫分支。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现压缩流水线与可逆 compact 结构",
+            "description": "在 compactionTrigger=128k 时压缩上下文，生成可逆 compact 版本并保留最近工具调用。",
+            "dependencies": [
+              2
+            ],
+            "details": "实现 compact(strategy) 方法，遍历消息与工具调用，生成 full+compact 结构（工具调用 input/output 都包含），丢弃超出保留数量的旧工具调用但保留最近5条；记录用于还原的映射或引用，确保 rot 后上下文体积减少且可恢复。",
+            "status": "pending",
+            "testStrategy": "使用超阈值上下文触发压缩，验证工具调用保留数量、compact 字段生成、恢复逻辑可重建原始数据。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现摘要流水线与 ConversationSummary 生成",
+            "description": "在 summarizationTrigger=150k 时生成对话摘要并更新上下文。",
+            "dependencies": [
+              3
+            ],
+            "details": "新增 summarize(schema) 方法，根据 SummarySchema 抽取修改文件、用户目标、关键决策、未解决问题和下一步计划，写入 ConversationSummary；可与压缩结果协同减少历史负载，摘要后继续维护 token/summary 状态。",
+            "status": "pending",
+            "testStrategy": "构造摘要触发场景，断言 summary 对象字段齐全且符合 schema，摘要生成后上下文标记正确。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "实现卸载机制与端到端测试",
+            "description": "为超大输出执行卸载到文件并引用路径，补充覆盖压缩/摘要/卸载全流程的测试。",
+            "dependencies": [
+              4
+            ],
+            "details": "在工具输出或消息过大时将内容写入文件并用占位路径引用，确保与硬上限策略协同；设计 Vitest 单元测试覆盖 rot->压缩->摘要->卸载链路、compact->restore、保留最近5条工具调用、性能基线（大列表处理时间）。",
+            "status": "pending",
+            "testStrategy": "Vitest 端到端用例模拟超大历史与输出，验证卸载文件引用正确、各阈值触发与回退逻辑按预期工作。",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "9",
+        "title": "记忆系统与 Skills 渐进加载",
+        "description": "实现会话/声明式/过程式/集体反馈记忆，并支持 Skills 目录的渐进披露加载。",
+        "details": "- 存储适配：Redis 会话缓存，LevelDB 持久化，Qdrant/Chroma 向量检索；统一 MemoryProvider 接口。\n- Skills Loader：三层加载（metadata -> instructions -> resources），按 triggers 选择性注入上下文。\n- APIs：saveMemory(query,fact)、retrieve(context,topK)、loadSkillByTrigger(trigger)。",
+        "testStrategy": "- 单元：Memory CRUD，向量检索 mock 验证 topK；Skills 分层加载不跨阈值。\n- 集成：任务执行时按 trigger 加载对应 Skill 指令。\n- 回归：缓存失效或缺失资源时优雅降级。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义记忆与 Skills 接口类型",
+            "description": "在核心包补充记忆与技能渐进加载所需的接口与模型定义，并更新导出入口。",
+            "dependencies": [],
+            "details": "于 `packages/core/src/types.ts` 增加 MemoryProvider、MemoryEntry、MemoryScope（会话/声明式/过程式/集体反馈）、SkillMetadata/Instruction/Resource 分层结构，以及 saveMemory/retrieve/loadSkillByTrigger API 签名，确保 `index.ts` 导出。",
+            "status": "pending",
+            "testStrategy": "运行 `bun tsc -b` 确认类型通过。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现存储适配层骨架",
+            "description": "为 Redis 会话缓存、LevelDB 持久化、Qdrant/Chroma 向量检索实现可插拔适配器。",
+            "dependencies": [
+              1
+            ],
+            "details": "在核心新增 memory/providers 目录，分别实现 RedisSessionCache、LevelDBStore、VectorSearchProvider（Qdrant/Chroma 可配置），支持初始化配置、健康检查、基础 CRUD/向量写入检索，并提供空实现或 mock 方便无依赖运行。",
+            "status": "pending",
+            "testStrategy": "使用 Vitest/或 stub 测试验证各适配器接口方法被调用、错误路径优雅降级。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "构建统一 MemoryService",
+            "description": "编排四类记忆的存取流程，封装 saveMemory 与 retrieve API。",
+            "dependencies": [
+              2
+            ],
+            "details": "在核心实现 MemoryService，接入会话缓存+LevelDB+向量检索，区分 session/声明式/过程式/集体反馈存储策略，支持 topK 检索与去重，缺失后端时降级为内存实现，并暴露配置化注入。",
+            "status": "pending",
+            "testStrategy": "编写单元测试覆盖 save/retrieve 不同 scope、topK 返回顺序、后端失效时的降级路径。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "开发 Skills 渐进加载器",
+            "description": "按三层模型加载 Skills 目录并基于 trigger 选择性注入上下文。",
+            "dependencies": [
+              1,
+              3
+            ],
+            "details": "在核心新增 skills/loader 模块，扫描 `skills/` 目录读取 metadata，触发时加载 SKILL.md 指令，引用时按需读取资源文件，支持 loadSkillByTrigger(trigger) 返回指令/资源路径，缺失文件时回退提示。",
+            "status": "pending",
+            "testStrategy": "单元测试覆盖 trigger 匹配、分层加载不跨阈值、缺失资源时的 fallback 行为。",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "对外 API/路由与导出接线",
+            "description": "将记忆与 Skills 能力暴露为可用 API，并完成工作区导出。",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "在 core 导出 MemoryService 与 SkillsLoader 工厂；在 gateway 增加占位路由或 handler 调用 saveMemory/retrieve/loadSkillByTrigger；更新 README/文档简述用法以便 CLI/其他包复用。",
+            "status": "pending",
+            "testStrategy": "集成测试或契约测试验证路由/接口能调用核心服务，返回结构符合约定；缺失后端依赖时保证响应可降级。",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "10",
+        "title": "AgentOps 可观测性与评估套件",
+        "description": "集成 OpenTelemetry/Prometheus 日志指标追踪，并提供评估与质量飞轮闭环。",
+        "details": "- Tracing：为 orchestrator/worker/tool/sandbox 调用创建 span，附加 taskId/agentId/latency 等 attributes。\n- Logging：结构化 JSON，级别 debug/info/warn/error；集中输出并带链路 ID。\n- Metrics：Prometheus 指标（latency histogram, errorRate counter, tokensPerTask histogram, taskCompletion gauge）。\n- 评估：Outside-In/Inside-Out/LLM-as-Judge hooks，收集失败案例生成回归测试；Grafana 仪表板配置示例。",
+        "testStrategy": "- 单元：metrics 注册与更新值正确；log 格式含上下文字段。\n- 集成：执行示例任务，验证 trace/metrics 可在 OTLP + Prometheus 抓取。\n- 评估：mock 失败案例生成回归测试入口，确保流水线可运行。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "搭建 agentops 观测性模块骨架与依赖",
+            "description": "为可观测性套件创建基础目录/导出与依赖，并对齐现有配置类型。",
+            "dependencies": [],
+            "details": "在 packages/agentops 下新增 tracing/logging/metrics/eval 目录及 index.ts，安装 OpenTelemetry/Prometheus 等依赖，更新 package.json exports；校对 core/src/types.ts 中 AgentOpsConfig 定义，编写默认配置与初始化入口。",
+            "status": "pending",
+            "testStrategy": "bun typecheck 与最小单元测试确保导出与配置类型匹配",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现 OTEL 追踪封装",
+            "description": "为 orchestrator/worker/tool/sandbox 调用创建 span 并注入上下文字段。",
+            "dependencies": [
+              1
+            ],
+            "details": "使用 @opentelemetry/sdk-trace-base 与 context APIs 封装 tracer 初始化，定义 createSpan/helpers 统一附加 taskId/agentId/latency/status 等 attributes，提供 middleware/函数包装器供各包调用，并支持 OTLP endpoint/serviceName 配置。",
+            "status": "pending",
+            "testStrategy": "mock tracer 验证 span 属性写入与错误时状态标记",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现结构化 JSON 日志",
+            "description": "提供带链路 ID 的 JSON 日志工具，支持 debug/info/warn/error。",
+            "dependencies": [
+              2
+            ],
+            "details": "封装 logger 工具，自动注入 traceId/spanId/taskId/agentId，上下文字段合并；支持 Bun stdout 集中输出与可插拔 sink，配置格式与级别遵循 LoggingConfig，提供 gateway/core 示例调用。",
+            "status": "pending",
+            "testStrategy": "单元测试验证不同级别输出格式、上下文字段与链路 ID 存在",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现 Prometheus 指标暴露与更新",
+            "description": "注册核心指标并提供更新 API 及采集端点。",
+            "dependencies": [
+              2,
+              3
+            ],
+            "details": "使用 prom-client 定义 latency 直方图、errorRate 计数器、tokensPerTask 直方图、taskCompletion 仪表；封装 metrics recorder 和 HTTP 暴露 handler，确保与 MetricsConfig.endpoint 配置对齐并提供示例集成。",
+            "status": "pending",
+            "testStrategy": "单元测试指标注册/标签更新正确；通过本地 fetch 暴露端点验证格式",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "构建评估与质量飞轮闭环",
+            "description": "添加 Outside-In/Inside-Out/LLM-as-Judge hooks 与回归测试入口及仪表盘示例。",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "定义评估接口与生命周期钩子，收集失败案例生成回归测试样板；集成日志/trace/metrics 数据用于评分，提供 Grafana dashboard json 示例与 README 使用说明，演示在示例任务中触发评估流水线。",
+            "status": "pending",
+            "testStrategy": "集成测试跑示例任务验证评估钩子被调用并生成回归记录；文档检查仪表盘配置可被导入",
+            "parentId": "undefined"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2025-12-05T03:23:00.030Z",
+      "taskCount": 10,
+      "completedCount": 1,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}

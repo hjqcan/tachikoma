@@ -1,0 +1,57 @@
+{
+  "name": "tachikoma",
+  "version": "0.1.0",
+  "description": "类 Claude Code 多智能体系统 (MAS) - Bun + TypeScript 实现",
+  "type": "module",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "skills",
+    "servers",
+    "sandbox"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd packages/gateway dev",
+    "build": "bun run build:core && bun run build:gateway",
+    "build:core": "bun run --cwd packages/core build",
+    "build:gateway": "bun run --cwd packages/gateway build",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
+    "typecheck": "tsc -b && tsc -p packages/core/tsconfig.test.json && tsc -p packages/gateway/tsconfig.test.json",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
+    "clean": "rm -rf packages/*/dist node_modules/.cache"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/bun": "latest",
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.48.1"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/tachikoma.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "multi-agent-system",
+    "orchestrator",
+    "typescript",
+    "bun"
+  ]
+}

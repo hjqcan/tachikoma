@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": true
+  },
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/gateway" },
+    { "path": "./packages/agentops" },
+    { "path": "./packages/cli" }
+  ],
+  "include": [],
+  "exclude": ["node_modules", "dist"]
+}

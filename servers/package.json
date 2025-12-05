@@ -1,0 +1,15 @@
+{
+  "name": "@tachikoma/servers",
+  "version": "0.1.0",
+  "description": "Tachikoma MCP 服务器代理 - 外部工具集成",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}

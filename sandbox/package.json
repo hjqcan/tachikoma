@@ -1,0 +1,16 @@
+{
+  "name": "@tachikoma/sandbox",
+  "version": "0.1.0",
+  "description": "Tachikoma 沙盒环境配置 - 安全隔离执行环境",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build:image": "docker build -t tachikoma-sandbox:latest .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}
