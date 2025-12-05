@@ -84,7 +84,7 @@
         "testStrategy": "- 单元测试中间件：鉴权失败返回 401，注入检测命中返回 400。\n- 集成测试：完整请求链路包含 TraceID/Span；PII 文本被掩码。\n- 性能冒烟：并发 100 请求 P95 < 2s（本地基准）。",
         "priority": "medium",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -92,9 +92,10 @@
             "description": "创建 packages/gateway 包并初始化 Hono HTTP 服务骨架及基础配置",
             "dependencies": [],
             "details": "在 packages/gateway 建立 src/server.ts 以 Hono 实例化应用，预留 /api/tasks、/api/agents、/api/execute 路由占位；配置 package.json 脚本（dev/start/test）与 Bun workspace 对齐；准备环境变量加载与基础响应格式（统一错误/成功 payload）。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "编写 smoke 测试确保 server 实例可启动并返回 200 ping",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T06:42:42.420Z"
           },
           {
             "id": 2,
@@ -104,9 +105,10 @@
               1
             ],
             "details": "在 server 启动时生成 TraceID 注入请求上下文与响应头，集成 OTEL tracer 创建 span，设置请求体大小限制；实现集中式 JSON 日志（含 traceId、route、duration、status）并作为全局中间件接入。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试验证 TraceID/Span 写入、超限请求被拒绝并记录 JSON 日志字段",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T06:42:42.423Z"
           },
           {
             "id": 3,
@@ -116,9 +118,10 @@
               2
             ],
             "details": "引入 JWT/OAuth2 校验中间件，解析 token 得到 subject/roles，基于路由元数据执行 RBAC（最小权限）；定义 401/403 标准错误响应与可配置公钥/issuer；将中间件绑定到 /api/* 受保护路由。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：无效/缺失 token 返回 401，角色不足返回 403，合法凭证通过",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T06:42:42.425Z"
           },
           {
             "id": 4,
@@ -128,9 +131,10 @@
               3
             ],
             "details": "编写输入过滤中间件：检测提示注入特征、按 allowlist 正则与最大长度校验，违规返回 400；实现输出过滤层，对 PII 和疑似密钥/token 进行检测与掩码；支持策略配置并将结果写入日志与 span。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：构造注入样例触发 400，输出包含邮箱/密钥时被掩码；校验日志记录过滤动作",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T06:42:42.427Z"
           },
           {
             "id": 5,
@@ -140,11 +144,13 @@
               4
             ],
             "details": "为三条路由实现占位处理器，串联前述中间件链；增加 A2A/MCP 调用代理层，对外部主机/路径做 allowlist 校验并记录调用事件；定义统一响应 schema 与错误处理，输出集中 JSON 日志，确保 TraceID 贯穿。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：命中受保护路由返回包含 TraceID/Span 的响应；非法外呼被拒绝，允许列表目标通过；路由调用链不破坏过滤与鉴权",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T06:42:42.428Z"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-05T06:42:42.428Z"
       },
       {
         "id": "3",
@@ -728,9 +734,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-05T03:23:00.030Z",
+      "lastModified": "2025-12-05T06:42:42.428Z",
       "taskCount": 10,
-      "completedCount": 1,
+      "completedCount": 2,
       "tags": [
         "master"
       ]
