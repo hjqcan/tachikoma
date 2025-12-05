@@ -160,7 +160,7 @@
         "testStrategy": "- 类型测试：接口兼容 PRD 定义。\n- 单元测试：config 合并覆盖；工厂返回实例具备必需方法。\n- 快照：默认配置与预期一致。",
         "priority": "medium",
         "dependencies": [],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -168,9 +168,10 @@
             "description": "在 core 包创建 types 文件，完整声明 PRD 中的 Agent/Task/TaskResult/Tool/ContextManager/Sandbox 等接口",
             "dependencies": [],
             "details": "建立 packages/core/src/types.ts（或现有位置），对照 PRD 6.3 定义所有接口及相关类型别名（JSONSchema、ExecutionContext、DelegationConfig 等），补充状态/枚举常量并导出统一类型入口以便后续工厂和实现复用",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "类型检查：确保接口满足 PRD 字段且无 TS 错误",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T09:46:51.690Z"
           },
           {
             "id": 2,
@@ -180,9 +181,10 @@
               1
             ],
             "details": "在 packages/core/src/config 添加 default.ts 与 loader（如 loadConfig），读取默认模型/上下文/沙盒/AgentOps 配置，支持从 process.env 或传入的 overrides 进行深度合并，暴露类型安全的 Config 对象与校验（必填字段、枚举值范围）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：验证环境变量覆盖优先级与默认值保持一致；快照默认配置对象",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T09:46:51.693Z"
           },
           {
             "id": 3,
@@ -193,9 +195,10 @@
               2
             ],
             "details": "在 packages/core/src/factories 构建工厂：接受配置与可选 DI 容器/注册表，按 type 选择具体实现或占位 stub，注入模型/上下文阈值/沙盒选项，抛出未知类型错误；确保返回对象符合已定义接口",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：工厂传入已注册类型能生成实例，未知类型报错；实例具备接口方法签名",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T09:52:23.050Z"
           },
           {
             "id": 4,
@@ -207,9 +210,10 @@
               3
             ],
             "details": "在 packages/core/src/index.ts 暴露 types/config/factories；添加抽象基类（例如 BaseAgent/BaseSandbox/BaseContextManager）处理通用字段（id/status/config）、生命周期钩子与日志上下文占位，保持与工厂返回类型一致",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "类型/接口测试：基类可被继承并满足接口；入口导出可被外部引用通过 TS 编译",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T09:57:53.769Z"
           },
           {
             "id": 5,
@@ -222,11 +226,13 @@
               4
             ],
             "details": "在 packages/core/tests 添加配置覆盖、工厂创建、抽象类继承场景测试，更新 README 或 package-level 文档说明配置字段、依赖注入与扩展方式；确保测试使用 bun test/vitest 可运行",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元与快照测试：验证合并结果、实例方法存在、导出列表匹配预期",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T10:19:21.817Z"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-05T10:19:21.817Z"
       },
       {
         "id": "4",
@@ -734,9 +740,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-05T06:42:42.428Z",
+      "lastModified": "2025-12-05T10:19:21.821Z",
       "taskCount": 10,
-      "completedCount": 2,
+      "completedCount": 3,
       "tags": [
         "master"
       ]
