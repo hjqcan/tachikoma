@@ -246,60 +246,82 @@
         "subtasks": [
           {
             "id": 1,
-            "title": "定义统筹者与委托模型类型与配置入口",
-            "description": "在 core 层建立 Orchestrator/Planner/Delegation 相关类型与默认配置，覆盖 OrchestratorTask、RetryPolicy、委托模式与长时任务元数据",
+            "title": "定义 Orchestrator/Planner/Delegation 类型与配置",
+            "description": "在 core 层建立统筹者、规划器、委托模型相关类型与默认配置",
             "dependencies": [],
-            "details": "在 packages/core（或待创建目录）添加 types/planning.ts，声明 OrchestratorTask、RetryPolicy、DelegationConfig、PlannerInput/Output 等类型并导出；提供默认配置常量（workerCount/timeout/retryPolicy）与 JSONSchema 辅助；确保与 PRD 3.3 规范字段一致并预留扩展字段",
+            "details": "在 packages/core/src/types 或新建 planning.ts，声明 OrchestratorTask、PlannerInput/Output、DelegationConfig（mode/workerCount/timeout/retryPolicy）、RetryPolicy、CheckpointState 等类型；提供默认配置常量并确保与 PRD 3.3 对齐；导出至 index.ts",
             "status": "pending",
-            "testStrategy": "类型与配置单元测试：验证字段必填/枚举约束与默认配置快照",
+            "testStrategy": "类型检查通过；配置快照测试验证默认值",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现任务规划器 plan() 生成子任务与委托计划",
-            "description": "基于 objective/constraints 编写 Planner，实现 plan(task)->subtasks+delegation，支持 communication/shared-memory、workerCount、timeout、retryPolicy 计算与降级逻辑",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/planner 或类似目录实现 Planner 类/函数，接收高层 Task/OrchestratorTask 输入，按规则拆解 subtasks（含 objective、outputSchema、constraints）、填充 delegation 配置，处理复杂度映射 workerCount/timeout，提供重试/降级策略（超时或失败时缩减 workerCount 或切换 shared-memory），输出可供 Orchestrator 使用的计划对象",
+            "title": "实现 LLM Planner 客户端与 Prompt 工程",
+            "description": "封装 LLM 调用层，构造规划 prompt 并解析结构化输出",
+            "dependencies": [1],
+            "details": "在 packages/core/src/planner 新增 llm-client.ts，封装模型调用（支持 Anthropic/OpenAI）；设计 system prompt 模板，将高层 Task 转换为规划请求；使用 Structured Output 或 Function Calling 解析 LLM 返回为 OrchestratorTask[]；实现输出格式校验与解析失败重试（最多 3 次）",
             "status": "pending",
-            "testStrategy": "Planner 单元测试：给定复杂任务输入，断言 subtasks 结构与 delegation 配置符合预期；覆盖降级/超时策略分支",
+            "testStrategy": "单元测试：mock LLM 响应验证解析正确；格式错误时触发重试；重试耗尽抛出错误",
             "parentId": "undefined"
           },
           {
             "id": 3,
-            "title": "实现 Orchestrator 流程：分配、调度与聚合",
-            "description": "编写 Orchestrator 类，调用 planner 生成计划，按 delegation 分配给 worker 池并聚合结果，处理重试与失败回退",
-            "dependencies": [
-              2
-            ],
-            "details": "在 packages/core/agents 或 orchestrator 目录实现 Orchestrator，包含 plan->assign->aggregate 主流程；抽象 workerPool 接口以便后续 System1 对接；支持并行/共享内存模式下的执行调度、重试次数控制、失败时降级模式切换；聚合 worker 结果为 TaskResult，返回状态/metrics",
+            "title": "实现 Planner plan() 任务分解与委托配置生成",
+            "description": "基于 objective/constraints 编写 plan() 方法，调用 LLM 生成子任务并填充委托配置",
+            "dependencies": [1, 2],
+            "details": "在 packages/core/src/planner/planner.ts 实现 Planner 类，接收 Task 输入，调用 LLM 客户端生成初步子任务列表，根据任务复杂度计算 workerCount/timeout，填充 DelegationConfig（默认 communication 模式），处理降级策略（失败时减少 workerCount 或切换 shared-memory）",
             "status": "pending",
-            "testStrategy": "集成级模拟测试：使用 mock workerPool 验证 assign 被按 delegation 参数调用、失败触发重试与降级、aggregate 输出符合 schema",
+            "testStrategy": "单元测试：给定复杂任务输入，断言子任务结构与委托配置符合预期；覆盖降级分支",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "落地长时任务挂钩与检查点管理",
-            "description": "实现初始化智能体与长时任务恢复：创建 features.json/init.sh/progress.txt，记录 Git checkpoint 并支持重启恢复",
-            "dependencies": [
-              3
-            ],
-            "details": "在 orchestrator/initialization 模块添加 hooks：首次运行生成 features.json/init.sh/progress.txt 并写入初始提交点；在计划/执行前后写入进度（如当前子任务、重试次数、worker 状态）到进度文件；提供从 checkpoint 读取恢复上下文的函数，允许 Orchestrator 在重启时继续未完成子任务",
+            "title": "实现 WorkerPool 抽象与调度机制",
+            "description": "设计 Worker 池管理，支持选择策略、并发控制与超时取消",
+            "dependencies": [1],
+            "details": "在 packages/core/src/orchestrator/worker-pool.ts 定义 WorkerPool 接口与默认实现；支持 Worker 注册/注销、空闲优先选择、最大并发数限制；实现任务分配 assign(subtask) 与超时取消机制；提供 mock 实现用于测试",
             "status": "pending",
-            "testStrategy": "恢复与持久化测试：mock 文件系统/Git 接口，验证初始化文件创建、checkpoint 记录与重启后能恢复任务上下文",
+            "testStrategy": "单元测试：验证 Worker 选择顺序、并发限制、超时触发取消；mock Worker 验证调用参数",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "完善测试矩阵与文档示例",
-            "description": "补充单元/集成/回归测试与使用示例，确保规划与长时任务行为可验证",
-            "dependencies": [
-              4
-            ],
-            "details": "在 tests 目录添加规划器/Orchestrator/长时任务的测试覆盖，含 schema 验证、重试降级、checkpoint 恢复；编写 README 或 package-level 文档示例展示 plan->assign->aggregate 流程与长时任务启动方法；确保测试使用 bun test/vitest 可运行并标记待实现的 worker mock",
+            "title": "实现 communication 委托模式与结果聚合",
+            "description": "实现基于消息传递的委托模式，Worker 独立执行并返回结果",
+            "dependencies": [3, 4],
+            "details": "在 packages/core/src/orchestrator/delegation/communication.ts 实现 CommunicationDelegation 类；为每个子任务分配独立 Worker，收集 TaskResult；实现结果聚合逻辑（成功/部分成功/失败），处理单个 Worker 失败的重试与整体降级",
             "status": "pending",
-            "testStrategy": "运行 bun test/vitest 全量用例，覆盖 schema 校验、重试降级路径、checkpoint 恢复与文档示例代码片段构建",
+            "testStrategy": "集成测试：mock WorkerPool 验证分配、结果收集、失败重试与聚合输出",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "实现 Orchestrator 主流程：plan → assign → aggregate",
+            "description": "编写 Orchestrator 类，串联规划、分配、聚合流程，处理重试与失败回退",
+            "dependencies": [3, 5],
+            "details": "在 packages/core/src/orchestrator/orchestrator.ts 实现 Orchestrator，继承 BaseAgent；run() 方法调用 planner.plan() 生成计划，通过 delegation 分配给 WorkerPool，聚合结果为最终 TaskResult；支持 RetryPolicy 控制重试次数，失败时触发降级模式切换",
+            "status": "pending",
+            "testStrategy": "集成测试：端到端验证 plan→assign→aggregate 流程；失败触发重试与降级",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "实现长时任务检查点与恢复机制",
+            "description": "支持初始化智能体创建 checkpoint 文件，并在重启时恢复未完成任务",
+            "dependencies": [6],
+            "details": "在 packages/core/src/orchestrator/checkpoint.ts 实现 CheckpointManager；首次运行生成 features.json/init.sh/progress.txt；在规划/执行节点写入进度（当前子任务、重试次数、Worker 状态）；提供 loadCheckpoint() 恢复上下文；可选集成 Git 提交点",
+            "status": "pending",
+            "testStrategy": "单元测试：mock 文件系统验证初始化文件创建、进度写入、重启后恢复任务上下文",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "完善测试矩阵、集成验证与文档",
+            "description": "补充全链路测试，确保与 Worker/ContextManager/Gateway 的接口契约，编写使用示例",
+            "dependencies": [6, 7],
+            "details": "在 tests 目录添加 Planner/Orchestrator/WorkerPool/Checkpoint 的单元与集成测试；验证与 Task 5 Worker 接口的契约；编写 README 展示 plan→assign→aggregate 流程与 checkpoint 使用方法；确保 bun test 通过",
+            "status": "pending",
+            "testStrategy": "运行 bun test 全量用例，覆盖 LLM 解析、delegation 路径、checkpoint 恢复；契约测试验证 Worker 接口兼容",
             "parentId": "undefined"
           }
         ]
