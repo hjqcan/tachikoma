@@ -39,7 +39,11 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.53",
+    "@ai-sdk/openai": "^2.0.77",
+    "ai": "^5.0.107"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5.7.0"

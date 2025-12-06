@@ -250,10 +250,10 @@
             "description": "在 core 层建立统筹者、规划器、委托模型相关类型与默认配置",
             "dependencies": [],
             "details": "在 packages/core/src/types 或新建 planning.ts，声明 OrchestratorTask、PlannerInput/Output、DelegationConfig（mode/workerCount/timeout/retryPolicy）、RetryPolicy、CheckpointState 等类型；提供默认配置常量并确保与 PRD 3.3 对齐；导出至 index.ts",
-            "status": "in-progress",
+            "status": "done",
             "testStrategy": "类型检查通过；配置快照测试验证默认值",
             "parentId": "undefined",
-            "updatedAt": "2025-12-05T17:50:54.619Z"
+            "updatedAt": "2025-12-06T02:55:06.054Z"
           },
           {
             "id": 2,
@@ -263,9 +263,10 @@
               1
             ],
             "details": "在 packages/core/src/planner 新增 llm-client.ts，封装模型调用（支持 Anthropic/OpenAI）；设计 system prompt 模板，将高层 Task 转换为规划请求；使用 Structured Output 或 Function Calling 解析 LLM 返回为 OrchestratorTask[]；实现输出格式校验与解析失败重试（最多 3 次）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：mock LLM 响应验证解析正确；格式错误时触发重试；重试耗尽抛出错误",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-06T03:25:46.658Z"
           },
           {
             "id": 3,
@@ -276,9 +277,10 @@
               2
             ],
             "details": "在 packages/core/src/planner/planner.ts 实现 Planner 类，接收 Task 输入，调用 LLM 客户端生成初步子任务列表，根据任务复杂度计算 workerCount/timeout，填充 DelegationConfig（默认 communication 模式），处理降级策略（失败时减少 workerCount 或切换 shared-memory）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：给定复杂任务输入，断言子任务结构与委托配置符合预期；覆盖降级分支",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-06T03:46:07.226Z"
           },
           {
             "id": 4,
@@ -288,18 +290,21 @@
               1
             ],
             "details": "在 packages/core/src/orchestrator/worker-pool.ts 定义 WorkerPool 接口与默认实现；支持 Worker 注册/注销、空闲优先选择、最大并发数限制；实现任务分配 assign(subtask) 与超时取消机制；提供 mock 实现用于测试",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：验证 Worker 选择顺序、并发限制、超时触发取消；mock Worker 验证调用参数",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-06T04:59:04.201Z"
           },
           {
             "id": 5,
             "title": "实现共享文件系统协调机制",
             "description": "设计 .tachikoma 目录结构，实现 SessionFileManager 与文件监控",
-            "dependencies": [1],
-            "details": "在 packages/core/src/orchestrator/session/ 实现 SessionFileManager 类；定义会话目录结构：sessions/{session-id}/orchestrator/(plan.json,progress.json,decisions.jsonl)、workers/{worker-id}/(thinking.jsonl,actions.jsonl,status.json,artifacts/)、shared/(context.json,messages.jsonl)；实现原子写入（write-to-temp-then-rename）；使用 fs.watch 监控 workers/ 目录变化；提供 readWorkerStatus/readWorkerThinking API",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/orchestrator/session/ 实现 SessionFileManager 类；定义会话目录结构：sessions/{session-id}/orchestrator/(plan.json,progress.json,decisions.jsonl)、workers/{worker-id}/(thinking.jsonl,actions.jsonl,status.json,pending_approval.json,intervention.json,artifacts/)、shared/(context.json,messages.jsonl)；实现原子写入（write-to-temp-then-rename）；使用 fs.watch 监控 workers/ 目录变化（特别是 pending_approval.json）；提供 readWorkerStatus/readPendingApproval/writApprovalResponse API",
             "status": "pending",
-            "testStrategy": "单元测试：验证目录创建、原子写入、文件监控事件触发",
+            "testStrategy": "单元测试：验证目录创建、原子写入、pending_approval 文件监控事件触发",
             "parentId": "undefined"
           },
           {
@@ -317,19 +322,25 @@
           },
           {
             "id": 7,
-            "title": "实现 Orchestrator 实时监控与纠偏",
-            "description": "监控 Worker 思考过程，发现偏离时及时干预",
-            "dependencies": [5, 6],
-            "details": "在 Orchestrator 主循环中集成 SessionFileManager.watch()；定期（每5秒）读取 workers/**/thinking.jsonl 尾部内容；使用 LLM 评估 Worker 思路是否偏离目标；偏离时发送纠正信号（写入 workers/{id}/intervention.json）；记录干预决策到 orchestrator/decisions.jsonl",
+            "title": "实现关键决策点审批与定期监控",
+            "description": "组合方案：关键决策点实时审批 + 定期批量评估",
+            "dependencies": [
+              5,
+              6
+            ],
+            "details": "实现双重监控机制：1) 关键决策点审批：监控 workers/**/pending_approval.json，实时响应 Worker 的审批请求（文件删除/多文件重构/外部API调用），写入 approval_response.json；2) 定期批量评估：每10秒读取 workers/**/thinking.jsonl 尾部，用轻量模型快速评估思路是否偏离，可疑时触发完整 LLM 评估；偏离时写入 intervention.json；记录所有审批/干预决策到 orchestrator/decisions.jsonl",
             "status": "pending",
-            "testStrategy": "集成测试：模拟 Worker 偏离场景，验证 Orchestrator 检测并生成干预指令",
+            "testStrategy": "集成测试：验证关键决策审批流程、定期监控检测偏离、干预指令生成",
             "parentId": "undefined"
           },
           {
             "id": 8,
             "title": "实现长时任务检查点与恢复机制",
             "description": "基于共享文件系统实现检查点持久化与恢复",
-            "dependencies": [5, 6],
+            "dependencies": [
+              5,
+              6
+            ],
             "details": "CheckpointManager 复用 SessionFileManager 的目录结构；从 orchestrator/progress.json 恢复计划状态；从 workers/**/status.json 恢复 Worker 进度；支持从最近成功的子任务继续执行；可选集成 Git 提交点",
             "status": "pending",
             "testStrategy": "单元测试：模拟进程中断后重启，验证从 checkpoint 恢复任务上下文",
@@ -339,14 +350,18 @@
             "id": 9,
             "title": "完善测试矩阵、集成验证与文档",
             "description": "补充全链路测试，确保与 Worker/ContextManager/Gateway 的接口契约，编写使用示例",
-            "dependencies": [6, 7, 8],
+            "dependencies": [
+              6,
+              7,
+              8
+            ],
             "details": "在 tests 目录添加 Planner/Orchestrator/SessionFileManager/Checkpoint 的单元与集成测试；验证与 Task 5 Worker 文件协议的契约；编写 README 展示 plan→assign→monitor→aggregate 流程与共享文件系统使用方法；确保 bun test 通过",
             "status": "pending",
             "testStrategy": "运行 bun test 全量用例，覆盖 LLM 解析、文件监控、纠偏逻辑、checkpoint 恢复；契约测试验证 Worker 文件格式兼容",
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-05T17:50:54.619Z"
+        "updatedAt": "2025-12-06T04:59:04.201Z"
       },
       {
         "id": "5",
@@ -419,19 +434,23 @@
           },
           {
             "id": 6,
-            "title": "实现 Worker 思考过程持久化",
-            "description": "将 Worker 的思考、决策、执行过程写入文件系统",
-            "dependencies": [4],
-            "details": "在 Worker 执行流程中集成文件写入：thinking.jsonl（流式追加每个推理步骤）、actions.jsonl（记录每个工具调用与结果）、status.json（当前状态原子更新：idle/running/paused/completed/error）；读取 intervention.json 响应 Orchestrator 的纠正指令；支持从 status.json 恢复中断的任务",
+            "title": "实现 Worker 思考过程持久化与关键决策审批",
+            "description": "将 Worker 的思考、决策、执行过程写入文件，关键决策点等待审批",
+            "dependencies": [
+              4
+            ],
+            "details": "在 Worker 执行流程中集成：1) 文件写入：thinking.jsonl（流式追加）、actions.jsonl（工具调用记录）、status.json（状态原子更新）；2) 关键决策点检测：isKeyDecision(action) 判断是否为高风险操作（删除文件/修改>100行/多文件重构/外部API）；3) 审批流程：写入 pending_approval.json，等待 Orchestrator 写入 approval_response.json，根据 approved/rejected 继续或调整；4) intervention 响应：监控 intervention.json 并响应纠偏指令",
             "status": "pending",
-            "testStrategy": "单元测试：验证文件追加、状态更新、intervention 响应",
+            "testStrategy": "单元测试：验证关键决策检测、审批等待流程、审批/拒绝响应、intervention 处理",
             "parentId": "undefined"
           },
           {
             "id": 7,
             "title": "实现 Agent 间文件共享读取",
             "description": "Worker 可读取其他 Worker 或 Orchestrator 的共享数据",
-            "dependencies": [6],
+            "dependencies": [
+              6
+            ],
             "details": "在 Worker 中实现 readPeerStatus(workerId)/readSharedContext()/readOrchestratorPlan() 方法；支持读取其他 Worker 的 status.json 和 artifacts/ 用于协调；读取 shared/context.json 获取全局上下文；实现文件锁避免读取不完整数据",
             "status": "pending",
             "testStrategy": "集成测试：两个 Worker 互相读取状态并协调执行",
@@ -441,7 +460,11 @@
             "id": 8,
             "title": "接入可观测性与集成验证",
             "description": "添加日志/metrics/tracing，完成导出与文档",
-            "dependencies": [5, 6, 7],
+            "dependencies": [
+              5,
+              6,
+              7
+            ],
             "details": "为 Sandbox 和 Worker 执行链路添加结构化日志、span/tag、资源消耗 metrics（可从 thinking.jsonl 生成）；更新 packages/core/src/index.ts 导出；编写 README 示例展示文件共享协调机制；运行完整集成测试",
             "status": "pending",
             "testStrategy": "集成测试：端到端验证 Worker 执行任务、文件写入、Orchestrator 监控、纠偏响应",
@@ -941,7 +964,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-05T17:50:54.621Z",
+      "lastModified": "2025-12-06T04:59:04.205Z",
       "taskCount": 10,
       "completedCount": 3,
       "tags": [
