@@ -242,7 +242,7 @@
         "testStrategy": "- 单元：输入复杂任务，断言分解结果 schema 正确、包含 delegation 配置。\n- 集成：mock worker 执行，验证聚合输出与任务成功率逻辑。\n- 回归：长时任务恢复时可读取 checkpoint 继续。",
         "priority": "medium",
         "dependencies": [],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -250,15 +250,18 @@
             "description": "在 core 层建立统筹者、规划器、委托模型相关类型与默认配置",
             "dependencies": [],
             "details": "在 packages/core/src/types 或新建 planning.ts，声明 OrchestratorTask、PlannerInput/Output、DelegationConfig（mode/workerCount/timeout/retryPolicy）、RetryPolicy、CheckpointState 等类型；提供默认配置常量并确保与 PRD 3.3 对齐；导出至 index.ts",
-            "status": "pending",
+            "status": "in-progress",
             "testStrategy": "类型检查通过；配置快照测试验证默认值",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-05T17:50:54.619Z"
           },
           {
             "id": 2,
             "title": "实现 LLM Planner 客户端与 Prompt 工程",
             "description": "封装 LLM 调用层，构造规划 prompt 并解析结构化输出",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/planner 新增 llm-client.ts，封装模型调用（支持 Anthropic/OpenAI）；设计 system prompt 模板，将高层 Task 转换为规划请求；使用 Structured Output 或 Function Calling 解析 LLM 返回为 OrchestratorTask[]；实现输出格式校验与解析失败重试（最多 3 次）",
             "status": "pending",
             "testStrategy": "单元测试：mock LLM 响应验证解析正确；格式错误时触发重试；重试耗尽抛出错误",
@@ -268,7 +271,10 @@
             "id": 3,
             "title": "实现 Planner plan() 任务分解与委托配置生成",
             "description": "基于 objective/constraints 编写 plan() 方法，调用 LLM 生成子任务并填充委托配置",
-            "dependencies": [1, 2],
+            "dependencies": [
+              1,
+              2
+            ],
             "details": "在 packages/core/src/planner/planner.ts 实现 Planner 类，接收 Task 输入，调用 LLM 客户端生成初步子任务列表，根据任务复杂度计算 workerCount/timeout，填充 DelegationConfig（默认 communication 模式），处理降级策略（失败时减少 workerCount 或切换 shared-memory）",
             "status": "pending",
             "testStrategy": "单元测试：给定复杂任务输入，断言子任务结构与委托配置符合预期；覆盖降级分支",
@@ -278,7 +284,9 @@
             "id": 4,
             "title": "实现 WorkerPool 抽象与调度机制",
             "description": "设计 Worker 池管理，支持选择策略、并发控制与超时取消",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/orchestrator/worker-pool.ts 定义 WorkerPool 接口与默认实现；支持 Worker 注册/注销、空闲优先选择、最大并发数限制；实现任务分配 assign(subtask) 与超时取消机制；提供 mock 实现用于测试",
             "status": "pending",
             "testStrategy": "单元测试：验证 Worker 选择顺序、并发限制、超时触发取消；mock Worker 验证调用参数",
@@ -286,19 +294,22 @@
           },
           {
             "id": 5,
-            "title": "实现 communication 委托模式与结果聚合",
-            "description": "实现基于消息传递的委托模式，Worker 独立执行并返回结果",
-            "dependencies": [3, 4],
-            "details": "在 packages/core/src/orchestrator/delegation/communication.ts 实现 CommunicationDelegation 类；为每个子任务分配独立 Worker，收集 TaskResult；实现结果聚合逻辑（成功/部分成功/失败），处理单个 Worker 失败的重试与整体降级",
+            "title": "实现共享文件系统协调机制",
+            "description": "设计 .tachikoma 目录结构，实现 SessionFileManager 与文件监控",
+            "dependencies": [1],
+            "details": "在 packages/core/src/orchestrator/session/ 实现 SessionFileManager 类；定义会话目录结构：sessions/{session-id}/orchestrator/(plan.json,progress.json,decisions.jsonl)、workers/{worker-id}/(thinking.jsonl,actions.jsonl,status.json,artifacts/)、shared/(context.json,messages.jsonl)；实现原子写入（write-to-temp-then-rename）；使用 fs.watch 监控 workers/ 目录变化；提供 readWorkerStatus/readWorkerThinking API",
             "status": "pending",
-            "testStrategy": "集成测试：mock WorkerPool 验证分配、结果收集、失败重试与聚合输出",
+            "testStrategy": "单元测试：验证目录创建、原子写入、文件监控事件触发",
             "parentId": "undefined"
           },
           {
             "id": 6,
             "title": "实现 Orchestrator 主流程：plan → assign → aggregate",
             "description": "编写 Orchestrator 类，串联规划、分配、聚合流程，处理重试与失败回退",
-            "dependencies": [3, 5],
+            "dependencies": [
+              3,
+              5
+            ],
             "details": "在 packages/core/src/orchestrator/orchestrator.ts 实现 Orchestrator，继承 BaseAgent；run() 方法调用 planner.plan() 生成计划，通过 delegation 分配给 WorkerPool，聚合结果为最终 TaskResult；支持 RetryPolicy 控制重试次数，失败时触发降级模式切换",
             "status": "pending",
             "testStrategy": "集成测试：端到端验证 plan→assign→aggregate 流程；失败触发重试与降级",
@@ -306,25 +317,36 @@
           },
           {
             "id": 7,
-            "title": "实现长时任务检查点与恢复机制",
-            "description": "支持初始化智能体创建 checkpoint 文件，并在重启时恢复未完成任务",
-            "dependencies": [6],
-            "details": "在 packages/core/src/orchestrator/checkpoint.ts 实现 CheckpointManager；首次运行生成 features.json/init.sh/progress.txt；在规划/执行节点写入进度（当前子任务、重试次数、Worker 状态）；提供 loadCheckpoint() 恢复上下文；可选集成 Git 提交点",
+            "title": "实现 Orchestrator 实时监控与纠偏",
+            "description": "监控 Worker 思考过程，发现偏离时及时干预",
+            "dependencies": [5, 6],
+            "details": "在 Orchestrator 主循环中集成 SessionFileManager.watch()；定期（每5秒）读取 workers/**/thinking.jsonl 尾部内容；使用 LLM 评估 Worker 思路是否偏离目标；偏离时发送纠正信号（写入 workers/{id}/intervention.json）；记录干预决策到 orchestrator/decisions.jsonl",
             "status": "pending",
-            "testStrategy": "单元测试：mock 文件系统验证初始化文件创建、进度写入、重启后恢复任务上下文",
+            "testStrategy": "集成测试：模拟 Worker 偏离场景，验证 Orchestrator 检测并生成干预指令",
             "parentId": "undefined"
           },
           {
             "id": 8,
+            "title": "实现长时任务检查点与恢复机制",
+            "description": "基于共享文件系统实现检查点持久化与恢复",
+            "dependencies": [5, 6],
+            "details": "CheckpointManager 复用 SessionFileManager 的目录结构；从 orchestrator/progress.json 恢复计划状态；从 workers/**/status.json 恢复 Worker 进度；支持从最近成功的子任务继续执行；可选集成 Git 提交点",
+            "status": "pending",
+            "testStrategy": "单元测试：模拟进程中断后重启，验证从 checkpoint 恢复任务上下文",
+            "parentId": "undefined"
+          },
+          {
+            "id": 9,
             "title": "完善测试矩阵、集成验证与文档",
             "description": "补充全链路测试，确保与 Worker/ContextManager/Gateway 的接口契约，编写使用示例",
-            "dependencies": [6, 7],
-            "details": "在 tests 目录添加 Planner/Orchestrator/WorkerPool/Checkpoint 的单元与集成测试；验证与 Task 5 Worker 接口的契约；编写 README 展示 plan→assign→aggregate 流程与 checkpoint 使用方法；确保 bun test 通过",
+            "dependencies": [6, 7, 8],
+            "details": "在 tests 目录添加 Planner/Orchestrator/SessionFileManager/Checkpoint 的单元与集成测试；验证与 Task 5 Worker 文件协议的契约；编写 README 展示 plan→assign→monitor→aggregate 流程与共享文件系统使用方法；确保 bun test 通过",
             "status": "pending",
-            "testStrategy": "运行 bun test 全量用例，覆盖 LLM 解析、delegation 路径、checkpoint 恢复；契约测试验证 Worker 接口兼容",
+            "testStrategy": "运行 bun test 全量用例，覆盖 LLM 解析、文件监控、纠偏逻辑、checkpoint 恢复；契约测试验证 Worker 文件格式兼容",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-05T17:50:54.619Z"
       },
       {
         "id": "5",
@@ -350,7 +372,9 @@
             "id": 2,
             "title": "实现 Docker 沙盒驱动",
             "description": "基于 Docker API 实现沙盒生命周期管理",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/sandbox/drivers/docker.ts 实现 DockerSandbox 类；封装容器创建（镜像、工作目录挂载、环境变量）、命令执行（exec）、文件读写（cp）、资源限制（--cpus/--memory）、网络配置（--network）、超时终止；提供连接池复用机制",
             "status": "pending",
             "testStrategy": "单元测试：mock Docker API 验证参数传递；集成测试：本地 Docker 运行简单命令",
@@ -360,7 +384,9 @@
             "id": 3,
             "title": "实现本地 Stub 沙盒驱动",
             "description": "提供无 Docker 依赖的本地沙盒实现，用于开发和测试",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/sandbox/drivers/local.ts 实现 LocalSandbox 类；直接使用 Bun.spawn 执行命令，限制工作目录，提供基础超时控制；标记为仅开发/测试使用，生产环境应使用 Docker",
             "status": "pending",
             "testStrategy": "单元测试：验证命令执行、文件读写、超时终止",
@@ -370,7 +396,10 @@
             "id": 4,
             "title": "实现 Worker 执行器核心流程",
             "description": "开发 Worker 类，接收子任务并在沙盒中执行",
-            "dependencies": [2, 3],
+            "dependencies": [
+              2,
+              3
+            ],
             "details": "在 packages/core/src/agents/worker.ts 实现 Worker 类，继承 BaseAgent；run() 方法初始化沙盒、加载工具列表、按任务指令执行操作；实现重试退避（RetryPolicy）、错误捕获、artifacts/metrics 收集；暴露生命周期钩子",
             "status": "pending",
             "testStrategy": "单元测试：mock 沙盒验证任务执行流程、重试逻辑、错误传播",
@@ -380,7 +409,9 @@
             "id": 5,
             "title": "实现 Worker 与工具层集成",
             "description": "Worker 调用 Task 6 工具注册表执行原子操作",
-            "dependencies": [4],
+            "dependencies": [
+              4
+            ],
             "details": "在 Worker 执行流程中集成工具调用层；根据任务指令解析工具名称，从注册表获取工具定义，校验权限后在沙盒中执行；支持工具链串联（前一个工具输出作为下一个输入）；记录每个工具调用的 metrics",
             "status": "pending",
             "testStrategy": "集成测试：验证工具链执行、权限拒绝、输出传递",
@@ -388,22 +419,32 @@
           },
           {
             "id": 6,
-            "title": "实现 Worker 与 Orchestrator 通信协议",
-            "description": "定义 Worker 接收任务和返回结果的接口契约",
+            "title": "实现 Worker 思考过程持久化",
+            "description": "将 Worker 的思考、决策、执行过程写入文件系统",
             "dependencies": [4],
-            "details": "在 packages/core/src/orchestrator/protocol.ts 定义 WorkerMessage 类型（assign/progress/complete/error）；Worker 实现消息处理器，支持任务接收、进度上报、结果返回；与 Task 4 的 WorkerPool 对接",
+            "details": "在 Worker 执行流程中集成文件写入：thinking.jsonl（流式追加每个推理步骤）、actions.jsonl（记录每个工具调用与结果）、status.json（当前状态原子更新：idle/running/paused/completed/error）；读取 intervention.json 响应 Orchestrator 的纠正指令；支持从 status.json 恢复中断的任务",
             "status": "pending",
-            "testStrategy": "契约测试：验证消息格式与 Task 4 WorkerPool 兼容",
+            "testStrategy": "单元测试：验证文件追加、状态更新、intervention 响应",
             "parentId": "undefined"
           },
           {
             "id": 7,
+            "title": "实现 Agent 间文件共享读取",
+            "description": "Worker 可读取其他 Worker 或 Orchestrator 的共享数据",
+            "dependencies": [6],
+            "details": "在 Worker 中实现 readPeerStatus(workerId)/readSharedContext()/readOrchestratorPlan() 方法；支持读取其他 Worker 的 status.json 和 artifacts/ 用于协调；读取 shared/context.json 获取全局上下文；实现文件锁避免读取不完整数据",
+            "status": "pending",
+            "testStrategy": "集成测试：两个 Worker 互相读取状态并协调执行",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
             "title": "接入可观测性与集成验证",
             "description": "添加日志/metrics/tracing，完成导出与文档",
-            "dependencies": [5, 6],
-            "details": "为 Sandbox 和 Worker 执行链路添加结构化日志、span/tag、资源消耗 metrics；更新 packages/core/src/index.ts 导出；编写 README 示例与使用说明；运行完整集成测试",
+            "dependencies": [5, 6, 7],
+            "details": "为 Sandbox 和 Worker 执行链路添加结构化日志、span/tag、资源消耗 metrics（可从 thinking.jsonl 生成）；更新 packages/core/src/index.ts 导出；编写 README 示例展示文件共享协调机制；运行完整集成测试",
             "status": "pending",
-            "testStrategy": "集成测试：端到端验证 Worker 执行任务、工具调用、结果返回；日志字段完整",
+            "testStrategy": "集成测试：端到端验证 Worker 执行任务、文件写入、Orchestrator 监控、纠偏响应",
             "parentId": "undefined"
           }
         ]
@@ -432,7 +473,9 @@
             "id": 2,
             "title": "实现文件系统工具集",
             "description": "开发 read_file、write_file、glob_search、grep_search 工具",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/tools/fs/ 目录实现四个工具：read_file（读取文件内容，支持行范围）、write_file（创建/覆盖/追加文件）、glob_search（模式匹配搜索）、grep_search（内容搜索）；每个工具定义 inputSchema/outputSchema，声明 fs 权限",
             "status": "pending",
             "testStrategy": "单元测试：成功读写、文件不存在、权限不足路径",
@@ -442,7 +485,9 @@
             "id": 3,
             "title": "实现命令执行工具",
             "description": "开发 execute_shell 工具，在沙盒中执行命令",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/tools/shell/execute.ts 实现 execute_shell 工具；接收命令字符串和工作目录，通过沙盒 runCommand 执行；捕获 stdout/stderr/exitCode/duration；声明 shell 权限；支持超时控制",
             "status": "pending",
             "testStrategy": "单元测试：成功执行、非零退出码、超时终止、禁止命令",
@@ -452,7 +497,9 @@
             "id": 4,
             "title": "实现浏览器工具（可选）",
             "description": "开发 browser_navigate 工具，支持网页交互",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/tools/browser/ 实现 browser_navigate 工具；集成 Puppeteer/Playwright（可选依赖）；支持导航、截图、元素点击、表单填写；声明 network 权限；标记为可选功能，缺失依赖时优雅降级",
             "status": "pending",
             "testStrategy": "集成测试：mock 浏览器验证操作序列；依赖缺失时返回 unsupported",
@@ -462,7 +509,10 @@
             "id": 5,
             "title": "构建工具注册表与权限校验",
             "description": "实现工具注册、查询与权限拦截",
-            "dependencies": [2, 3],
+            "dependencies": [
+              2,
+              3
+            ],
             "details": "在 packages/core/src/tools/registry.ts 实现 ToolRegistry 类；支持注册工具定义、按名称查询、列出所有工具；execute 前校验 ExecutionContext 中的权限与工具声明匹配；拒绝未授权调用并返回标准错误",
             "status": "pending",
             "testStrategy": "单元测试：注册/查询、重复注册、权限拒绝、成功执行",
@@ -472,7 +522,10 @@
             "id": 6,
             "title": "实现 Layer2 沙盒工具封装",
             "description": "将原子工具包装为沙盒内执行版本",
-            "dependencies": [3, 5],
+            "dependencies": [
+              3,
+              5
+            ],
             "details": "在 packages/core/src/tools/sandbox-wrapper.ts 实现 SandboxToolWrapper；将 Layer1 工具的执行委托给沙盒；确保工作目录隔离、环境变量注入、资源限制生效；包装 stdout/stderr 为标准 ToolResult",
             "status": "pending",
             "testStrategy": "集成测试：沙盒内执行命令、文件操作，验证隔离与资源限制",
@@ -482,7 +535,10 @@
             "id": 7,
             "title": "实现工具链串联执行",
             "description": "支持多工具顺序执行与输出传递",
-            "dependencies": [5, 6],
+            "dependencies": [
+              5,
+              6
+            ],
             "details": "在 packages/core/src/tools/chain.ts 实现 ToolChain 类；接收工具调用序列，前一个工具输出作为下一个输入（通过 context 或参数映射）；收集每步 metrics；任一工具失败时中断并返回部分结果",
             "status": "pending",
             "testStrategy": "单元测试：串联执行、中间失败、输出传递",
@@ -492,7 +548,11 @@
             "id": 8,
             "title": "完善导出与集成验证",
             "description": "更新入口导出，编写文档与集成测试",
-            "dependencies": [5, 6, 7],
+            "dependencies": [
+              5,
+              6,
+              7
+            ],
             "details": "更新 packages/core/src/index.ts 导出工具模块；与 Task 5 Worker 集成验证；编写 README 示例展示注册自定义工具与执行链；确保 bun test 通过",
             "status": "pending",
             "testStrategy": "集成测试：Worker 调用工具链端到端；安全拒绝路径验证",
@@ -669,7 +729,9 @@
             "id": 2,
             "title": "实现 Redis 会话缓存适配器",
             "description": "开发 Redis 适配器用于会话级记忆缓存",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/memory/providers/redis.ts 实现 RedisSessionCache 类；封装连接池、get/set/delete 操作、TTL 管理；支持健康检查与重连；提供配置化 Redis URL/密码",
             "status": "pending",
             "testStrategy": "单元测试：mock Redis 验证操作序列；集成测试：本地 Redis 读写",
@@ -679,7 +741,9 @@
             "id": 3,
             "title": "实现 LevelDB 持久化适配器",
             "description": "开发 LevelDB 适配器用于声明式/过程式记忆持久化",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/memory/providers/leveldb.ts 实现 LevelDBStore 类；封装打开/关闭、put/get/delete/batch 操作；支持按 scope 前缀隔离；处理并发写入与损坏恢复",
             "status": "pending",
             "testStrategy": "单元测试：验证 CRUD 操作、scope 隔离、错误处理",
@@ -689,7 +753,9 @@
             "id": 4,
             "title": "实现向量检索适配器",
             "description": "开发 Qdrant/Chroma 适配器用于语义检索",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/memory/providers/vector.ts 实现 VectorSearchProvider 类；支持 Qdrant 和 Chroma 两种后端（可配置）；封装 upsert/search/delete 操作；支持 topK 检索与相似度阈值过滤",
             "status": "pending",
             "testStrategy": "单元测试：mock 向量数据库验证查询参数；集成测试：本地 Qdrant 插入检索",
@@ -699,7 +765,9 @@
             "id": 5,
             "title": "实现内存 Stub 适配器",
             "description": "提供无外部依赖的内存实现，用于开发和测试",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/memory/providers/memory.ts 实现 InMemoryProvider 类；使用 Map 存储数据，简单向量相似度计算（余弦相似度）；作为缺失后端时的降级方案",
             "status": "pending",
             "testStrategy": "单元测试：验证 CRUD 和 topK 检索",
@@ -709,7 +777,12 @@
             "id": 6,
             "title": "构建统一 MemoryService",
             "description": "编排四类记忆的存取流程，封装 saveMemory/retrieve API",
-            "dependencies": [2, 3, 4, 5],
+            "dependencies": [
+              2,
+              3,
+              4,
+              5
+            ],
             "details": "在 packages/core/src/memory/service.ts 实现 MemoryService 类；根据 MemoryScope 路由到对应适配器；session 用 Redis，declarative/procedural 用 LevelDB+向量，collective 用向量检索；支持 topK 去重、后端失效降级",
             "status": "pending",
             "testStrategy": "集成测试：验证 save/retrieve 跨 scope、topK 排序、降级逻辑",
@@ -719,7 +792,9 @@
             "id": 7,
             "title": "开发 Skills 渐进加载器",
             "description": "按三层模型加载 Skills 目录并基于 trigger 选择性注入",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/core/src/skills/loader.ts 实现 SkillsLoader 类；扫描 skills/ 目录读取 metadata.json；loadSkillByTrigger(trigger) 返回匹配的 SKILL.md 指令；按需加载资源文件；缓存已加载技能；缺失文件时返回空指令",
             "status": "pending",
             "testStrategy": "单元测试：trigger 匹配、分层加载、缓存命中、缺失资源降级",
@@ -729,7 +804,10 @@
             "id": 8,
             "title": "对外 API 导出与集成验证",
             "description": "更新入口导出，编写文档与集成测试",
-            "dependencies": [6, 7],
+            "dependencies": [
+              6,
+              7
+            ],
             "details": "更新 packages/core/src/index.ts 导出 MemoryService 与 SkillsLoader；在 gateway 增加占位路由调用 saveMemory/retrieve/loadSkillByTrigger；编写 README 示例；确保 bun test 通过",
             "status": "pending",
             "testStrategy": "集成测试：端到端验证记忆存取与技能加载；缺失后端时降级响应",
@@ -761,7 +839,9 @@
             "id": 2,
             "title": "实现 OpenTelemetry 追踪封装",
             "description": "为各组件调用创建 span 并注入上下文",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "在 packages/agentops/src/tracing/tracer.ts 实现 TracerWrapper 类；封装 tracer 初始化（OTLP exporter）、createSpan/endSpan helpers；统一附加 taskId/agentId/latency/status 等 attributes；提供函数装饰器 @traced() 与中间件",
             "status": "pending",
             "testStrategy": "单元测试：mock tracer 验证 span 属性写入与错误状态标记",
@@ -771,7 +851,9 @@
             "id": 3,
             "title": "实现结构化 JSON 日志",
             "description": "提供带链路 ID 的 JSON 日志工具",
-            "dependencies": [2],
+            "dependencies": [
+              2
+            ],
             "details": "在 packages/agentops/src/logging/logger.ts 实现 Logger 类；自动注入 traceId/spanId/taskId/agentId；支持 debug/info/warn/error 级别；Bun stdout 集中输出；可插拔 sink（文件、远程）；配置遵循 LoggingConfig",
             "status": "pending",
             "testStrategy": "单元测试：验证不同级别输出格式、上下文字段完整",
@@ -781,7 +863,10 @@
             "id": 4,
             "title": "实现 Prometheus 指标注册与暴露",
             "description": "定义核心指标并提供 HTTP 采集端点",
-            "dependencies": [2, 3],
+            "dependencies": [
+              2,
+              3
+            ],
             "details": "在 packages/agentops/src/metrics/prometheus.ts 使用 prom-client 定义 latency 直方图、errorRate 计数器、tokensPerTask 直方图、taskCompletion 仪表；封装 MetricsRecorder 类；实现 /metrics HTTP handler；支持自定义标签",
             "status": "pending",
             "testStrategy": "单元测试：指标注册/更新正确；本地 fetch /metrics 验证格式",
@@ -791,7 +876,11 @@
             "id": 5,
             "title": "定义评估接口与生命周期钩子",
             "description": "设计评估框架的类型与钩子机制",
-            "dependencies": [2, 3, 4],
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
             "details": "在 packages/agentops/src/eval/types.ts 定义 Evaluator 接口、EvaluationResult、EvaluationHook；支持 onTaskStart/onTaskEnd/onToolCall/onError 钩子；收集 trace/metrics/logs 数据用于评分",
             "status": "pending",
             "testStrategy": "类型检查通过；钩子注册与触发逻辑单元测试",
@@ -801,7 +890,9 @@
             "id": 6,
             "title": "实现 Outside-In 评估（黑盒测试）",
             "description": "基于输入输出的端到端评估",
-            "dependencies": [5],
+            "dependencies": [
+              5
+            ],
             "details": "在 packages/agentops/src/eval/outside-in.ts 实现 OutsideInEvaluator；比对任务输入与最终输出；支持自定义断言函数；记录成功/失败案例",
             "status": "pending",
             "testStrategy": "单元测试：mock 任务执行验证评估结果",
@@ -811,7 +902,9 @@
             "id": 7,
             "title": "实现 Inside-Out 评估（白盒断点）",
             "description": "基于执行轨迹的中间步骤评估",
-            "dependencies": [5],
+            "dependencies": [
+              5
+            ],
             "details": "在 packages/agentops/src/eval/inside-out.ts 实现 InsideOutEvaluator；在关键断点检查中间状态（工具调用结果、上下文变化）；支持断点条件表达式",
             "status": "pending",
             "testStrategy": "单元测试：验证断点触发与状态检查",
@@ -821,7 +914,9 @@
             "id": 8,
             "title": "实现 LLM-as-Judge 评估",
             "description": "使用 LLM 对任务结果进行评分",
-            "dependencies": [5],
+            "dependencies": [
+              5
+            ],
             "details": "在 packages/agentops/src/eval/llm-judge.ts 实现 LLMJudgeEvaluator；构造评估 prompt，将任务目标与结果提交给 LLM 评分；解析评分结果（1-10 分制 + 理由）；支持自定义评估 prompt",
             "status": "pending",
             "testStrategy": "单元测试：mock LLM 响应验证评分解析",
@@ -831,7 +926,11 @@
             "id": 9,
             "title": "构建回归测试生成与仪表板",
             "description": "收集失败案例生成测试，提供 Grafana 配置",
-            "dependencies": [6, 7, 8],
+            "dependencies": [
+              6,
+              7,
+              8
+            ],
             "details": "在 packages/agentops/src/eval/regression.ts 实现失败案例收集与回归测试代码生成；在 packages/agentops/dashboards/ 提供 Grafana dashboard JSON 示例；编写 README 使用说明；确保 bun test 通过",
             "status": "pending",
             "testStrategy": "集成测试：验证失败案例生成回归记录；仪表板 JSON 可导入 Grafana",
@@ -842,7 +941,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-05T10:19:21.821Z",
+      "lastModified": "2025-12-05T17:50:54.621Z",
       "taskCount": 10,
       "completedCount": 3,
       "tags": [
