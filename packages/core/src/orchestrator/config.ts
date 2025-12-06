@@ -11,6 +11,7 @@ import type {
   DelegationDefaults,
   AggregationConfig,
   CheckpointConfig,
+  SessionDirConfig,
 } from './types';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
 
@@ -116,6 +117,17 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
   gitIntegration: false,
 };
 
+// ============================================================================
+// Session 目录默认配置
+// ============================================================================
+
+/**
+ * 默认 Session 目录配置
+ */
+export const DEFAULT_SESSION_DIR_CONFIG: SessionDirConfig = {
+  rootDir: '.tachikoma',
+};
+
 /**
  * 启用 Git 集成的检查点配置
  */
@@ -165,6 +177,7 @@ export const DEFAULT_ORCHESTRATOR_CONFIG: OrchestratorConfig = {
   delegation: DEFAULT_DELEGATION_DEFAULTS,
   aggregation: DEFAULT_AGGREGATION_CONFIG,
   checkpoint: DEFAULT_CHECKPOINT_CONFIG,
+  session: DEFAULT_SESSION_DIR_CONFIG,
 };
 
 // ============================================================================
@@ -201,6 +214,7 @@ export interface PartialOrchestratorConfig {
   delegation?: PartialDelegationDefaults;
   aggregation?: Partial<AggregationConfig>;
   checkpoint?: Partial<CheckpointConfig>;
+  session?: Partial<SessionDirConfig>;
 }
 
 /**
@@ -272,6 +286,10 @@ export function createOrchestratorConfig(
     checkpoint: {
       ...baseConfig.checkpoint,
       ...overrides.checkpoint,
+    },
+    session: {
+      ...baseConfig.session,
+      ...overrides.session,
     },
   };
 }

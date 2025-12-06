@@ -471,6 +471,16 @@ export interface OrchestratorConfig {
   aggregation: AggregationConfig;
   /** 检查点配置 */
   checkpoint: CheckpointConfig;
+  /** Session 配置（共享文件系统） */
+  session: SessionDirConfig;
+}
+
+/**
+ * Session 目录配置
+ */
+export interface SessionDirConfig {
+  /** Session 根目录（默认 .tachikoma） */
+  rootDir: string;
 }
 
 /**
@@ -530,6 +540,10 @@ export interface OrchestratorEvent<T = unknown> {
   type: OrchestratorEventType;
   /** 任务 ID */
   taskId: string;
+  /** 会话 ID（用于调试和关联） */
+  sessionId?: string;
+  /** 追踪 ID（用于分布式追踪） */
+  traceId?: string;
   /** 子任务 ID（如果适用） */
   subtaskId?: string;
   /** 事件数据 */

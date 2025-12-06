@@ -105,10 +105,77 @@ export {
 } from './worker-pool';
 
 // ============================================================================
+// Session 文件管理导出
+// ============================================================================
+
+export {
+  // 类型
+  type SessionConfig,
+  type PlanFile,
+  type ProgressFile,
+  type DecisionType,
+  type DecisionRecord,
+  type WorkerStatusFile,
+  type ThinkingRecord,
+  type ActionType,
+  type ActionRecord,
+  type ApprovalRequestType,
+  type PendingApprovalFile,
+  type ApprovalResponseFile,
+  type InterventionType,
+  type InterventionFile,
+  type SharedContextFile,
+  type MessageDirection,
+  type MessageRecord,
+  type SessionFileEventType,
+  type SessionFileEvent,
+  type SessionFileEventHandler,
+  type ISessionFileManager,
+  // 常量
+  DEFAULT_SESSION_CONFIG,
+  // 类
+  SessionFileManager,
+  SessionPathBuilder,
+  FileLock,
+  // 工厂函数
+  createSessionFileManager,
+  createAndInitializeSessionFileManager,
+  // 工具函数
+  generateId,
+  generateTimestampId,
+  atomicWriteFile,
+  atomicWriteJson,
+  appendJsonlRecord,
+  readJsonlRecords,
+  readJsonlTail,
+  readJsonFile,
+  ensureDir,
+  fileExists,
+  safeDeleteFile,
+  removeDir,
+  listDir,
+  getFileStats,
+  withFileLock,
+  sleep,
+  now,
+} from './session';
+
+// ============================================================================
+// Orchestrator 导出
+// ============================================================================
+
+export {
+  // Orchestrator 类
+  Orchestrator,
+  // 工厂函数
+  createOrchestrator,
+  // 类型
+  type OrchestratorOptions,
+} from './orchestrator';
+
+// ============================================================================
 // TODO: 后续导出实现模块
 // ============================================================================
 
-// export { Orchestrator } from './orchestrator';
-// export { Planner } from './planner';
 // export { CheckpointManager } from './checkpoint';
 // export { CommunicationDelegation } from './delegation/communication';

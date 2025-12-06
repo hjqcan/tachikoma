@@ -303,9 +303,10 @@
               1
             ],
             "details": "在 packages/core/src/orchestrator/session/ 实现 SessionFileManager 类；定义会话目录结构：sessions/{session-id}/orchestrator/(plan.json,progress.json,decisions.jsonl)、workers/{worker-id}/(thinking.jsonl,actions.jsonl,status.json,pending_approval.json,intervention.json,artifacts/)、shared/(context.json,messages.jsonl)；实现原子写入（write-to-temp-then-rename）；使用 fs.watch 监控 workers/ 目录变化（特别是 pending_approval.json）；提供 readWorkerStatus/readPendingApproval/writApprovalResponse API",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：验证目录创建、原子写入、pending_approval 文件监控事件触发",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-06T05:56:09.769Z"
           },
           {
             "id": 6,
@@ -316,9 +317,10 @@
               5
             ],
             "details": "在 packages/core/src/orchestrator/orchestrator.ts 实现 Orchestrator，继承 BaseAgent；run() 方法调用 planner.plan() 生成计划，通过 delegation 分配给 WorkerPool，聚合结果为最终 TaskResult；支持 RetryPolicy 控制重试次数，失败时触发降级模式切换",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：端到端验证 plan→assign→aggregate 流程；失败触发重试与降级",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-06T06:26:31.115Z"
           },
           {
             "id": 7,
@@ -361,7 +363,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-06T04:59:04.201Z"
+        "updatedAt": "2025-12-06T06:26:31.115Z"
       },
       {
         "id": "5",
@@ -964,7 +966,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-06T04:59:04.205Z",
+      "lastModified": "2025-12-06T06:26:31.116Z",
       "taskCount": 10,
       "completedCount": 3,
       "tags": [
