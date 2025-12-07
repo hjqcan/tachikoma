@@ -37,6 +37,7 @@ import {
   fileExists,
   safeDeleteFile,
   generateTimestampId,
+  getFileStats,
   now,
 } from './utils';
 
@@ -164,8 +165,17 @@ export class SessionFileManager implements ISessionFileManager {
    * 注册 Worker 目录
    */
   async registerWorker(workerId: string): Promise<void> {
+    // 已注册时，验证目录和状态文件仍然存在
     if (this.registeredWorkers.has(workerId)) {
-      return; // 已注册
+      const workerDir = this.paths.workerDir(workerId);
+      const statusFile = this.paths.workerStatusFile(workerId);
+      if (!fileExists(workerDir) || !fileExists(statusFile)) {
+        // 目录或状态文件被外部删除，需要重新创建
+        this.registeredWorkers.delete(workerId);
+        console.warn(`[SessionFileManager] Worker ${workerId} directory/status missing, re-registering`);
+      } else {
+        return; // 已注册且目录存在
+      }
     }
 
     // 创建 Worker 目录
@@ -226,7 +236,7 @@ export class SessionFileManager implements ISessionFileManager {
     await atomicWriteJson(this.paths.progressFile, fullProgress);
 
     // 发出进度更新事件
-    this.emit('progress_updated', fullProgress);
+    this.emit('progress_updated', fullProgress, undefined, this.paths.progressFile);
   }
 
   /**
@@ -283,7 +293,7 @@ export class SessionFileManager implements ISessionFileManager {
     await atomicWriteJson(this.paths.workerStatusFile(workerId), fullStatus);
 
     // 发出状态变化事件
-    this.emit('worker_status_changed', fullStatus, workerId);
+    this.emit('worker_status_changed', fullStatus, workerId, this.paths.workerStatusFile(workerId));
   }
 
   /**
@@ -295,15 +305,26 @@ export class SessionFileManager implements ISessionFileManager {
 
   /**
    * 写入审批响应
+   *
+   * 幂等处理：检查现有响应的 requestId，避免重复记录决策
    */
   async writeApprovalResponse(workerId: string, response: ApprovalResponseFile): Promise<void> {
-    await atomicWriteJson(this.paths.workerApprovalResponseFile(workerId), response);
+    const responsePath = this.paths.workerApprovalResponseFile(workerId);
+
+    // 幂等检查：如果已存在相同 requestId 的响应，跳过重复写入
+    const existingResponse = await this.readApprovalResponse(workerId);
+    if (existingResponse && existingResponse.requestId === response.requestId) {
+      console.warn(`[SessionFileManager] Approval response for requestId ${response.requestId} already exists, skipping`);
+      return;
+    }
+
+    await atomicWriteJson(responsePath, response);
 
     // 删除待审批文件（表示已处理）
     await safeDeleteFile(this.paths.workerPendingApprovalFile(workerId));
 
     // 发出审批处理完成事件
-    this.emit('pending_approval_removed', response, workerId);
+    this.emit('pending_approval_removed', response, workerId, responsePath);
 
     // 记录决策
     await this.appendDecision({
@@ -317,6 +338,7 @@ export class SessionFileManager implements ISessionFileManager {
       },
       trigger: {
         source: response.respondedBy === 'human' ? 'manual' : 'system',
+        requestId: response.requestId, // 添加 requestId 用于幂等追踪
       },
     });
   }
@@ -335,16 +357,17 @@ export class SessionFileManager implements ISessionFileManager {
     workerId: string,
     intervention: Omit<InterventionFile, 'interventionId' | 'createdAt' | 'acknowledged'>
   ): Promise<void> {
+    const interventionPath = this.paths.workerInterventionFile(workerId);
     const fullIntervention: InterventionFile = {
       ...intervention,
       interventionId: generateTimestampId('intervention'),
       createdAt: now(),
       acknowledged: false,
     };
-    await atomicWriteJson(this.paths.workerInterventionFile(workerId), fullIntervention);
+    await atomicWriteJson(interventionPath, fullIntervention);
 
     // 发出干预事件
-    this.emit('intervention_created', fullIntervention, workerId);
+    this.emit('intervention_created', fullIntervention, workerId, interventionPath);
 
     // 记录决策
     await this.appendDecision({
@@ -356,6 +379,7 @@ export class SessionFileManager implements ISessionFileManager {
       },
       trigger: {
         source: 'periodic_check',
+        interventionId: fullIntervention.interventionId, // 添加 interventionId 用于幂等追踪
       },
     });
   }
@@ -478,13 +502,17 @@ export class SessionFileManager implements ISessionFileManager {
 
   /**
    * 发出事件
+   * @param type - 事件类型
+   * @param data - 事件数据
+   * @param workerId - Worker ID（可选）
+   * @param filePath - 相关文件路径（可选）
    */
-  private emit<T>(type: SessionFileEventType, data: T, workerId?: string): void {
+  private emit<T>(type: SessionFileEventType, data: T, workerId?: string, filePath?: string): void {
     const event: SessionFileEvent<T> = {
       type,
       sessionId: this.sessionId,
       ...(workerId !== undefined && { workerId }),
-      filePath: '', // 由具体方法填充
+      filePath: filePath || '',
       data,
       timestamp: now(),
     };
@@ -584,36 +612,46 @@ export class SessionFileManager implements ISessionFileManager {
 
   /**
    * 处理文件变化
+   *
+   * 注意：所有读取操作都用 try/catch 包装，防止 JSON 解析错误导致 watcher 崩溃
    */
   private async handleFileChange(
     workerId: string,
     filename: string,
     _eventType: string
   ): Promise<void> {
-    // 处理 pending_approval.json
-    if (filename === 'pending_approval.json') {
-      const approval = await this.readPendingApproval(workerId);
-      if (approval) {
-        this.emit('pending_approval_created', approval, workerId);
-      }
-    }
-
-    // 处理 status.json
-    if (filename === 'status.json') {
-      const status = await this.readWorkerStatus(workerId);
-      if (status) {
-        this.emit('worker_status_changed', status, workerId);
-      }
-    }
-
-    // 处理 intervention.json
-    if (filename === 'intervention.json') {
-      const intervention = await this.readIntervention(workerId);
-      if (intervention) {
-        if (intervention.acknowledged) {
-          this.emit('intervention_acknowledged', intervention, workerId);
+    try {
+      // 处理 pending_approval.json
+      if (filename === 'pending_approval.json') {
+        const filePath = this.paths.workerPendingApprovalFile(workerId);
+        const approval = await this.readPendingApproval(workerId);
+        if (approval) {
+          this.emit('pending_approval_created', approval, workerId, filePath);
         }
       }
+
+      // 处理 status.json
+      if (filename === 'status.json') {
+        const filePath = this.paths.workerStatusFile(workerId);
+        const status = await this.readWorkerStatus(workerId);
+        if (status) {
+          this.emit('worker_status_changed', status, workerId, filePath);
+        }
+      }
+
+      // 处理 intervention.json
+      if (filename === 'intervention.json') {
+        const filePath = this.paths.workerInterventionFile(workerId);
+        const intervention = await this.readIntervention(workerId);
+        if (intervention) {
+          if (intervention.acknowledged) {
+            this.emit('intervention_acknowledged', intervention, workerId, filePath);
+          }
+        }
+      }
+    } catch (error) {
+      // 捕获 JSON 解析错误或其他读取错误，记录警告但不终止监听
+      console.warn(`[SessionFileManager] Error handling file change for worker ${workerId}, file ${filename}:`, error);
     }
   }
 
@@ -644,23 +682,87 @@ export class SessionFileManager implements ISessionFileManager {
 
   /**
    * 检查单个 Worker 的文件变化
+   *
+   * 使用时间戳对比检测所有监控文件的变化，防止 fs.watch 漏事件
    */
   private async checkWorkerFileChanges(workerId: string): Promise<void> {
-    const pendingApprovalPath = this.paths.workerPendingApprovalFile(workerId);
-    const cacheKey = `${workerId}:pending_approval`;
+    try {
+      // 检查 pending_approval.json
+      await this.checkFileByTimestamp(
+        workerId,
+        'pending_approval',
+        this.paths.workerPendingApprovalFile(workerId),
+        async (filePath) => {
+          const approval = await this.readPendingApproval(workerId);
+          if (approval) {
+            this.emit('pending_approval_created', approval, workerId, filePath);
+          }
+        }
+      );
 
-    const currentExists = fileExists(pendingApprovalPath);
-    const lastState = this.watchState.lastFileStates.get(cacheKey);
+      // 检查 status.json
+      await this.checkFileByTimestamp(
+        workerId,
+        'status',
+        this.paths.workerStatusFile(workerId),
+        async (filePath) => {
+          const status = await this.readWorkerStatus(workerId);
+          if (status) {
+            this.emit('worker_status_changed', status, workerId, filePath);
+          }
+        }
+      );
 
-    if (currentExists && !lastState) {
-      // 新创建了 pending_approval.json
-      const approval = await this.readPendingApproval(workerId);
-      if (approval) {
-        this.emit('pending_approval_created', approval, workerId);
-      }
+      // 检查 intervention.json
+      await this.checkFileByTimestamp(
+        workerId,
+        'intervention',
+        this.paths.workerInterventionFile(workerId),
+        async (filePath) => {
+          const intervention = await this.readIntervention(workerId);
+          if (intervention && intervention.acknowledged) {
+            this.emit('intervention_acknowledged', intervention, workerId, filePath);
+          }
+        }
+      );
+
+      // 检查 approval_response.json
+      await this.checkFileByTimestamp(
+        workerId,
+        'approval_response',
+        this.paths.workerApprovalResponseFile(workerId),
+        async (filePath) => {
+          const response = await this.readApprovalResponse(workerId);
+          if (response) {
+            this.emit('pending_approval_removed', response, workerId, filePath);
+          }
+        }
+      );
+    } catch (error) {
+      console.warn(`[SessionFileManager] Error polling worker ${workerId}:`, error);
+    }
+  }
+
+  /**
+   * 基于时间戳检查文件变化
+   */
+  private async checkFileByTimestamp(
+    workerId: string,
+    fileType: string,
+    filePath: string,
+    onChanged: (filePath: string) => Promise<void>
+  ): Promise<void> {
+    const cacheKey = `${workerId}:${fileType}`;
+    const stats = await getFileStats(filePath);
+    const currentMtime = stats?.mtime.getTime() || 0;
+    const lastMtime = this.watchState.lastFileStates.get(cacheKey) || 0;
+
+    if (currentMtime > 0 && currentMtime !== lastMtime) {
+      // 文件已更新，触发回调
+      await onChanged(filePath);
     }
 
-    this.watchState.lastFileStates.set(cacheKey, currentExists ? 1 : 0);
+    this.watchState.lastFileStates.set(cacheKey, currentMtime);
   }
 
   /**
@@ -682,9 +784,22 @@ export class SessionFileManager implements ISessionFileManager {
 
   /**
    * 清理会话目录
+   *
+   * 安全检查：确保 sessionRoot 路径合法，防止配置错误导致误删
    */
   async cleanup(): Promise<void> {
-    await removeDir(this.paths.sessionRoot);
+    const sessionRoot = this.paths.sessionRoot;
+    const expectedPrefix = `${this.config.rootDir}/sessions/`;
+
+    // 安全检查：确保路径包含正确的前缀和 sessionId
+    if (!sessionRoot.includes(expectedPrefix) || !sessionRoot.includes(this.sessionId)) {
+      throw new Error(
+        `[SessionFileManager] Refusing to cleanup invalid path: ${sessionRoot}. ` +
+        `Expected path to contain '${expectedPrefix}' and sessionId '${this.sessionId}'`
+      );
+    }
+
+    await removeDir(sessionRoot);
   }
 
   /**

@@ -25,7 +25,7 @@ import {
   shouldRetry,
   createOrchestratorConfig,
 } from './config';
-import { Planner, type PlanResult } from '../planner';
+import { Planner, type PlanResult, createLLMClient } from '../planner';
 import {
   DefaultWorkerPool,
   type IWorkerPool,
@@ -36,6 +36,11 @@ import {
   generateTimestampId,
   type ISessionFileManager,
   type ProgressFile,
+  type PendingApprovalFile,
+  type ApprovalResponseFile,
+  type SessionFileEvent,
+  type ThinkingRecord,
+  type InterventionFile,
 } from './session';
 
 // ============================================================================
@@ -151,6 +156,21 @@ export class Orchestrator extends BaseAgent {
   /** 当前执行状态 */
   private executionState: ExecutionState | null = null;
 
+  /** 审批处理器（绑定的方法引用，用于事件订阅/取消） */
+  private readonly boundApprovalHandler: (event: SessionFileEvent<PendingApprovalFile>) => Promise<void>;
+
+  /** 偏离检测定时器 */
+  private deviationDetectionTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** 各 Worker 的最后干预时间（用于冷却控制） */
+  private readonly workerInterventionCooldowns = new Map<string, number>();
+
+  /** 已处理的审批请求缓存（requestId -> 处理时间戳，用于 TTL 清理） */
+  private readonly processedApprovalRequests = new Map<string, number>();
+
+  /** 审批请求缓存 TTL（5 分钟） */
+  private static readonly REQUEST_CACHE_TTL = 5 * 60 * 1000;
+
   constructor(id: string, options: OrchestratorOptions = {}) {
     const config = createOrchestratorConfig(options.config);
 
@@ -168,6 +188,9 @@ export class Orchestrator extends BaseAgent {
 
     // 保存注入的 SessionManager（用于测试）
     this.injectedSessionManager = options.sessionManager ?? null;
+
+    // 绑定审批处理器方法
+    this.boundApprovalHandler = this.handlePendingApproval.bind(this);
   }
 
   // ============================================================================
@@ -376,6 +399,7 @@ export class Orchestrator extends BaseAgent {
    * 初始化会话
    *
    * 使用配置中的 session.rootDir，避免路径字符串替换
+   * 初始化后启动文件监控（如果启用）并注册审批事件处理器
    */
   private async initializeSession(_taskId: string): Promise<void> {
     this.currentSessionId = generateTimestampId('session');
@@ -388,21 +412,516 @@ export class Orchestrator extends BaseAgent {
         this.currentSessionId,
         {
           rootDir: this.orchestratorConfig.session.rootDir,
+          enableWatch: this.orchestratorConfig.session.enableWatch ?? true,
+          watchPollInterval: this.orchestratorConfig.session.watchPollInterval ?? 500,
         }
       );
     }
+
+    // 注册审批请求事件处理器
+    this.sessionManager.on<PendingApprovalFile>(
+      'pending_approval_created',
+      this.boundApprovalHandler
+    );
+
+    // 启动文件监控（如果配置启用且 SessionManager 支持）
+    // 对于注入的 SessionManager，由调用者负责管理监控生命周期
+    if (!this.injectedSessionManager && this.sessionManager) {
+      await this.sessionManager.startWatching();
+    }
+
+    // 启动偏离检测定时器（如果配置启用）
+    this.startDeviationDetection();
   }
 
   /**
    * 关闭会话
+   *
+   * 先取消事件监听、停止文件监控，再关闭 SessionManager
    */
   private async closeSession(): Promise<void> {
+    // 停止偏离检测定时器
+    this.stopDeviationDetection();
+
+    // 取消审批事件监听
+    if (this.sessionManager) {
+      this.sessionManager.off<PendingApprovalFile>(
+        'pending_approval_created',
+        this.boundApprovalHandler
+      );
+    }
+
     // 只有当 sessionManager 不是注入的时候才关闭
     if (this.sessionManager && !this.injectedSessionManager) {
+      // 显式停止文件监控（虽然 close() 内部也会调用，但显式调用更清晰）
+      this.sessionManager.stopWatching();
       await this.sessionManager.close();
     }
+
+    // 清理缓存
+    this.processedApprovalRequests.clear();
+
     this.sessionManager = null;
     this.currentSessionId = null;
+  }
+
+  /**
+   * 处理 Worker 审批请求
+   *
+   * 根据审批策略配置，对 Worker 发起的审批请求做出决策：
+   * 1. 检查请求类型是否在自动批准/拒绝列表中
+   * 2. 检查是否为低影响或可逆操作（可自动批准）
+   * 3. 否则使用默认决策
+   *
+   * @param event - 审批请求事件
+   */
+  private async handlePendingApproval(
+    event: SessionFileEvent<PendingApprovalFile>
+  ): Promise<void> {
+    if (!this.sessionManager) return;
+
+    const approval = event.data;
+    const workerId = event.workerId || approval.workerId;
+    const policy = this.orchestratorConfig.approval;
+    const now = Date.now();
+
+    // 检查是否已处理过此请求（避免重复处理）
+    if (this.processedApprovalRequests.has(approval.requestId)) {
+      return; // 跳过已处理的请求
+    }
+
+    // 清理过期的请求缓存（TTL 清理）
+    for (const [requestId, timestamp] of this.processedApprovalRequests) {
+      if (now - timestamp > Orchestrator.REQUEST_CACHE_TTL) {
+        this.processedApprovalRequests.delete(requestId);
+      }
+    }
+
+    // 标记为已处理（记录时间戳用于 TTL）
+    this.processedApprovalRequests.set(approval.requestId, now);
+
+    // 检查是否已超时（使用 approval.timeout 或 policy.timeout）
+    const requestTimeout = approval.timeout || policy.timeout;
+    const isTimedOut = now - approval.requestedAt > requestTimeout;
+
+    // 发送收到审批请求事件
+    this.emit('approval:received', approval.subtaskId, {
+      requestId: approval.requestId,
+      workerId,
+      type: approval.type,
+      description: approval.description,
+      isTimedOut,
+    });
+
+    // 根据策略决定是否批准
+    let approved: boolean;
+    let reason: string;
+
+    // 0. 检查是否已超时（优先处理超时情况）
+    if (isTimedOut) {
+      const timeoutDecision = approval.defaultDecision || policy.defaultDecision;
+      approved = timeoutDecision === 'approve';
+      reason = `Request timed out after ${Math.round(requestTimeout / 1000)}s, using default decision: ${timeoutDecision}`;
+    }
+    // 1. 检查是否在自动拒绝列表中
+    else if (policy.autoRejectTypes.includes(approval.type)) {
+      approved = false;
+      reason = `Request type "${approval.type}" is in auto-reject list`;
+    }
+    // 2. 检查是否在自动批准列表中
+    else if (policy.autoApproveTypes.includes(approval.type)) {
+      approved = true;
+      reason = `Request type "${approval.type}" is in auto-approve list`;
+    }
+    // 3. 检查低影响操作
+    else if (policy.lowImpactAutoApprove && approval.details.impactScope === 'low') {
+      approved = true;
+      reason = 'Low impact operation auto-approved';
+    }
+    // 4. 检查可逆操作
+    else if (policy.reversibleAutoApprove && approval.details.reversible) {
+      approved = true;
+      reason = 'Reversible operation auto-approved';
+    }
+    // 5. 使用默认决策
+    else {
+      approved = policy.defaultDecision === 'approve';
+      reason = `Default decision: ${policy.defaultDecision}`;
+    }
+
+    // 构建审批响应
+    const response: ApprovalResponseFile = {
+      requestId: approval.requestId,
+      respondedAt: Date.now(),
+      approved,
+      respondedBy: 'orchestrator',
+      reason,
+    };
+
+    // 写入审批响应（SessionFileManager.writeApprovalResponse 会自动清理 pending_approval.json 并记录决策）
+    await this.sessionManager.writeApprovalResponse(workerId, response);
+
+    // 发送审批完成事件
+    this.emit('approval:complete', approval.subtaskId, {
+      requestId: approval.requestId,
+      workerId,
+      approved,
+      reason,
+    });
+  }
+
+  // ============================================================================
+  // 偏离检测方法
+  // ============================================================================
+
+  /**
+   * 启动偏离检测定时器
+   */
+  private startDeviationDetection(): void {
+    const config = this.orchestratorConfig.deviationDetection;
+    
+    if (!config.enabled) {
+      return;
+    }
+
+    // 清除已有定时器
+    this.stopDeviationDetection();
+
+    // 启动周期性检测
+    this.deviationDetectionTimer = setInterval(() => {
+      this.checkWorkersForDeviation().catch((error) => {
+        console.error('[Orchestrator] Deviation detection error:', error);
+      });
+    }, config.checkInterval);
+  }
+
+  /**
+   * 停止偏离检测定时器
+   */
+  private stopDeviationDetection(): void {
+    if (this.deviationDetectionTimer) {
+      clearInterval(this.deviationDetectionTimer);
+      this.deviationDetectionTimer = null;
+    }
+    // 清除冷却缓存
+    this.workerInterventionCooldowns.clear();
+  }
+
+  /**
+   * 检查所有 Worker 的偏离情况
+   *
+   * 遍历 WorkerPool 中所有活跃的 Worker，读取其思考日志并进行偏离检测
+   */
+  private async checkWorkersForDeviation(): Promise<void> {
+    if (!this.sessionManager) return;
+
+    const config = this.orchestratorConfig.deviationDetection;
+    const workers = this.workerPool.getAllWorkers();
+
+    for (const worker of workers) {
+      // 跳过空闲状态的 Worker
+      if (worker.status === 'idle') continue;
+
+      // 检查冷却时间
+      const lastIntervention = this.workerInterventionCooldowns.get(worker.id);
+      if (lastIntervention && Date.now() - lastIntervention < config.interventionCooldown) {
+        continue; // 仍在冷却中，跳过此 Worker
+      }
+
+      try {
+        // 读取最新思考日志
+        const thinkingLogs = await this.sessionManager.readThinkingLogs(
+          worker.id,
+          config.thinkingLogLimit
+        );
+
+        if (thinkingLogs.length === 0) continue;
+
+        // 使用规则检测评估偏离
+        if (config.enableRuleBasedDetection) {
+          const deviationResult = this.evaluateThinkingLogs(thinkingLogs, worker.currentTaskId);
+          
+          if (deviationResult && deviationResult.score >= config.deviationThreshold) {
+            // 如果启用模型评估，用 LLM 二次确认规则检测结果
+            let confirmedDeviation = true;
+            if (config.enableModelEvaluation && config.evaluationLLMConfig) {
+              confirmedDeviation = await this.evaluateDeviationWithModel(
+                thinkingLogs,
+                deviationResult,
+                config.evaluationLLMConfig
+              );
+            }
+
+            if (confirmedDeviation) {
+              // 检测到偏离，发出事件
+              this.emit('deviation:detected', worker.currentTaskId || '', {
+                workerId: worker.id,
+                deviationType: deviationResult.type,
+                score: deviationResult.score,
+                description: deviationResult.description,
+                modelConfirmed: config.enableModelEvaluation ? confirmedDeviation : undefined,
+              });
+
+              // 判断是否需要自动干预
+              if (this.shouldAutoIntervene(deviationResult.severity, config.autoInterventionSeverity)) {
+                await this.issueIntervention(
+                  worker.id,
+                  deviationResult.type,
+                  deviationResult.description,
+                  deviationResult.severity,
+                  deviationResult.suggestedSteps
+                );
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`[Orchestrator] Error checking deviation for worker ${worker.id}:`, error);
+      }
+    }
+  }
+
+  /**
+   * 使用 LLM 模型评估偏离
+   *
+   * 当规则检测认为有偏离时，调用 LLM 进行二次确认
+   * 减少误报，提高干预准确性
+   *
+   * @param logs - 思考日志
+   * @param ruleResult - 规则检测结果
+   * @param llmConfig - LLM 配置
+   * @returns 是否确认偏离
+   */
+  private async evaluateDeviationWithModel(
+    logs: ThinkingRecord[],
+    ruleResult: { type: string; description: string; score: number },
+    llmConfig: NonNullable<typeof this.orchestratorConfig.deviationDetection.evaluationLLMConfig>
+  ): Promise<boolean> {
+    try {
+      const llmClient = createLLMClient({
+        provider: llmConfig.provider,
+        apiKey: llmConfig.apiKey || '',
+        model: llmConfig.model,
+        maxTokens: llmConfig.maxTokens || 500,
+      });
+
+      const logsText = logs.slice(-5).map(l => 
+        `[${l.stage}] ${l.content}${l.confidence !== undefined ? ` (confidence: ${l.confidence})` : ''}`
+      ).join('\n');
+
+      const response = await llmClient.complete({
+        systemPrompt: `You are an AI assistant evaluating whether a worker agent is deviating from its assigned task.
+Analyze the thinking logs and determine if the detected deviation is genuine.
+Respond with only "YES" if you confirm the deviation, or "NO" if the detection seems to be a false positive.`,
+        messages: [{
+          role: 'user',
+          content: `Rule-based detection found: ${ruleResult.type}
+Description: ${ruleResult.description}
+Confidence: ${ruleResult.score}
+
+Recent thinking logs:
+${logsText}
+
+Is this a genuine deviation? Answer YES or NO only.`,
+        }],
+        maxTokens: 10,
+        temperature: 0.1,
+      });
+
+      return response.content.trim().toUpperCase().includes('YES');
+    } catch (error) {
+      console.error('[Orchestrator] Model evaluation failed, using rule-based result:', error);
+      return true; // 失败时默认信任规则检测结果
+    }
+  }
+
+  /**
+   * 评估思考日志，检测偏离
+   *
+   * 使用规则进行轻量检测：
+   * - 检查是否长时间无进展（stuck）
+   * - 检查是否重复相同操作（repetitive）
+   * - 检查置信度是否持续走低
+   *
+   * @param logs - 思考日志记录
+   * @param currentTaskId - 当前任务 ID
+   * @returns 偏离检测结果，如果未检测到偏离则返回 null
+   */
+  private evaluateThinkingLogs(
+    logs: ThinkingRecord[],
+    currentTaskId?: string
+  ): {
+    type: 'off_task' | 'inefficient' | 'stuck' | 'repetitive' | 'resource_abuse';
+    score: number;
+    description: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    suggestedSteps: string[];
+  } | null {
+    if (logs.length < 3) return null; // 日志太少，无法判断
+
+    const config = this.orchestratorConfig.deviationDetection;
+
+    // 规则1: 检测是否卡住（最近日志时间间隔异常短或内容高度相似）
+    const recentLogs = logs.slice(-5);
+    const contents = recentLogs.map(l => l.content.toLowerCase().trim());
+    const uniqueContents = new Set(contents);
+    
+    if (uniqueContents.size <= 2 && recentLogs.length >= 5) {
+      return {
+        type: 'repetitive',
+        score: config.repetitiveThreshold,
+        description: 'Worker is producing repetitive thinking patterns, possibly stuck in a loop',
+        severity: 'medium',
+        suggestedSteps: [
+          'Consider a different approach to the current problem',
+          'Review the original task requirements',
+          'If stuck, break down the problem into smaller steps',
+        ],
+      };
+    }
+
+    // 规则2: 检测置信度持续走低
+    const confidences = logs.filter(l => l.confidence !== undefined).map(l => l.confidence!);
+    if (confidences.length >= 5) {
+      const recentConfidences = confidences.slice(-5);
+      const avgRecent = recentConfidences.reduce((a, b) => a + b, 0) / recentConfidences.length;
+      const olderConfidences = confidences.slice(0, -5);
+      const avgOlder = olderConfidences.length > 0 
+        ? olderConfidences.reduce((a, b) => a + b, 0) / olderConfidences.length 
+        : 0.7;
+      
+      if (avgRecent < 0.3 && avgOlder - avgRecent > 0.3) {
+        return {
+          type: 'stuck',
+          score: config.stuckThreshold,
+          description: 'Worker confidence has dropped significantly, may be struggling with the current task',
+          severity: 'low',
+          suggestedSteps: [
+            'Take a step back and reassess the problem',
+            'Consider asking for additional context or clarification',
+            'Try a simpler approach first',
+          ],
+        };
+      }
+    }
+
+    // 规则3: 检测是否偏离任务（如果有任务 ID 但日志中的 subtaskId 不匹配）
+    if (currentTaskId) {
+      const mismatchedLogs = recentLogs.filter(l => l.subtaskId !== currentTaskId);
+      if (mismatchedLogs.length >= 3) {
+        return {
+          type: 'off_task',
+          score: config.offTaskThreshold,
+          description: 'Worker thinking logs suggest deviation from the assigned task',
+          severity: 'medium',
+          suggestedSteps: [
+            'Refocus on the current assigned task',
+            'Check if the current work is aligned with task objectives',
+          ],
+        };
+      }
+    }
+
+    // 规则4: 检测效率低下（reflection 阶段过多）
+    const reflectionLogs = recentLogs.filter(l => l.stage === 'reflection');
+    if (reflectionLogs.length >= 4 && recentLogs.length >= 5) {
+      return {
+        type: 'inefficient',
+        score: config.inefficientThreshold,
+        description: 'Worker is spending too much time in reflection without making progress',
+        severity: 'low',
+        suggestedSteps: [
+          'Move from reflection to action',
+          'Make a decision and proceed with implementation',
+        ],
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * 判断是否应该自动干预
+   */
+  private shouldAutoIntervene(
+    detectedSeverity: 'low' | 'medium' | 'high' | 'critical',
+    thresholdSeverity: 'low' | 'medium' | 'high' | 'critical'
+  ): boolean {
+    const severityOrder = { low: 0, medium: 1, high: 2, critical: 3 };
+    return severityOrder[detectedSeverity] >= severityOrder[thresholdSeverity];
+  }
+
+  /**
+   * 向 Worker 发送干预指令
+   *
+   * @param workerId - Worker ID
+   * @param deviationType - 偏离类型
+   * @param description - 问题描述
+   * @param severity - 严重程度
+   * @param suggestedSteps - 建议的下一步
+   */
+  private async issueIntervention(
+    workerId: string,
+    deviationType: 'off_task' | 'inefficient' | 'stuck' | 'repetitive' | 'resource_abuse',
+    description: string,
+    severity: 'low' | 'medium' | 'high' | 'critical',
+    suggestedSteps: string[]
+  ): Promise<void> {
+    if (!this.sessionManager) return;
+
+    // 记录冷却时间
+    this.workerInterventionCooldowns.set(workerId, Date.now());
+
+    // 根据偏离类型决定干预类型
+    const interventionType: InterventionFile['type'] = 
+      deviationType === 'off_task' ? 'redirect' :
+      severity === 'critical' ? 'pause' :
+      'guidance';
+
+    // 构建干预指令
+    const intervention: Omit<InterventionFile, 'interventionId' | 'createdAt' | 'acknowledged'> = {
+      type: interventionType,
+      reason: `Deviation detected: ${deviationType}`,
+      detectedIssue: {
+        type: deviationType === 'off_task' ? 'deviation' :
+              deviationType === 'inefficient' ? 'inefficiency' :
+              deviationType === 'stuck' || deviationType === 'repetitive' ? 'stuck' :
+              'error',
+        description,
+        severity,
+      },
+      instructions: this.generateInterventionInstructions(deviationType, description),
+      suggestedNextSteps: suggestedSteps,
+    };
+
+    // 写入干预指令
+    await this.sessionManager.writeIntervention(workerId, intervention);
+
+    // 发送干预事件
+    this.emit('deviation:intervention', '', {
+      workerId,
+      deviationType,
+      interventionType,
+      severity,
+    });
+  }
+
+  /**
+   * 生成干预指令内容
+   */
+  private generateInterventionInstructions(
+    deviationType: string,
+    description: string
+  ): string {
+    const instructions: Record<string, string> = {
+      off_task: 'Please refocus on your assigned task. The detected behavior suggests you may have strayed from the main objective. Review your task requirements and realign your approach.',
+      inefficient: 'Your current approach appears to be inefficient. Consider simplifying your strategy and making more direct progress toward the goal.',
+      stuck: 'You appear to be stuck. Try a different approach or break down the problem into smaller, more manageable steps.',
+      repetitive: 'You are repeating similar actions without progress. Step back, analyze what is not working, and try an alternative method.',
+      resource_abuse: 'Resource usage patterns are concerning. Please optimize your approach to use resources more efficiently.',
+    };
+
+    return instructions[deviationType] || `Attention required: ${description}`;
   }
 
   /**

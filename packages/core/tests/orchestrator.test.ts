@@ -4,7 +4,7 @@
  * 测试类型定义、配置、工具函数和 Orchestrator 类
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import {
   // 配置
   DEFAULT_ORCHESTRATOR_CONFIG,
@@ -18,6 +18,8 @@ import {
   AGGRESSIVE_RETRY_POLICY,
   HIGH_CONCURRENCY_WORKER_POOL_CONFIG,
   GIT_ENABLED_CHECKPOINT_CONFIG,
+  DEFAULT_APPROVAL_POLICY,
+  DEFAULT_DEVIATION_DETECTION_CONFIG,
   // 配置构建器
   createOrchestratorConfig,
   validateOrchestratorConfig,
@@ -34,6 +36,9 @@ import {
   // Session 管理
   SessionFileManager,
   type ISessionFileManager,
+  type PendingApprovalFile,
+  type ApprovalResponseFile,
+  type SessionFileEventHandler,
   // 类型
   type OrchestratorTask,
   type SubTask,
@@ -43,6 +48,7 @@ import {
   type CheckpointState,
   type AggregatedResult,
   type OrchestratorEventType,
+  type ApprovalPolicy,
 } from '../src/orchestrator';
 import { Planner, MockLLMClient, type PlanResult } from '../src/planner';
 import type { Task, TaskResult } from '../src/types';
@@ -693,6 +699,36 @@ describe('Orchestrator 类', () => {
     });
   }
 
+  // 创建慢速 Mock Planner（用于偏离检测测试）
+  function createSlowMockPlanner(): Planner {
+    const mockClient = new MockLLMClient({
+      provider: 'mock',
+      model: 'mock-model',
+      maxTokens: 1000,
+      responses: [
+        {
+          content: mockPlanningResponse,
+          usage: { inputTokens: 100, outputTokens: 200 },
+          model: 'mock-model',
+        },
+      ],
+      simulateDelay: 50, // 较慢的延迟
+    });
+
+    return new Planner({
+      llmClient: mockClient,
+    });
+  }
+
+  // 创建慢速 Mock WorkerPool（用于偏离检测测试）
+  function createSlowMockWorkerPoolForTest(): MockWorkerPool {
+    return new MockWorkerPool({
+      config: DEFAULT_WORKER_POOL_CONFIG,
+      initialWorkers: 2,
+      taskDelay: 100, // 较慢的任务延迟，给偏离检测时间触发
+    });
+  }
+
   // 创建 Mock SessionFileManager
   function createMockSessionManager(): ISessionFileManager {
     // 使用简化的 Mock 实现
@@ -704,36 +740,81 @@ describe('Orchestrator 类', () => {
         watchPollInterval: 1000,
         enableWatch: false,
       },
-      initializeSession: async () => {},
-      registerWorker: async () => {},
+      initializeSession: async () => { /* mock: no-op */ },
+      registerWorker: async () => { /* mock: no-op */ },
       getSessionPath: () => '.tachikoma-test/sessions/test-session',
       getWorkerPath: (workerId: string) =>
         `.tachikoma-test/sessions/test-session/workers/${workerId}`,
-      writePlan: async () => {},
+      writePlan: async () => { /* mock: no-op */ },
       readPlan: async () => null,
-      writeProgress: async () => {},
+      writeProgress: async () => { /* mock: no-op */ },
       readProgress: async () => null,
-      appendDecision: async () => {},
+      appendDecision: async () => { /* mock: no-op */ },
       readDecisions: async () => [],
       readWorkerStatus: async () => null,
-      writeWorkerStatus: async () => {},
+      writeWorkerStatus: async () => { /* mock: no-op */ },
       readPendingApproval: async () => null,
-      writeApprovalResponse: async () => {},
+      writeApprovalResponse: async () => { /* mock: no-op */ },
       readApprovalResponse: async () => null,
-      writeIntervention: async () => {},
+      writeIntervention: async () => { /* mock: no-op */ },
       readIntervention: async () => null,
       readThinkingLogs: async () => [],
       readActionLogs: async () => [],
       readSharedContext: async () => null,
-      writeSharedContext: async () => {},
-      appendMessage: async () => {},
+      writeSharedContext: async () => { /* mock: no-op */ },
+      appendMessage: async () => { /* mock: no-op */ },
       readMessages: async () => [],
-      on: () => {},
-      off: () => {},
-      startWatching: async () => {},
-      stopWatching: () => {},
-      cleanup: async () => {},
-      close: async () => {},
+      on: () => { /* mock: no-op */ },
+      off: () => { /* mock: no-op */ },
+      startWatching: async () => { /* mock: no-op */ },
+      stopWatching: () => { /* mock: no-op */ },
+      cleanup: async () => { /* mock: no-op */ },
+      close: async () => { /* mock: no-op */ },
+    };
+
+    return mockSession;
+  }
+
+  // 创建带 mock 跟踪的 SessionFileManager（用于需要验证调用的测试）
+  function createMockSessionManagerForTest(): ISessionFileManager {
+    const mockSession: ISessionFileManager = {
+      sessionId: 'test-session',
+      config: {
+        rootDir: '.tachikoma-test',
+        autoCreateDirs: false,
+        watchPollInterval: 1000,
+        enableWatch: false,
+      },
+      initializeSession: mock(async () => { /* mock: no-op */ }),
+      registerWorker: mock(async () => { /* mock: no-op */ }),
+      getSessionPath: () => '.tachikoma-test/sessions/test-session',
+      getWorkerPath: (workerId: string) =>
+        `.tachikoma-test/sessions/test-session/workers/${workerId}`,
+      writePlan: mock(async () => { /* mock: no-op */ }),
+      readPlan: mock(async () => null),
+      writeProgress: mock(async () => { /* mock: no-op */ }),
+      readProgress: mock(async () => null),
+      appendDecision: mock(async () => { /* mock: no-op */ }),
+      readDecisions: mock(async () => []),
+      readWorkerStatus: mock(async () => null),
+      writeWorkerStatus: mock(async () => { /* mock: no-op */ }),
+      readPendingApproval: mock(async () => null),
+      writeApprovalResponse: mock(async () => { /* mock: no-op */ }),
+      readApprovalResponse: mock(async () => null),
+      writeIntervention: mock(async () => { /* mock: no-op */ }),
+      readIntervention: mock(async () => null),
+      readThinkingLogs: mock(async () => []),
+      readActionLogs: mock(async () => []),
+      readSharedContext: mock(async () => null),
+      writeSharedContext: mock(async () => { /* mock: no-op */ }),
+      appendMessage: mock(async () => { /* mock: no-op */ }),
+      readMessages: mock(async () => []),
+      on: mock(() => { /* mock: no-op */ }),
+      off: mock(() => { /* mock: no-op */ }),
+      startWatching: mock(async () => { /* mock: no-op */ }),
+      stopWatching: mock(() => { /* mock: no-op */ }),
+      cleanup: mock(async () => { /* mock: no-op */ }),
+      close: mock(async () => { /* mock: no-op */ }),
     };
 
     return mockSession;
@@ -1064,6 +1145,983 @@ describe('Orchestrator 类', () => {
       expect(retryCount).toBeGreaterThanOrEqual(0);
 
       await orchestrator.stop();
+    });
+  });
+
+  describe('会话文件监控生命周期', () => {
+    /**
+     * 创建用于追踪监控调用的 Mock SessionFileManager
+     */
+    function createTrackedMockSessionManager(): ISessionFileManager & {
+      watchCalls: { startWatching: number; stopWatching: number };
+    } {
+      const watchCalls = { startWatching: 0, stopWatching: 0 };
+
+      const mockSession: ISessionFileManager & {
+        watchCalls: { startWatching: number; stopWatching: number };
+      } = {
+        sessionId: 'test-session',
+        config: {
+          rootDir: '.tachikoma-test',
+          autoCreateDirs: false,
+          watchPollInterval: 1000,
+          enableWatch: true,
+        },
+        watchCalls,
+        initializeSession: async () => { /* mock: no-op */ },
+        registerWorker: async () => { /* mock: no-op */ },
+        getSessionPath: () => '.tachikoma-test/sessions/test-session',
+        getWorkerPath: (workerId: string) =>
+          `.tachikoma-test/sessions/test-session/workers/${workerId}`,
+        writePlan: async () => { /* mock: no-op */ },
+        readPlan: async () => null,
+        writeProgress: async () => { /* mock: no-op */ },
+        readProgress: async () => null,
+        appendDecision: async () => { /* mock: no-op */ },
+        readDecisions: async () => [],
+        readWorkerStatus: async () => null,
+        writeWorkerStatus: async () => { /* mock: no-op */ },
+        readPendingApproval: async () => null,
+        writeApprovalResponse: async () => { /* mock: no-op */ },
+        readApprovalResponse: async () => null,
+        writeIntervention: async () => { /* mock: no-op */ },
+        readIntervention: async () => null,
+        readThinkingLogs: async () => [],
+        readActionLogs: async () => [],
+        readSharedContext: async () => null,
+        writeSharedContext: async () => { /* mock: no-op */ },
+        appendMessage: async () => { /* mock: no-op */ },
+        readMessages: async () => [],
+        on: () => { /* mock: no-op */ },
+        off: () => { /* mock: no-op */ },
+        startWatching: async () => {
+          watchCalls.startWatching++;
+        },
+        stopWatching: () => {
+          watchCalls.stopWatching++;
+        },
+        cleanup: async () => { /* mock: no-op */ },
+        close: async () => { /* mock: no-op */ },
+      };
+
+      return mockSession;
+    }
+
+    it('注入的 SessionManager 不应由 Orchestrator 管理监控生命周期', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const trackedSession = createTrackedMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: trackedSession,
+      });
+
+      const task: Task = {
+        id: 'task-watch-001',
+        type: 'composite',
+        objective: '测试注入 SessionManager 的监控行为',
+        constraints: [],
+      };
+
+      await orchestrator.run(task);
+
+      // 注入的 SessionManager 不应由 Orchestrator 调用 startWatching/stopWatching
+      expect(trackedSession.watchCalls.startWatching).toBe(0);
+      expect(trackedSession.watchCalls.stopWatching).toBe(0);
+
+      await orchestrator.stop();
+    });
+
+    it('默认配置应启用监控', () => {
+      const config = createOrchestratorConfig();
+      expect(config.session.enableWatch).toBe(true);
+      expect(config.session.watchPollInterval).toBe(500);
+    });
+
+    it('应支持自定义监控配置', () => {
+      const config = createOrchestratorConfig({
+        session: {
+          enableWatch: false,
+          watchPollInterval: 2000,
+        },
+      });
+
+      expect(config.session.enableWatch).toBe(false);
+      expect(config.session.watchPollInterval).toBe(2000);
+    });
+
+    it('cleanup() 应正确清理资源', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const trackedSession = createTrackedMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: trackedSession,
+      });
+
+      // 执行任务
+      const task: Task = {
+        id: 'task-cleanup-001',
+        type: 'composite',
+        objective: '测试清理',
+        constraints: [],
+      };
+
+      await orchestrator.run(task);
+      await orchestrator.stop();
+
+      // 会话应已清理
+      expect(orchestrator.getCurrentSessionId()).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // 审批处理测试 (Task 4.11)
+  // ==========================================================================
+
+  describe('审批请求处理', () => {
+    // 扩展的 Mock SessionManager 类型
+    interface ApprovalMockSessionManager extends ISessionFileManager {
+      pendingApprovalHandler: SessionFileEventHandler<PendingApprovalFile> | null;
+      writeApprovalResponseCalls: ApprovalResponseFile[];
+      queuePendingApproval: (approval: PendingApprovalFile) => void;
+      triggerPendingApproval: (approval: PendingApprovalFile) => Promise<void>;
+    }
+
+    // 创建支持事件触发的 Mock SessionManager
+    function createApprovalMockSessionManager(): ApprovalMockSessionManager {
+      const writeApprovalResponseCalls: ApprovalResponseFile[] = [];
+      // 保存一个永久的处理器引用（不会被 off 清除）
+      let persistentHandler: SessionFileEventHandler<PendingApprovalFile> | null = null;
+      // 队列中的审批请求，会在处理器注册时自动触发
+      const pendingApprovals: PendingApprovalFile[] = [];
+
+      const mockSession: ApprovalMockSessionManager = {
+        sessionId: 'test-session',
+        config: {
+          rootDir: '.tachikoma-test',
+          autoCreateDirs: false,
+          watchPollInterval: 1000,
+          enableWatch: false,
+        },
+        pendingApprovalHandler: null,
+        writeApprovalResponseCalls,
+        initializeSession: async () => { /* mock: no-op */ },
+        registerWorker: async () => { /* mock: no-op */ },
+        getSessionPath: () => '.tachikoma-test/sessions/test-session',
+        getWorkerPath: (workerId: string) =>
+          `.tachikoma-test/sessions/test-session/workers/${workerId}`,
+        writePlan: async () => { /* mock: no-op */ },
+        readPlan: async () => null,
+        writeProgress: async () => { /* mock: no-op */ },
+        readProgress: async () => null,
+        appendDecision: async () => { /* mock: no-op */ },
+        readDecisions: async () => [],
+        readWorkerStatus: async () => null,
+        writeWorkerStatus: async () => { /* mock: no-op */ },
+        readPendingApproval: async () => null,
+        writeApprovalResponse: async (_workerId: string, response: ApprovalResponseFile) => {
+          writeApprovalResponseCalls.push(response);
+        },
+        readApprovalResponse: async () => null,
+        writeIntervention: async () => { /* mock: no-op */ },
+        readIntervention: async () => null,
+        readThinkingLogs: async () => [],
+        readActionLogs: async () => [],
+        readSharedContext: async () => null,
+        writeSharedContext: async () => { /* mock: no-op */ },
+        appendMessage: async () => { /* mock: no-op */ },
+        readMessages: async () => [],
+        on: <T = unknown>(type: string, handler: SessionFileEventHandler<T>) => {
+          if (type === 'pending_approval_created') {
+            mockSession.pendingApprovalHandler = handler as SessionFileEventHandler<PendingApprovalFile>;
+            persistentHandler = handler as SessionFileEventHandler<PendingApprovalFile>;
+            // 自动处理队列中的审批请求
+            for (const approval of pendingApprovals) {
+              // 使用 setTimeout 确保这在同步代码之后执行
+              setTimeout(async () => {
+                await handler({
+                  type: 'pending_approval_created',
+                  sessionId: 'test-session',
+                  filePath: `.tachikoma-test/sessions/test-session/workers/${approval.workerId}/pending_approval.json`,
+                  data: approval as T,
+                  workerId: approval.workerId,
+                  timestamp: Date.now(),
+                });
+              }, 1);
+            }
+          }
+        },
+        off: () => {
+          // off() 会清除 pendingApprovalHandler 但我们保留 persistentHandler
+          // 这样测试可以验证处理器在会话关闭后仍能正常工作
+        },
+        startWatching: async () => { /* mock: no-op */ },
+        stopWatching: () => { /* mock: no-op */ },
+        cleanup: async () => { /* mock: no-op */ },
+        close: async () => { /* mock: no-op */ },
+        // 排队审批请求 - 会在处理器注册时自动触发
+        queuePendingApproval: (approval: PendingApprovalFile) => {
+          pendingApprovals.push(approval);
+        },
+        triggerPendingApproval: async (approval: PendingApprovalFile) => {
+          // 直接触发（需要在 sessionManager 还活着时调用）
+          const handler = persistentHandler || mockSession.pendingApprovalHandler;
+          if (handler) {
+            await handler({
+              type: 'pending_approval_created',
+              sessionId: 'test-session',
+              filePath: `.tachikoma-test/sessions/test-session/workers/${approval.workerId}/pending_approval.json`,
+              data: approval,
+              workerId: approval.workerId,
+              timestamp: Date.now(),
+            });
+          }
+        },
+      };
+
+      return mockSession;
+    }
+
+    // 创建测试用 PendingApprovalFile
+    function createTestApproval(overrides: Partial<PendingApprovalFile> = {}): PendingApprovalFile {
+      return {
+        requestId: 'req-001',
+        workerId: 'worker-0',
+        subtaskId: 'subtask-1',
+        requestedAt: Date.now(),
+        type: 'file_deletion',
+        description: 'Delete temporary files',
+        details: {
+          affectedFiles: ['/tmp/test.txt'],
+          impactScope: 'low',
+          reversible: false,
+        },
+        timeout: 30000,
+        defaultDecision: 'approve',
+        ...overrides,
+      };
+    }
+
+    it('DEFAULT_APPROVAL_POLICY 应包含正确的默认值', () => {
+      expect(DEFAULT_APPROVAL_POLICY.defaultDecision).toBe('approve');
+      expect(DEFAULT_APPROVAL_POLICY.autoApproveTypes).toEqual([]);
+      expect(DEFAULT_APPROVAL_POLICY.autoRejectTypes).toContain('dangerous_operation');
+      expect(DEFAULT_APPROVAL_POLICY.timeout).toBe(30000);
+      expect(DEFAULT_APPROVAL_POLICY.lowImpactAutoApprove).toBe(true);
+      expect(DEFAULT_APPROVAL_POLICY.reversibleAutoApprove).toBe(true);
+    });
+
+    it('createOrchestratorConfig 应正确合并审批策略配置', () => {
+      const config = createOrchestratorConfig({
+        approval: {
+          defaultDecision: 'reject',
+          autoApproveTypes: ['file_deletion'],
+        },
+      });
+
+      expect(config.approval.defaultDecision).toBe('reject');
+      expect(config.approval.autoApproveTypes).toContain('file_deletion');
+      // 应保留未覆盖的默认值
+      expect(config.approval.lowImpactAutoApprove).toBe(true);
+    });
+
+    it('initializeSession 应注册 pending_approval_created 事件监听器', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      // 执行任务以触发 initializeSession
+      const task: Task = {
+        id: 'task-approval-001',
+        type: 'composite',
+        objective: '测试审批监听器注册',
+        constraints: [],
+      };
+
+      await orchestrator.run(task);
+
+      // 验证监听器已注册
+      expect(mockSession.pendingApprovalHandler).not.toBeNull();
+
+      await orchestrator.stop();
+    });
+
+    it('收到 pending_approval_created 事件时应调用 writeApprovalResponse', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const task: Task = {
+        id: 'task-approval-002',
+        type: 'composite',
+        objective: '测试审批响应写入',
+        constraints: [],
+      };
+
+      // 在 run() 前队列审批请求，这样会在 session 初始化时触发
+      const approval = createTestApproval();
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      // 等待异步处理完成
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证 writeApprovalResponse 被调用
+      expect(mockSession.writeApprovalResponseCalls.length).toBe(1);
+      expect(mockSession.writeApprovalResponseCalls[0].requestId).toBe('req-001');
+
+      await orchestrator.stop();
+    });
+
+    it('autoRejectTypes 中的类型应被自动拒绝', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const task: Task = {
+        id: 'task-approval-003',
+        type: 'composite',
+        objective: '测试自动拒绝',
+        constraints: [],
+      };
+
+      // 队列 dangerous_operation 类型的审批请求
+      const approval = createTestApproval({
+        type: 'dangerous_operation',
+      });
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证被拒绝
+      expect(mockSession.writeApprovalResponseCalls[0].approved).toBe(false);
+      expect(mockSession.writeApprovalResponseCalls[0].reason).toContain('auto-reject');
+
+      await orchestrator.stop();
+    });
+
+    it('autoApproveTypes 中的类型应被自动批准', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      // 配置自动批准 file_deletion
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          approval: {
+            autoApproveTypes: ['file_deletion'],
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-approval-004',
+        type: 'composite',
+        objective: '测试自动批准',
+        constraints: [],
+      };
+
+      const approval = createTestApproval({
+        type: 'file_deletion',
+      });
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证被批准
+      expect(mockSession.writeApprovalResponseCalls[0].approved).toBe(true);
+      expect(mockSession.writeApprovalResponseCalls[0].reason).toContain('auto-approve');
+
+      await orchestrator.stop();
+    });
+
+    it('低影响操作应被自动批准（当 lowImpactAutoApprove 启用时）', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const task: Task = {
+        id: 'task-approval-005',
+        type: 'composite',
+        objective: '测试低影响自动批准',
+        constraints: [],
+      };
+
+      // 使用低影响的 multi_file_refactor（不在自动批准/拒绝列表中）
+      const approval = createTestApproval({
+        type: 'multi_file_refactor',
+        details: {
+          impactScope: 'low',
+          reversible: false,
+        },
+      });
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证被批准
+      expect(mockSession.writeApprovalResponseCalls[0].approved).toBe(true);
+      expect(mockSession.writeApprovalResponseCalls[0].reason).toContain('Low impact');
+
+      await orchestrator.stop();
+    });
+
+    it('可逆操作应被自动批准（当 reversibleAutoApprove 启用时）', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const task: Task = {
+        id: 'task-approval-006',
+        type: 'composite',
+        objective: '测试可逆操作自动批准',
+        constraints: [],
+      };
+
+      // 使用可逆的操作（非低影响）
+      const approval = createTestApproval({
+        type: 'external_api_call',
+        details: {
+          impactScope: 'medium',
+          reversible: true,
+        },
+      });
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证被批准
+      expect(mockSession.writeApprovalResponseCalls[0].approved).toBe(true);
+      expect(mockSession.writeApprovalResponseCalls[0].reason).toContain('Reversible');
+
+      await orchestrator.stop();
+    });
+
+    it('无特定策略匹配时应使用 defaultDecision', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      // 配置默认拒绝，禁用自动批准
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          approval: {
+            defaultDecision: 'reject',
+            lowImpactAutoApprove: false,
+            reversibleAutoApprove: false,
+            autoRejectTypes: [],
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-approval-007',
+        type: 'composite',
+        objective: '测试默认决策',
+        constraints: [],
+      };
+
+      const approval = createTestApproval({
+        type: 'resource_intensive',
+        details: {
+          impactScope: 'high',
+          reversible: false,
+        },
+      });
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证使用默认决策（拒绝）
+      expect(mockSession.writeApprovalResponseCalls[0].approved).toBe(false);
+      expect(mockSession.writeApprovalResponseCalls[0].reason).toContain('Default decision');
+
+      await orchestrator.stop();
+    });
+
+    it('审批响应应包含正确的 respondedBy 字段', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const task: Task = {
+        id: 'task-approval-008',
+        type: 'composite',
+        objective: '测试 respondedBy 字段',
+        constraints: [],
+      };
+
+      const approval = createTestApproval();
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证 respondedBy 为 orchestrator
+      expect(mockSession.writeApprovalResponseCalls[0].respondedBy).toBe('orchestrator');
+
+      await orchestrator.stop();
+    });
+
+    it('应发送 approval:received 和 approval:complete 事件', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+      });
+
+      const events: OrchestratorEventType[] = [];
+      orchestrator.on('approval:received', () => {
+        events.push('approval:received');
+      });
+      orchestrator.on('approval:complete', () => {
+        events.push('approval:complete');
+      });
+
+      const task: Task = {
+        id: 'task-approval-009',
+        type: 'composite',
+        objective: '测试审批事件',
+        constraints: [],
+      };
+
+      const approval = createTestApproval();
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // 验证事件被触发
+      expect(events).toContain('approval:received');
+      expect(events).toContain('approval:complete');
+
+      await orchestrator.stop();
+    });
+
+    it('同一 requestId 的审批请求只应处理一次（防止重复）', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createApprovalMockSessionManager();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          approval: DEFAULT_APPROVAL_POLICY,
+        },
+      });
+
+      let receivedCount = 0;
+      let completeCount = 0;
+      orchestrator.on('approval:received', () => {
+        receivedCount++;
+      });
+      orchestrator.on('approval:complete', () => {
+        completeCount++;
+      });
+
+      const task: Task = {
+        id: 'task-approval-010',
+        type: 'composite',
+        objective: '测试审批去重',
+        constraints: [],
+      };
+
+      const approval = createTestApproval();
+      // 队列同一个审批请求两次
+      mockSession.queuePendingApproval(approval);
+      mockSession.queuePendingApproval(approval);
+
+      await orchestrator.run(task);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // 应该只处理一次
+      expect(receivedCount).toBe(1);
+      expect(completeCount).toBe(1);
+
+      await orchestrator.stop();
+    });
+  });
+
+  // ============================================================================
+  // 偏离检测测试
+  // ============================================================================
+
+  describe('偏离检测', () => {
+    it('DEFAULT_DEVIATION_DETECTION_CONFIG 应包含正确的默认值', () => {
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG).toBeDefined();
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.enabled).toBe(false);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.checkInterval).toBe(10000);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.thinkingLogLimit).toBe(20);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.deviationThreshold).toBe(0.7);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.interventionCooldown).toBe(60000);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.autoInterventionSeverity).toBe('high');
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.enableRuleBasedDetection).toBe(true);
+      expect(DEFAULT_DEVIATION_DETECTION_CONFIG.enableModelEvaluation).toBe(false);
+    });
+
+    it('createOrchestratorConfig 应正确合并偏离检测配置', () => {
+      const config = createOrchestratorConfig({
+        deviationDetection: {
+          enabled: true,
+          checkInterval: 5000,
+        },
+      });
+
+      expect(config.deviationDetection.enabled).toBe(true);
+      expect(config.deviationDetection.checkInterval).toBe(5000);
+      // 未覆盖的字段应保持默认值
+      expect(config.deviationDetection.thinkingLogLimit).toBe(20);
+    });
+
+    it('偏离检测默认禁用时不应启动定时器', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        // 使用默认配置，偏离检测禁用
+      });
+
+      const task: Task = {
+        id: 'task-deviation-001',
+        type: 'composite',
+        objective: '测试偏离检测禁用',
+        constraints: [],
+      };
+
+      await orchestrator.run(task);
+
+      // 偏离检测禁用时不会产生相关调用
+      // 验证 readThinkingLogs 未被调用（因为定时器未启动）
+      expect(mockSession.readThinkingLogs).not.toHaveBeenCalled();
+
+      await orchestrator.stop();
+    });
+
+    it('偏离检测启用时应执行周期性检测', async () => {
+      const mockPlanner = createSlowMockPlanner();
+      const mockPool = createSlowMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      // 手动注册一个 busy 状态的 worker 用于测试
+      mockPool.register({
+        id: 'worker-test-0',
+        status: 'busy',
+        currentTaskId: 'subtask-1',
+        capabilities: ['general'],
+      });
+
+      // 设置思考日志返回值
+      (mockSession.readThinkingLogs as ReturnType<typeof mock>).mockResolvedValue([]);
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          deviationDetection: {
+            enabled: true,
+            checkInterval: 30, // 30ms 间隔便于测试
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-deviation-002',
+        type: 'composite',
+        objective: '测试偏离检测启用',
+        constraints: [],
+      };
+
+      // 启动任务（不等待完成）
+      const runPromise = orchestrator.run(task);
+      
+      // 等待足够时间让定时器触发（任务执行期间）
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // 验证 readThinkingLogs 被调用
+      expect(mockSession.readThinkingLogs).toHaveBeenCalled();
+
+      // 等待任务完成
+      await runPromise;
+      await orchestrator.stop();
+    });
+
+    it('检测到重复模式时应触发 deviation:detected 事件', async () => {
+      const mockPlanner = createSlowMockPlanner();
+      const mockPool = createSlowMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      // 手动注册一个 busy 状态的 worker 用于测试
+      mockPool.register({
+        id: 'worker-test-1',
+        status: 'busy',
+        currentTaskId: 'subtask-1',
+        capabilities: ['general'],
+      });
+
+      // 设置重复的思考日志
+      const repetitiveLogs = [
+        { id: '1', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'thinking', stage: 'analysis' },
+        { id: '2', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'thinking', stage: 'analysis' },
+        { id: '3', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'thinking', stage: 'analysis' },
+        { id: '4', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'thinking', stage: 'analysis' },
+        { id: '5', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'thinking', stage: 'analysis' },
+      ];
+      (mockSession.readThinkingLogs as ReturnType<typeof mock>).mockResolvedValue(repetitiveLogs);
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          deviationDetection: {
+            enabled: true,
+            checkInterval: 30,
+            autoInterventionSeverity: 'medium', // 设为 medium 以便触发干预
+          },
+        },
+      });
+
+      const events: string[] = [];
+      orchestrator.on('deviation:detected', () => {
+        events.push('deviation:detected');
+      });
+      orchestrator.on('deviation:intervention', () => {
+        events.push('deviation:intervention');
+      });
+
+      const task: Task = {
+        id: 'task-deviation-003',
+        type: 'composite',
+        objective: '测试重复模式检测',
+        constraints: [],
+      };
+
+      // 启动任务（不等待完成）
+      const runPromise = orchestrator.run(task);
+      
+      // 等待足够时间让定时器触发
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // 验证事件被触发
+      expect(events).toContain('deviation:detected');
+
+      // 等待任务完成
+      await runPromise;
+      await orchestrator.stop();
+    });
+
+    it('检测到偏离时应调用 writeIntervention', async () => {
+      const mockPlanner = createSlowMockPlanner();
+      const mockPool = createSlowMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      // 手动注册一个 busy 状态的 worker 用于测试
+      mockPool.register({
+        id: 'worker-test-2',
+        status: 'busy',
+        currentTaskId: 'subtask-1',
+        capabilities: ['general'],
+      });
+
+      // 设置重复的思考日志
+      const repetitiveLogs = [
+        { id: '1', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'same same same', stage: 'analysis' },
+        { id: '2', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'same same same', stage: 'analysis' },
+        { id: '3', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'same same same', stage: 'analysis' },
+        { id: '4', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'same same same', stage: 'analysis' },
+        { id: '5', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'same same same', stage: 'analysis' },
+      ];
+      (mockSession.readThinkingLogs as ReturnType<typeof mock>).mockResolvedValue(repetitiveLogs);
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          deviationDetection: {
+            enabled: true,
+            checkInterval: 30,
+            autoInterventionSeverity: 'medium', // 设为 medium 以便触发干预
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-deviation-004',
+        type: 'composite',
+        objective: '测试干预写入',
+        constraints: [],
+      };
+
+      // 启动任务（不等待完成）
+      const runPromise = orchestrator.run(task);
+      
+      // 等待足够时间让定时器触发
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // 验证 writeIntervention 被调用
+      expect(mockSession.writeIntervention).toHaveBeenCalled();
+
+      // 等待任务完成
+      await runPromise;
+      await orchestrator.stop();
+    });
+
+    it('冷却时间内不应重复干预', async () => {
+      const mockPlanner = createSlowMockPlanner();
+      const mockPool = createSlowMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      // 手动注册一个 busy 状态的 worker 用于测试
+      mockPool.register({
+        id: 'worker-test-3',
+        status: 'busy',
+        currentTaskId: 'subtask-1',
+        capabilities: ['general'],
+      });
+
+      // 设置重复的思考日志
+      const repetitiveLogs = [
+        { id: '1', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'repeat', stage: 'analysis' },
+        { id: '2', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'repeat', stage: 'analysis' },
+        { id: '3', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'repeat', stage: 'analysis' },
+        { id: '4', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'repeat', stage: 'analysis' },
+        { id: '5', timestamp: Date.now(), subtaskId: 'subtask-1', content: 'repeat', stage: 'analysis' },
+      ];
+      (mockSession.readThinkingLogs as ReturnType<typeof mock>).mockResolvedValue(repetitiveLogs);
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          deviationDetection: {
+            enabled: true,
+            checkInterval: 20, // 20ms 间隔
+            interventionCooldown: 5000, // 5秒冷却时间
+            autoInterventionSeverity: 'medium',
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-deviation-005',
+        type: 'composite',
+        objective: '测试冷却时间',
+        constraints: [],
+      };
+
+      // 启动任务（不等待完成）
+      const runPromise = orchestrator.run(task);
+      
+      // 等待多个检测周期
+      await new Promise(resolve => setTimeout(resolve, 150));
+
+      // 由于冷却时间设置为 5 秒，writeIntervention 应该只被调用一次
+      expect((mockSession.writeIntervention as ReturnType<typeof mock>).mock.calls.length).toBe(1);
+
+      // 等待任务完成
+      await runPromise;
+      await orchestrator.stop();
+    });
+
+    it('closeSession 应清理偏离检测定时器', async () => {
+      const mockPlanner = createMockPlanner();
+      const mockPool = createMockWorkerPoolForTest();
+      const mockSession = createMockSessionManagerForTest();
+
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: mockPlanner,
+        workerPool: mockPool,
+        sessionManager: mockSession,
+        config: {
+          deviationDetection: {
+            enabled: true,
+            checkInterval: 50,
+          },
+        },
+      });
+
+      const task: Task = {
+        id: 'task-deviation-006',
+        type: 'composite',
+        objective: '测试定时器清理',
+        constraints: [],
+      };
+
+      await orchestrator.run(task);
+      await orchestrator.stop();
+
+      // 等待一段时间，验证定时器已停止（不再有新的调用）
+      const callCountBefore = (mockSession.readThinkingLogs as ReturnType<typeof mock>).mock.calls.length;
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const callCountAfter = (mockSession.readThinkingLogs as ReturnType<typeof mock>).mock.calls.length;
+
+      // 停止后不应有新调用
+      expect(callCountAfter).toBe(callCountBefore);
     });
   });
 });

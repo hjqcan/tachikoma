@@ -456,6 +456,91 @@ export interface LongRunningTaskFiles {
 // ============================================================================
 
 /**
+ * 审批请求类型（从 session/types 复用）
+ */
+export type ApprovalRequestType =
+  | 'file_deletion'       // 文件删除
+  | 'multi_file_refactor' // 多文件重构
+  | 'external_api_call'   // 外部 API 调用
+  | 'dangerous_operation' // 危险操作
+  | 'resource_intensive'; // 资源密集型操作
+
+/**
+ * 审批策略配置
+ *
+ * 定义 Orchestrator 如何处理 Worker 的审批请求
+ */
+export interface ApprovalPolicy {
+  /** 默认决策（当无特定策略匹配时） */
+  defaultDecision: 'approve' | 'reject';
+  /** 自动批准的请求类型 */
+  autoApproveTypes: ApprovalRequestType[];
+  /** 自动拒绝的请求类型 */
+  autoRejectTypes: ApprovalRequestType[];
+  /** 审批超时时间（毫秒），超时后使用 defaultDecision */
+  timeout: number;
+  /** 低影响操作自动批准 */
+  lowImpactAutoApprove: boolean;
+  /** 可逆操作自动批准 */
+  reversibleAutoApprove: boolean;
+}
+
+/**
+ * 偏离类型
+ */
+export type DeviationType = 
+  | 'off_task'           // 偏离任务目标
+  | 'inefficient'        // 效率低下
+  | 'stuck'              // 卡住/无进展
+  | 'repetitive'         // 重复操作
+  | 'resource_abuse';    // 资源滥用
+
+/**
+ * 偏离检测配置
+ *
+ * 定义 Orchestrator 如何检测 Worker 的偏离行为
+ */
+export interface DeviationDetectionConfig {
+  /** 是否启用偏离检测 */
+  enabled: boolean;
+  /** 检测间隔（毫秒），默认 10000ms (10秒) */
+  checkInterval: number;
+  /** 每次检查读取的思考日志条数 */
+  thinkingLogLimit: number;
+  /** 偏离检测阈值（0-1），高于此值认为偏离 */
+  deviationThreshold: number;
+  /** 同一 Worker 的干预冷却时间（毫秒），避免频繁干预 */
+  interventionCooldown: number;
+  /** 自动进入干预的严重程度阈值 */
+  autoInterventionSeverity: 'low' | 'medium' | 'high' | 'critical';
+  /** 是否启用规则检测（轻量运算） */
+  enableRuleBasedDetection: boolean;
+  /** 是否启用模型评估（重模型，用于可疑情况） */
+  enableModelEvaluation: boolean;
+
+  // ===== 检测阈值配置（用于规则检测） =====
+
+  /** 重复模式检测阈值（0-1），默认 0.85 */
+  repetitiveThreshold: number;
+  /** 卡住检测阈值（信心下降幅度），默认 0.75 */
+  stuckThreshold: number;
+  /** 偏离任务检测阈值，默认 0.70 */
+  offTaskThreshold: number;
+  /** 效率低下检测阈值（反思/行动比例），默认 0.65 */
+  inefficientThreshold: number;
+
+  // ===== 模型评估配置 =====
+
+  /** 评估用 LLM 配置（仅当 enableModelEvaluation 为 true 时需要） */
+  evaluationLLMConfig?: {
+    provider: 'anthropic' | 'openai' | 'mock';
+    apiKey?: string;
+    model: string;
+    maxTokens?: number;
+  };
+}
+
+/**
  * Orchestrator 配置
  */
 export interface OrchestratorConfig {
@@ -473,6 +558,10 @@ export interface OrchestratorConfig {
   checkpoint: CheckpointConfig;
   /** Session 配置（共享文件系统） */
   session: SessionDirConfig;
+  /** 审批策略配置 */
+  approval: ApprovalPolicy;
+  /** 偏离检测配置 */
+  deviationDetection: DeviationDetectionConfig;
 }
 
 /**
@@ -481,6 +570,10 @@ export interface OrchestratorConfig {
 export interface SessionDirConfig {
   /** Session 根目录（默认 .tachikoma） */
   rootDir: string;
+  /** 是否启用文件监控（默认 true） */
+  enableWatch?: boolean;
+  /** 文件监控轮询间隔（毫秒，默认 500） */
+  watchPollInterval?: number;
 }
 
 /**
@@ -530,7 +623,11 @@ export type OrchestratorEventType =
   | 'aggregate:start'
   | 'aggregate:complete'
   | 'checkpoint:created'
-  | 'checkpoint:restored';
+  | 'checkpoint:restored'
+  | 'approval:received'     // 收到审批请求
+  | 'approval:complete'     // 审批处理完成
+  | 'deviation:detected'    // 检测到偏离
+  | 'deviation:intervention'; // 发送干预指令
 
 /**
  * Orchestrator 事件

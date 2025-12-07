@@ -12,6 +12,8 @@ import type {
   AggregationConfig,
   CheckpointConfig,
   SessionDirConfig,
+  ApprovalPolicy,
+  DeviationDetectionConfig,
 } from './types';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
 
@@ -126,6 +128,57 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
  */
 export const DEFAULT_SESSION_DIR_CONFIG: SessionDirConfig = {
   rootDir: '.tachikoma',
+  enableWatch: true,
+  watchPollInterval: 500,
+};
+
+// ============================================================================
+// 审批策略默认配置
+// ============================================================================
+
+/**
+ * 默认审批策略
+ *
+ * 采用较保守的策略：
+ * - 低影响和可逆操作自动批准
+ * - 危险操作自动拒绝
+ * - 其他操作默认批准
+ */
+export const DEFAULT_APPROVAL_POLICY: ApprovalPolicy = {
+  defaultDecision: 'approve',
+  autoApproveTypes: [],
+  autoRejectTypes: ['dangerous_operation'],
+  timeout: 30000, // 30 秒超时
+  lowImpactAutoApprove: true,
+  reversibleAutoApprove: true,
+};
+
+// ============================================================================
+// 偏离检测默认配置
+// ============================================================================
+
+/**
+ * 默认偏离检测配置
+ *
+ * 采用较保守的策略：
+ * - 默认禁用（需要显式启用）
+ * - 10秒检测间隔
+ * - 仅对高严重程度自动干预
+ */
+export const DEFAULT_DEVIATION_DETECTION_CONFIG: DeviationDetectionConfig = {
+  enabled: false, // 默认禁用，需要显式启用
+  checkInterval: 10000, // 10 秒检测间隔
+  thinkingLogLimit: 20, // 每次读取最新 20 条思考日志
+  deviationThreshold: 0.7, // 偏离置信度阈值
+  interventionCooldown: 60000, // 60 秒冷却时间
+  autoInterventionSeverity: 'high', // 仅高严重程度自动干预
+  enableRuleBasedDetection: true, // 启用规则检测
+  enableModelEvaluation: false, // 模型评估默认禁用（较昂贵）
+  // 检测阈值（用于规则检测）
+  repetitiveThreshold: 0.85, // 重复模式检测阈值
+  stuckThreshold: 0.75, // 卡住检测阈值
+  offTaskThreshold: 0.70, // 偏离任务检测阈值
+  inefficientThreshold: 0.65, // 效率低下检测阈值
 };
 
 /**
@@ -178,6 +231,8 @@ export const DEFAULT_ORCHESTRATOR_CONFIG: OrchestratorConfig = {
   aggregation: DEFAULT_AGGREGATION_CONFIG,
   checkpoint: DEFAULT_CHECKPOINT_CONFIG,
   session: DEFAULT_SESSION_DIR_CONFIG,
+  approval: DEFAULT_APPROVAL_POLICY,
+  deviationDetection: DEFAULT_DEVIATION_DETECTION_CONFIG,
 };
 
 // ============================================================================
@@ -215,6 +270,8 @@ export interface PartialOrchestratorConfig {
   aggregation?: Partial<AggregationConfig>;
   checkpoint?: Partial<CheckpointConfig>;
   session?: Partial<SessionDirConfig>;
+  approval?: Partial<ApprovalPolicy>;
+  deviationDetection?: Partial<DeviationDetectionConfig>;
 }
 
 /**
@@ -290,6 +347,14 @@ export function createOrchestratorConfig(
     session: {
       ...baseConfig.session,
       ...overrides.session,
+    },
+    approval: {
+      ...baseConfig.approval,
+      ...overrides.approval,
+    },
+    deviationDetection: {
+      ...baseConfig.deviationDetection,
+      ...overrides.deviationDetection,
     },
   };
 }

@@ -146,6 +146,10 @@ export interface DecisionRecord {
     source: 'worker_request' | 'periodic_check' | 'manual' | 'system';
     /** 原始请求内容 */
     requestContent?: string;
+    /** 审批请求 ID（用于幂等追踪） */
+    requestId?: string;
+    /** 干预 ID（用于幂等追踪） */
+    interventionId?: string;
   };
 }
 

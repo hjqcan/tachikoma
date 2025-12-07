@@ -49,6 +49,11 @@ export type {
   OrchestratorConfig,
   PlannerConfig,
   DelegationDefaults,
+  // 审批类型
+  ApprovalPolicy,
+  // 偏离检测类型
+  DeviationType,
+  DeviationDetectionConfig,
   // 事件类型
   OrchestratorEventType,
   OrchestratorEvent,
@@ -72,6 +77,8 @@ export {
   GIT_ENABLED_CHECKPOINT_CONFIG,
   DEFAULT_PLANNER_CONFIG,
   DEFAULT_ORCHESTRATOR_CONFIG,
+  DEFAULT_APPROVAL_POLICY,
+  DEFAULT_DEVIATION_DETECTION_CONFIG,
   // 配置构建器
   createOrchestratorConfig,
   type PartialOrchestratorConfig,
