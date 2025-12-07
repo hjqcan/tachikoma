@@ -142,13 +142,21 @@ function parseMemoryLimit(memory: string): number {
  *
  * @param mode - 网络模式
  * @returns Docker 网络名称
+ *
+ * TODO: restricted 模式目前仅使用 bridge 网络，尚未实现 allowlist 限制
+ * 需要后续通过以下方式之一实现真正的网络限制：
+ * - 使用 iptables 规则限制出站连接
+ * - 创建自定义 Docker 网络并配置防火墙
+ * - 使用网络策略插件（如 Calico）
+ *
+ * 当前 restricted 模式与 full 模式网络访问能力相同，请注意安全风险
  */
 function mapNetworkMode(mode: NetworkMode): string {
   switch (mode) {
     case 'none':
       return 'none';
     case 'restricted':
-      // 使用桥接网络，后续通过 iptables 限制
+      // TODO: 实现 allowlist 限制，当前与 full 模式相同
       return 'bridge';
     case 'full':
       return 'bridge';
@@ -266,9 +274,17 @@ export class DockerSandbox extends BaseSandbox {
   /**
    * 在容器中执行代码
    *
-   * @param code - 要执行的代码
+   * @param code - 要执行的代码（JavaScript）
    * @param options - 执行选项
    * @returns 执行结果
+   *
+   * 执行环境说明：
+   * - Docker 沙盒使用 Node.js 执行 JavaScript 代码
+   * - 代码保存为 .js 文件，通过 `node` 命令执行
+   * - 需要容器镜像包含 Node.js 运行时（默认使用 node:20-slim）
+   *
+   * 注意：LocalSandbox 使用 Bun 执行 TypeScript，两者执行环境不同
+   * 如需统一，可在配置中指定解释器或根据代码特征自动选择
    */
   protected async doExecute(
     code: string,
@@ -276,7 +292,7 @@ export class DockerSandbox extends BaseSandbox {
   ): Promise<ExecutionResult> {
     const startTime = Date.now();
 
-    // 将代码写入临时文件
+    // 将代码写入临时文件（使用 .js 扩展名，由 Node.js 执行）
     const tempFile = `/tmp/code-${Date.now()}.js`;
     await this.doWriteFile(tempFile, code);
 
@@ -338,6 +354,15 @@ export class DockerSandbox extends BaseSandbox {
    *
    * @param path - 文件路径（相对于工作目录或绝对路径）
    * @param content - 文件内容
+   *
+   * 实现说明：使用 base64 编码通过 shell 写入文件
+   *
+   * TODO: 性能优化 - 大文件写入可考虑以下替代方案：
+   * - 使用 docker cp 命令直接复制文件
+   * - 使用 docker exec 配合 stdin 流式写入
+   * - 挂载临时卷进行文件传输
+   *
+   * 当前方案适用于小文件（< 1MB），大文件可能受 shell 参数限制
    */
   protected async doWriteFile(path: string, content: string): Promise<void> {
     if (!this.containerId) {
@@ -497,16 +522,40 @@ export class DockerSandbox extends BaseSandbox {
 
   /**
    * 检查 Docker 是否可用
+   *
+   * 验证 Docker 守护进程是否运行并可访问
    */
   private async checkDockerAvailable(): Promise<void> {
-    const result = await runDockerCommand(['version', '--format', '{{.Server.Version}}'], {
-      timeout: 5000,
-    });
+    try {
+      const result = await runDockerCommand(['version', '--format', '{{.Server.Version}}'], {
+        timeout: 5000,
+      });
 
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Docker is not available: ${result.stderr || 'Unknown error'}`
-      );
+      if (result.exitCode !== 0) {
+        throw new Error(
+          `Docker daemon is not responding: ${result.stderr || 'Unknown error'}`
+        );
+      }
+    } catch (error) {
+      // 提供更友好的错误提示
+      if (error instanceof TimeoutError) {
+        throw new Error(
+          'Docker is not available: Connection to Docker daemon timed out. ' +
+          'Please ensure Docker is installed and running.'
+        );
+      }
+
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      // 检查是否是命令未找到错误
+      if (errorMessage.includes('ENOENT') || errorMessage.includes('not found')) {
+        throw new Error(
+          'Docker is not available: The "docker" command was not found. ' +
+          'Please install Docker and ensure it is in your PATH.'
+        );
+      }
+
+      throw new Error(`Docker is not available: ${errorMessage}`);
     }
   }
 
@@ -887,6 +936,9 @@ export class DockerSandboxPool {
    * 释放沙盒（归还池中）
    *
    * @param sandbox - 要释放的沙盒
+   *
+   * 安全说明：仅清理 /tmp 和工作目录下的临时文件，
+   * 不清理挂载的宿主目录，避免意外删除重要数据
    */
   async release(sandbox: DockerSandbox): Promise<void> {
     const entry = this.pool.get(sandbox.id);
@@ -899,11 +951,19 @@ export class DockerSandboxPool {
     entry.inUse = false;
     entry.lastUsedAt = Date.now();
 
-    // 重置沙盒状态（清理工作目录）
+    // 安全地重置沙盒状态
+    // 仅清理临时文件，保留挂载目录结构
     try {
-      await sandbox.runCommand(`rm -rf ${this.config.sandboxConfig.filesystem?.workdir || '/workspace'}/*`);
+      const workdir = this.config.sandboxConfig.filesystem?.workdir || '/workspace';
+      // 清理临时代码文件（/tmp/code-*.js）
+      await sandbox.runCommand('rm -f /tmp/code-*.js 2>/dev/null || true');
+      // 清理工作目录下的非隐藏文件（保留 . 开头的配置文件）
+      // 使用 find 更安全地清理，避免 rm -rf 的风险
+      await sandbox.runCommand(
+        `find ${workdir} -mindepth 1 -maxdepth 1 ! -name '.*' -exec rm -rf {} + 2>/dev/null || true`
+      );
     } catch {
-      // 重置失败，销毁沙盒
+      // 重置失败，销毁沙盒以确保安全
       await this.removeSandbox(sandbox.id);
     }
   }

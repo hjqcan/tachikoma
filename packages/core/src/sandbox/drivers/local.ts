@@ -12,8 +12,8 @@
  * - 可选命令白名单安全限制
  */
 
-import { mkdir, rm, readFile, writeFile, exists, readdir } from 'node:fs/promises';
-import { join, resolve, relative, isAbsolute } from 'node:path';
+import { mkdir, rm, readFile, writeFile, readdir, access } from 'node:fs/promises';
+import { join, resolve, relative, isAbsolute, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { BaseSandbox, TimeoutError } from '../base';
 import type {
@@ -223,8 +223,8 @@ protected async doExecute(code: string, options?: ExecutionOptions): Promise<Exe
     const fullPath = this.resolvePath(path);
     this.validatePath(fullPath);
 
-    // 确保父目录存在
-    const parentDir = join(fullPath, '..');
+    // 确保父目录存在（使用 dirname 正确获取父目录）
+    const parentDir = dirname(fullPath);
     await mkdir(parentDir, { recursive: true });
 
     await writeFile(fullPath, content, 'utf-8');
@@ -242,12 +242,19 @@ protected async doExecute(code: string, options?: ExecutionOptions): Promise<Exe
 
   /**
    * 检查文件是否存在
+   *
+   * 使用 access 替代 exists，确保 Node.js 兼容性
    */
   protected async doFileExists(path: string): Promise<boolean> {
     const fullPath = this.resolvePath(path);
     this.validatePath(fullPath);
 
-    return exists(fullPath);
+    try {
+      await access(fullPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -318,17 +325,21 @@ protected async doExecute(code: string, options?: ExecutionOptions): Promise<Exe
    * 验证命令是否在白名单中
    *
    * 如果配置了白名单，检查命令是否允许执行
+   *
+   * ⚠️ 安全警告：未配置白名单时任何命令都可执行
    */
   private validateCommand(command: string): void {
     const allowedCommands = this.localConfig.allowedCommands;
     if (!allowedCommands || allowedCommands.length === 0) {
-      // 未配置白名单，允许所有命令
+      // 未配置白名单，允许所有命令（仅限开发/测试环境）
+      // 生产环境应配置 allowedCommands 限制可执行命令
       return;
     }
 
     // 提取命令的第一个词（程序名）
     const trimmedCommand = command.trim();
-    const commandName = trimmedCommand.split(/\s+/)[0] ?? trimmedCommand;
+    const firstWord = trimmedCommand.split(/\s+/)[0];
+    const commandName = firstWord ?? trimmedCommand;
 
     // 检查是否在白名单中
     const isAllowed = allowedCommands.some(allowed => {
