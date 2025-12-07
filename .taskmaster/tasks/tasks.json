@@ -331,9 +331,10 @@
               6
             ],
             "details": "实现双重监控机制：1) 关键决策点审批：监控 workers/**/pending_approval.json，实时响应 Worker 的审批请求（文件删除/多文件重构/外部API调用），写入 approval_response.json；2) 定期批量评估：每10秒读取 workers/**/thinking.jsonl 尾部，用轻量模型快速评估思路是否偏离，可疑时触发完整 LLM 评估；偏离时写入 intervention.json；记录所有审批/干预决策到 orchestrator/decisions.jsonl",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：验证关键决策审批流程、定期监控检测偏离、干预指令生成",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-07T03:34:02.351Z"
           },
           {
             "id": 8,
@@ -363,7 +364,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-06T06:26:31.115Z"
+        "updatedAt": "2025-12-07T03:34:02.351Z"
       },
       {
         "id": "5",
@@ -966,7 +967,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-06T06:26:31.116Z",
+      "lastModified": "2025-12-07T03:34:02.353Z",
       "taskCount": 10,
       "completedCount": 3,
       "tags": [
