@@ -489,10 +489,13 @@ export class LocalSandbox extends BaseSandbox {
 
     let args: string[];
     let useShell = false;
+    let extraEnv: Record<string, string> | undefined;
 
     if (hasWhitelist) {
       // 白名单模式：解析命令并直接执行（不使用 shell）
-      args = this.parseAndValidateCommand(trimmedCommand, allowedCommands);
+      const parsed = this.parseAndValidateCommand(trimmedCommand, allowedCommands);
+      args = parsed.argv;
+      extraEnv = parsed.extraEnv;
     } else if (this.localConfig.allowUnsafeShell) {
       // 不安全 shell 模式：通过 shell 执行
       useShell = true;
@@ -506,7 +509,7 @@ export class LocalSandbox extends BaseSandbox {
       throw new UnsafeShellError();
     }
 
-    const result = await this.spawnProcess(args, options);
+    const result = await this.spawnProcess(args, options, extraEnv);
 
     return {
       ...result,
@@ -798,7 +801,10 @@ export class LocalSandbox extends BaseSandbox {
    * @throws {CommandParseError} 命令无法安全解析
    * @throws {CommandNotAllowedError} 命令不在白名单中
    */
-  private parseAndValidateCommand(command: string, allowedCommands: string[]): string[] {
+  private parseAndValidateCommand(
+    command: string,
+    allowedCommands: string[]
+  ): { argv: string[]; extraEnv?: Record<string, string> } {
     // 检查命令是否需要 shell 特性
     if (requiresShell(command)) {
       throw new CommandParseError(
@@ -813,6 +819,17 @@ export class LocalSandbox extends BaseSandbox {
 
     if (argv.length === 0) {
       throw new CommandParseError(command, 'Empty command');
+    }
+
+    // 提取前置环境变量赋值（例如 FOO=bar node app.ts）
+    const extraEnv: Record<string, string> = {};
+    while (argv.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]!)) {
+      const [key, ...rest] = argv.shift()!.split('=');
+      extraEnv[key] = rest.join('=');
+    }
+
+    if (argv.length === 0) {
+      throw new CommandParseError(command, 'Command contains only environment assignments with no program');
     }
 
     // 获取程序名（第一个参数）
@@ -831,13 +848,16 @@ export class LocalSandbox extends BaseSandbox {
       throw new CommandNotAllowedError(program);
     }
 
-    return argv;
+    return { argv, extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined };
   }
 
   /**
    * 构建环境变量
    */
-  private buildEnv(options?: ExecutionOptions): Record<string, string> {
+  private buildEnv(
+    options?: ExecutionOptions,
+    extraEnv?: Record<string, string>
+  ): Record<string, string> {
     const baseEnv = this.localConfig.inheritEnv
       ? { ...process.env }
       : {};
@@ -846,6 +866,7 @@ export class LocalSandbox extends BaseSandbox {
       ...baseEnv,
       ...this.config.env,
       ...options?.env,
+      ...(extraEnv ?? {}),
       // 设置工作目录环境变量
       PWD: options?.cwd ? this.resolvePath(options.cwd) : this.workdir,
     } as Record<string, string>;
@@ -858,11 +879,12 @@ export class LocalSandbox extends BaseSandbox {
    */
   private async spawnProcess(
     args: string[],
-    options?: ExecutionOptions
+    options?: ExecutionOptions,
+    envOverride?: Record<string, string>
   ): Promise<Omit<ExecutionResult, 'duration'>> {
     const timeout = options?.timeout ?? this.config.timeout;
     const cwd = options?.cwd ? this.resolvePath(options.cwd) : this.workdir;
-    const env = this.buildEnv(options);
+    const env = envOverride ?? this.buildEnv(options);
 
     // 验证工作目录
     await this.validatePathSafety(cwd);
