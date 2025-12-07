@@ -1114,7 +1114,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
     this.executionState!.runningSubtasks.add(subtaskId);
     subtask.status = 'running';
 
-    this.emit('subtask:assigned', taskId, { subtask }, subtaskId);
+    this.emit('subtask:assigned', taskId, { subtaskId, subtask }, subtaskId);
 
     let retryCount = 0;
     let lastError: string | undefined;
