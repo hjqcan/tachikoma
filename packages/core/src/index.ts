@@ -112,11 +112,31 @@ export * from './orchestrator';
 export * from './planner';
 
 // ============================================================================
+// 沙盒模块
+// ============================================================================
+
+export * as sandbox from './sandbox';
+
+// 同时导出常用类型到顶层（便于使用）
+export type {
+  SandboxRuntime,
+  SandboxCreateOptions,
+} from './sandbox';
+
+export {
+  createSandboxConfig,
+  DEFAULT_SANDBOX_RESOURCES,
+  DEFAULT_SANDBOX_NETWORK,
+} from './sandbox';
+
+// 注意：BaseSandbox 已在 abstracts 导出中包含
+// 但 sandbox 模块中的版本更完善，推荐使用 sandbox.BaseSandbox
+
+// ============================================================================
 // TODO: 后续添加以下模块导出
 // ============================================================================
 
-// export * from './agents';      // 具体智能体实现
-// export * from './context';     // 上下文管理实现
-// export * from './tools';       // 原子工具实现
-// export * from './sandbox';     // 沙盒实现
-// export * from './mcp';         // MCP 集成
+// export * from './agents';      // 具体智能体实现 (Task 5)
+// export * from './context';     // 上下文管理实现 (Task 8)
+// export * from './tools';       // 原子工具实现 (Task 6)
+// export * from './mcp';         // MCP 集成 (Task 7)
