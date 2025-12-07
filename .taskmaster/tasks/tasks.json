@@ -345,9 +345,10 @@
               6
             ],
             "details": "CheckpointManager 复用 SessionFileManager 的目录结构；从 orchestrator/progress.json 恢复计划状态；从 workers/**/status.json 恢复 Worker 进度；支持从最近成功的子任务继续执行；可选集成 Git 提交点",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：模拟进程中断后重启，验证从 checkpoint 恢复任务上下文",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-07T03:57:42.308Z"
           },
           {
             "id": 9,
@@ -364,7 +365,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-07T03:34:02.351Z"
+        "updatedAt": "2025-12-07T03:57:42.308Z"
       },
       {
         "id": "5",
@@ -967,7 +968,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-07T03:34:02.353Z",
+      "lastModified": "2025-12-07T03:57:42.309Z",
       "taskCount": 10,
       "completedCount": 3,
       "tags": [

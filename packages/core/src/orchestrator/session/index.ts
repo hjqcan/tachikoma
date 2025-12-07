@@ -35,10 +35,19 @@ export type {
   SessionFileEventHandler,
   // 接口
   ISessionFileManager,
+  // 检查点类型
+  CheckpointData,
+  CheckpointManagerConfig,
+  CheckpointRestoreOptions,
+  CheckpointRestoreResult,
+  ICheckpointManager,
+  RecoveryStrategy,
+  SubtaskSnapshot,
+  WorkerSnapshot,
 } from './types';
 
 // 常量导出
-export { DEFAULT_SESSION_CONFIG } from './types';
+export { DEFAULT_SESSION_CONFIG, DEFAULT_CHECKPOINT_CONFIG } from './types';
 
 // SessionFileManager 导出
 export {
@@ -46,6 +55,13 @@ export {
   createSessionFileManager,
   createAndInitializeSessionFileManager,
 } from './session-file-manager';
+
+// CheckpointManager 导出
+export {
+  CheckpointManager,
+  createCheckpointManager,
+  createSubtaskSnapshots,
+} from './checkpoint-manager';
 
 // 工具函数导出
 export {
@@ -77,3 +93,4 @@ export {
   sleep,
   now,
 } from './utils';
+
