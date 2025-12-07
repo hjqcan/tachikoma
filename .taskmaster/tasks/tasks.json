@@ -242,7 +242,7 @@
         "testStrategy": "- 单元：输入复杂任务，断言分解结果 schema 正确、包含 delegation 配置。\n- 集成：mock worker 执行，验证聚合输出与任务成功率逻辑。\n- 回归：长时任务恢复时可读取 checkpoint 继续。",
         "priority": "medium",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -360,12 +360,13 @@
               8
             ],
             "details": "在 tests 目录添加 Planner/Orchestrator/SessionFileManager/Checkpoint 的单元与集成测试；验证与 Task 5 Worker 文件协议的契约；编写 README 展示 plan→assign→monitor→aggregate 流程与共享文件系统使用方法；确保 bun test 通过",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "运行 bun test 全量用例，覆盖 LLM 解析、文件监控、纠偏逻辑、checkpoint 恢复；契约测试验证 Worker 文件格式兼容",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-07T04:54:47.996Z"
           }
         ],
-        "updatedAt": "2025-12-07T03:57:42.308Z"
+        "updatedAt": "2025-12-07T04:54:47.996Z"
       },
       {
         "id": "5",
@@ -968,9 +969,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-07T03:57:42.309Z",
+      "lastModified": "2025-12-07T04:54:47.997Z",
       "taskCount": 10,
-      "completedCount": 3,
+      "completedCount": 4,
       "tags": [
         "master"
       ]

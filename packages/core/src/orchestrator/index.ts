@@ -138,15 +138,28 @@ export {
   type SessionFileEvent,
   type SessionFileEventHandler,
   type ISessionFileManager,
+  // 检查点类型
+  type CheckpointData,
+  type CheckpointManagerConfig,
+  type CheckpointRestoreOptions,
+  type CheckpointRestoreResult,
+  type ICheckpointManager,
+  type RecoveryStrategy,
+  type SubtaskSnapshot as CheckpointSubtaskSnapshot,
+  type WorkerSnapshot,
   // 常量
   DEFAULT_SESSION_CONFIG,
+  DEFAULT_CHECKPOINT_CONFIG as SESSION_DEFAULT_CHECKPOINT_CONFIG,
   // 类
   SessionFileManager,
   SessionPathBuilder,
   FileLock,
+  CheckpointManager,
   // 工厂函数
   createSessionFileManager,
   createAndInitializeSessionFileManager,
+  createCheckpointManager,
+  createSubtaskSnapshots,
   // 工具函数
   generateId,
   generateTimestampId,
