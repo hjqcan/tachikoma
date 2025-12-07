@@ -68,11 +68,22 @@ export {
 export { BaseSandbox, TimeoutError, type SandboxLogContext } from './base';
 
 // ============================================================================
-// 驱动导出（后续子任务实现后添加）
+// 驱动导出
 // ============================================================================
 
-// TODO: Task 5.2 - Docker 驱动
-// export { DockerSandbox } from './drivers/docker';
+// Task 5.3 - Local 驱动（仅开发/测试）
+export {
+  LocalSandbox,
+  createLocalSandbox,
+  CommandNotAllowedError,
+  PathOutOfBoundsError,
+} from './drivers';
 
-// TODO: Task 5.3 - Local 驱动
-// export { LocalSandbox } from './drivers/local';
+// Task 5.2 - Docker 驱动
+export {
+  DockerSandbox,
+  DockerSandboxPool,
+  isDockerAvailable,
+  getDockerVersion,
+  type DockerSandboxPoolConfig,
+} from './drivers';

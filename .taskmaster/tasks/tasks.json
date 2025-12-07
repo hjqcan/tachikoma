@@ -2,7 +2,7 @@
   "master": {
     "tasks": [
       {
-        "id": 1,
+        "id": "1",
         "title": "Bun Monorepo 基础脚手架与工程规范",
         "description": "建立 Bun+TypeScript 多包工作区、统一 tsconfig/bunfig、ESLint/Prettier/Vitest 配置，并准备 CI 脚本。",
         "details": "- 目录：packages/{core,gateway,agentops,cli}, skills/, servers/, sandbox/；根级 bunfig.toml、tsconfig.base.json、eslint/prettier 配置。\n- package.json 配置 Bun workspaces，安装 typescript@latest、hono/elysia 类型、eslint+@typescript-eslint、prettier、vitest、bun test。\n- 提供 CI 脚本：lint、typecheck、test、build（核心包）。\n- 输出 .env.example，声明模型/API key、Redis、Qdrant/Chroma、OTLP 端点等环境变量。",
@@ -77,7 +77,7 @@
         "updatedAt": "2025-12-05T03:23:00.029Z"
       },
       {
-        "id": 2,
+        "id": "2",
         "title": "交互与安全网关层 (API Gateway)",
         "description": "实现 Hono/Elysia HTTP 服务，涵盖身份认证、输入/输出过滤、安全策略与分布式追踪。",
         "details": "- 选择 Hono（bun 原生）构建服务，路由划分：/api/tasks, /api/agents, /api/execute。\n- 中间件：TraceID 生成 + OTEL span，JWT/OAuth2 校验 + RBAC（最小权限），请求大小限制。\n- 输入过滤：提示注入检测、正则 allowlist、最大长度；输出过滤：PII 检测+脱敏、token 泄漏防护。\n- A2A/MCP 网关代理层：对外部调用做 allowlist；集中日志输出 JSON。",
@@ -153,7 +153,7 @@
         "updatedAt": "2025-12-05T06:42:42.428Z"
       },
       {
-        "id": 3,
+        "id": "3",
         "title": "Agent 抽象与配置加载",
         "description": "在 core 包实现 Agent/Task/Tool/Sandbox 等基础接口及运行时配置加载。",
         "details": "- 定义 interfaces: Agent, Task, TaskResult, Tool, ContextManager, Sandbox 等（见 PRD types）。\n- config 模块：读取 config/default.ts + 环境覆盖，暴露模型、上下文阈值、sandbox、AgentOps 配置。\n- 提供工厂：createAgent(type), createSandbox(), createContextManager()，支持依赖注入。",
@@ -235,7 +235,7 @@
         "updatedAt": "2025-12-05T10:19:21.817Z"
       },
       {
-        "id": 4,
+        "id": "4",
         "title": "统筹者智能体与任务规划",
         "description": "实现统筹者（System2）规划/分解/委托逻辑，含任务规范与委托模型。",
         "details": "- Orchestrator 类：接收高层 Task，输出子任务列表与委托计划 (OrchestratorTask)。\n- 规划器：基于 objective/constraints 生成工作者任务；支持 delegation.mode (communication/shared-memory)、workerCount、timeout、retryPolicy。\n- 长时任务挂钩：初始化智能体创建 features.json/init.sh/progress.txt，写入 Git 提交点。\n- 伪代码：`plan(task)->subtasks; assign(workerPool); aggregate(results)`，失败时触发重试/降级。",
@@ -369,7 +369,7 @@
         "updatedAt": "2025-12-07T04:54:47.996Z"
       },
       {
-        "id": 5,
+        "id": "5",
         "title": "工作者智能体与沙盒执行",
         "description": "实现工作者（System1）执行器，管理沙盒生命周期、命令执行与资源限制。",
         "details": "- Sandbox 管理：封装 Docker/Firecracker，配置 Bun runtime、资源 (cpu/mem/storage/timeout)、restricted 网络 allowlist。\n- Worker 类：接收子任务，加载工具列表，调用 sandbox.execute/runCommand/writeFile/readFile。\n- 支持执行日志收集、错误捕获与自动重试；输出 artifacts 与 metrics。",
@@ -397,9 +397,10 @@
               1
             ],
             "details": "在 packages/core/src/sandbox/drivers/docker.ts 实现 DockerSandbox 类；封装容器创建（镜像、工作目录挂载、环境变量）、命令执行（exec）、文件读写（cp）、资源限制（--cpus/--memory）、网络配置（--network）、超时终止；提供连接池复用机制",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：mock Docker API 验证参数传递；集成测试：本地 Docker 运行简单命令",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-07T05:51:16.512Z"
           },
           {
             "id": 3,
@@ -409,9 +410,10 @@
               1
             ],
             "details": "在 packages/core/src/sandbox/drivers/local.ts 实现 LocalSandbox 类；直接使用 Bun.spawn 执行命令，限制工作目录，提供基础超时控制；标记为仅开发/测试使用，生产环境应使用 Docker",
-            "status": "pending",
+            "status": "in-progress",
             "testStrategy": "单元测试：验证命令执行、文件读写、超时终止",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-07T05:40:57.020Z"
           },
           {
             "id": 4,
@@ -477,10 +479,10 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-07T05:19:57.892Z"
+        "updatedAt": "2025-12-07T05:51:16.512Z"
       },
       {
-        "id": 6,
+        "id": "6",
         "title": "原子工具库与分层式行为空间",
         "description": "实现 Layer1 原子函数与 Layer2 沙盒工具，提供 Schema 约束的工具注册表。",
         "details": "- 原子函数：read_file/write_file/glob_search/grep_search/execute_shell/browser_navigate/...，统一 Input/Output JSONSchema。\n- 工具注册表：基于名称解析并校验权限（network/fs/shell）。\n- Layer2 shell 工具：在 sandbox 中执行，捕获 stdout/stderr/exitCode。\n- Layer3 预授权包/APIs 入口预留。",
@@ -591,7 +593,7 @@
         ]
       },
       {
-        "id": 7,
+        "id": "7",
         "title": "MCP 客户端与代码生成集成",
         "description": "实现 MCP 动态发现/加载，支持代码生成与工具调用的 Token 高效路径。",
         "details": "- MCP 客户端：读取 ./servers/* 目录，加载工具定义；支持热插拔新增服务器。\n- 代码生成模块：根据工具 schema 生成 TS 调用包装（示例 gdrive.getDocument/salesforce.updateRecord）。\n- 与 Worker 集成：选择 MCP 工具优先，fallback 原子工具；记录调用开销以评估 Token 节省。",
@@ -666,7 +668,7 @@
         ]
       },
       {
-        "id": 8,
+        "id": "8",
         "title": "上下文工程与阈值管理",
         "description": "实现上下文压缩/摘要/卸载流水线，遵循 rot/compaction/summarization 阈值。",
         "details": "- ContextManager：维护消息/工具调用记录，计算 token 数；阈值：rot=200k, compaction=128k, summarization=150k, hardLimit=1M。\n- 压缩：生成可逆 compact 结构 (input/output full+compact)；摘要：ConversationSummary schema。\n- 卸载：超大输出写入文件并引用路径；最近工具调用保留 5 条。",
@@ -736,7 +738,7 @@
         ]
       },
       {
-        "id": 9,
+        "id": "9",
         "title": "记忆系统与 Skills 渐进加载",
         "description": "实现会话/声明式/过程式/集体反馈记忆，并支持 Skills 目录的渐进披露加载。",
         "details": "- 存储适配：Redis 会话缓存，LevelDB 持久化，Qdrant/Chroma 向量检索；统一 MemoryProvider 接口。\n- Skills Loader：三层加载（metadata -> instructions -> resources），按 triggers 选择性注入上下文。\n- APIs：saveMemory(query,fact)、retrieve(context,topK)、loadSkillByTrigger(trigger)。",
@@ -846,7 +848,7 @@
         ]
       },
       {
-        "id": 10,
+        "id": "10",
         "title": "AgentOps 可观测性与评估套件",
         "description": "集成 OpenTelemetry/Prometheus 日志指标追踪，并提供评估与质量飞轮闭环。",
         "details": "- Tracing：为 orchestrator/worker/tool/sandbox 调用创建 span，附加 taskId/agentId/latency 等 attributes。\n- Logging：结构化 JSON，级别 debug/info/warn/error；集中输出并带链路 ID。\n- Metrics：Prometheus 指标（latency histogram, errorRate counter, tokensPerTask histogram, taskCompletion gauge）。\n- 评估：Outside-In/Inside-Out/LLM-as-Judge hooks，收集失败案例生成回归测试；Grafana 仪表板配置示例。",
@@ -971,14 +973,12 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-07T05:19:57.893Z",
+      "lastModified": "2025-12-07T05:51:16.514Z",
       "taskCount": 10,
       "completedCount": 4,
       "tags": [
         "master"
-      ],
-      "created": "2025-12-07T05:20:19.773Z",
-      "description": "Tasks for master context"
+      ]
     }
   }
 }
