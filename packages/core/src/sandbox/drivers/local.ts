@@ -7,20 +7,21 @@
  *
  * 特性：
  * - 使用 Bun.spawn 执行命令
- * - 限制工作目录（带符号链接保护）
+ * - 限制工作目录（带完整符号链接保护）
  * - 基础超时控制
- * - 可选命令白名单安全限制（带 shell 元字符检测）
+ * - 命令白名单安全限制（不使用 shell，直接 argv 执行）
  * - 子进程跟踪和清理
  *
  * 安全特性：
- * - realpath 解析防止符号链接绕过
- * - shell 元字符检测防止命令注入
+ * - 完整路径祖先遍历防止符号链接绕过（包括新文件写入）
+ * - 白名单模式下不使用 shell，防止命令注入
+ * - 未配置白名单需显式启用 allowUnsafeShell
  * - 安全路径验证防止危险的 rm -rf
  * - 唯一文件名防止并发竞态
  */
 
 import { mkdir, rm, readFile, writeFile, readdir, access, realpath, lstat } from 'node:fs/promises';
-import { join, resolve, relative, isAbsolute, dirname, basename } from 'node:path';
+import { join, resolve, relative, isAbsolute, dirname, basename, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { BaseSandbox, TimeoutError } from '../base';
@@ -38,23 +39,6 @@ import type {
 
 /** 默认 Shell 路径 */
 const DEFAULT_SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
-
-/**
- * Shell 危险元字符正则表达式（用于检测命令注入）
- *
- * 检测的危险字符：
- * - ; - 命令分隔符
- * - & - 后台执行 / AND 运算符
- * - | - 管道 / OR 运算符
- * - ` - 命令替换（反引号）
- * - $( - 命令替换
- * - ${ - 变量替换
- * - < > - 重定向
- * - \n \r - 换行符（允许通过换行注入命令）
- *
- * 注意：引号（' "）是允许的，用于正常的参数引用
- */
-const SHELL_METACHAR_REGEX = /[;&|`<>\n\r]|\$[({]/;
 
 /** 安全的工作目录基础路径（默认为系统临时目录） */
 const SAFE_WORKDIR_BASES = [
@@ -87,18 +71,33 @@ export class CommandNotAllowedError extends Error {
 }
 
 /**
- * 命令注入检测错误
+ * 命令解析错误
  *
- * 当命令包含危险的 shell 元字符时抛出
+ * 当命令无法安全解析为 argv 时抛出
  */
-export class CommandInjectionError extends Error {
-  /** 检测到的命令 */
+export class CommandParseError extends Error {
+  /** 无法解析的命令 */
   readonly command: string;
 
-  constructor(command: string) {
-    super(`Potential command injection detected: ${command}`);
-    this.name = 'CommandInjectionError';
+  constructor(command: string, reason: string) {
+    super(`Failed to parse command: ${reason}. Command: ${command}`);
+    this.name = 'CommandParseError';
     this.command = command;
+  }
+}
+
+/**
+ * 不安全 Shell 执行错误
+ *
+ * 当尝试在未启用 allowUnsafeShell 的情况下执行 shell 命令时抛出
+ */
+export class UnsafeShellError extends Error {
+  constructor() {
+    super(
+      'Shell execution requires allowUnsafeShell flag or allowedCommands whitelist. ' +
+      'Without a whitelist, shell commands are vulnerable to injection attacks.'
+    );
+    this.name = 'UnsafeShellError';
   }
 }
 
@@ -151,6 +150,162 @@ export class UnsafeWorkdirError extends Error {
 }
 
 // ============================================================================
+// 命令解析工具
+// ============================================================================
+
+/**
+ * 简单的命令行解析器
+ *
+ * 将命令字符串解析为 argv 数组，支持引号和转义
+ * 这是一个安全的解析器，不会执行任何 shell 特性
+ *
+ * @example
+ * parseCommandToArgv('echo "hello world"') // ['echo', 'hello world']
+ * parseCommandToArgv("node -e 'console.log(1)'") // ['node', '-e', 'console.log(1)']
+ */
+function parseCommandToArgv(command: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    if ((char === ' ' || char === '\t') && !inSingleQuote && !inDoubleQuote) {
+      if (current.length > 0) {
+        args.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  // 检查未闭合的引号
+  if (inSingleQuote || inDoubleQuote) {
+    throw new CommandParseError(command, 'Unclosed quote');
+  }
+
+  if (current.length > 0) {
+    args.push(current);
+  }
+
+  return args;
+}
+
+/**
+ * 检查命令是否包含需要 shell 的特性
+ *
+ * 这些特性无法通过简单的 argv 执行，需要 shell：
+ * - 管道 (|)
+ * - 重定向 (>, <, >>)
+ * - 命令链 (&&, ||, ;)
+ * - 后台执行 (&)
+ * - 命令替换 ($(), ``)
+ * - 变量扩展 ($VAR, ${VAR})
+ * - 通配符 (*, ?, [])
+ */
+function requiresShell(command: string): boolean {
+  // 检查是否在引号外有 shell 特殊字符
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+
+    // 在引号外检查 shell 特殊字符
+    if (!inSingleQuote && !inDoubleQuote) {
+      // 管道、重定向、命令链、后台执行
+      if ('|><;&'.includes(char)) {
+        return true;
+      }
+      // 命令替换和变量扩展
+      if (char === '$') {
+        return true;
+      }
+      // 反引号命令替换
+      if (char === '`') {
+        return true;
+      }
+      // 通配符（在引号外）
+      if ('*?['.includes(char)) {
+        return true;
+      }
+      // 换行符
+      if (char === '\n' || char === '\r') {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// ============================================================================
+// 扩展的本地运行时配置
+// ============================================================================
+
+/**
+ * 扩展的本地运行时配置
+ */
+interface ExtendedLocalRuntimeConfig extends LocalRuntimeConfig {
+  /**
+   * 允许不安全的 shell 执行
+   *
+   * ⚠️ 警告：启用此选项会允许命令注入攻击
+   * 仅在完全信任命令来源时使用
+   *
+   * 当设置为 true 且未配置 allowedCommands 时，允许任意 shell 命令执行
+   */
+  allowUnsafeShell?: boolean;
+}
+
+// ============================================================================
 // LocalSandbox 实现
 // ============================================================================
 
@@ -162,23 +317,34 @@ export class UnsafeWorkdirError extends Error {
  *
  * @example
  * ```ts
+ * // 安全模式：使用命令白名单
  * const config = createSandboxConfig({
  *   runtime: 'local',
  *   timeout: 30000,
  *   runtimeConfig: {
- *     shell: '/bin/bash',
- *     inheritEnv: false,
- *     allowedCommands: ['node', 'npm', 'bun'],
+ *     allowedCommands: ['node', 'npm', 'bun', 'echo'],
  *   },
  * });
  *
  * const sandbox = new LocalSandbox('dev-sandbox-001', config);
  * await sandbox.initialize();
  *
+ * // 命令会被解析为 argv 并直接执行（不通过 shell）
  * const result = await sandbox.runCommand('echo "Hello"');
  * console.log(result.stdout); // "Hello"
  *
  * await sandbox.destroy();
+ * ```
+ *
+ * @example
+ * ```ts
+ * // 不安全模式：允许任意 shell 命令（仅用于信任的开发环境）
+ * const config = createSandboxConfig({
+ *   runtime: 'local',
+ *   runtimeConfig: {
+ *     allowUnsafeShell: true, // ⚠️ 危险：允许命令注入
+ *   },
+ * });
  * ```
  */
 export class LocalSandbox extends BaseSandbox {
@@ -189,7 +355,7 @@ export class LocalSandbox extends BaseSandbox {
   private realWorkdir: string | null = null;
 
   /** 本地运行时配置 */
-  private localConfig: LocalRuntimeConfig;
+  private localConfig: ExtendedLocalRuntimeConfig;
 
   /** 是否已清理 */
   private cleaned = false;
@@ -204,7 +370,7 @@ export class LocalSandbox extends BaseSandbox {
     super(id, config);
 
     // 获取本地运行时配置
-    this.localConfig = (config.runtimeConfig as LocalRuntimeConfig) || {};
+    this.localConfig = (config.runtimeConfig as ExtendedLocalRuntimeConfig) || {};
 
     // 设置工作目录（使用配置的或创建临时目录）
     if (config.filesystem?.workdir) {
@@ -259,6 +425,14 @@ export class LocalSandbox extends BaseSandbox {
         'Local sandbox does not enforce network restrictions.'
       );
     }
+
+    // 不安全 shell 模式警告
+    if (this.localConfig.allowUnsafeShell && !this.localConfig.allowedCommands?.length) {
+      console.warn(
+        `[LocalSandbox ${this.id}] ⚠️ allowUnsafeShell is enabled without command whitelist. ` +
+        'This allows arbitrary command execution and is vulnerable to injection attacks!'
+      );
+    }
   }
 
   /**
@@ -301,23 +475,38 @@ export class LocalSandbox extends BaseSandbox {
   /**
    * 运行命令
    *
-   * 使用 Shell 执行命令，带命令注入检测
+   * 安全执行命令：
+   * 1. 如果配置了白名单：解析为 argv，不使用 shell 直接执行
+   * 2. 如果未配置白名单但启用了 allowUnsafeShell：通过 shell 执行（危险）
+   * 3. 否则拒绝执行
    */
   protected async doRunCommand(command: string, options?: ExecutionOptions): Promise<CommandResult> {
     const startTime = Date.now();
+    const trimmedCommand = command.trim();
 
-    // 验证命令安全性（白名单 + 元字符检测）
-    this.validateCommand(command);
+    const allowedCommands = this.localConfig.allowedCommands;
+    const hasWhitelist = allowedCommands && allowedCommands.length > 0;
 
-    const shell = this.localConfig.shell || DEFAULT_SHELL;
-    const shellArgs = process.platform === 'win32'
-      ? ['/c', command]
-      : ['-c', command];
+    let args: string[];
+    let useShell = false;
 
-    const result = await this.spawnProcess(
-      [shell, ...shellArgs],
-      options
-    );
+    if (hasWhitelist) {
+      // 白名单模式：解析命令并直接执行（不使用 shell）
+      args = this.parseAndValidateCommand(trimmedCommand, allowedCommands);
+    } else if (this.localConfig.allowUnsafeShell) {
+      // 不安全 shell 模式：通过 shell 执行
+      useShell = true;
+      const shell = this.localConfig.shell || DEFAULT_SHELL;
+      const shellArgs = process.platform === 'win32'
+        ? ['/c', trimmedCommand]
+        : ['-c', trimmedCommand];
+      args = [shell, ...shellArgs];
+    } else {
+      // 默认拒绝：既没有白名单也没有启用 allowUnsafeShell
+      throw new UnsafeShellError();
+    }
+
+    const result = await this.spawnProcess(args, options);
 
     return {
       ...result,
@@ -331,7 +520,7 @@ export class LocalSandbox extends BaseSandbox {
    */
   protected async doWriteFile(path: string, content: string): Promise<void> {
     const fullPath = this.resolvePath(path);
-    await this.validatePathWithRealpath(fullPath);
+    await this.validatePathSafety(fullPath);
 
     // 确保父目录存在
     const parentDir = dirname(fullPath);
@@ -345,7 +534,7 @@ export class LocalSandbox extends BaseSandbox {
    */
   protected async doReadFile(path: string): Promise<string> {
     const fullPath = this.resolvePath(path);
-    await this.validatePathWithRealpath(fullPath);
+    await this.validatePathSafety(fullPath);
 
     return readFile(fullPath, 'utf-8');
   }
@@ -357,7 +546,7 @@ export class LocalSandbox extends BaseSandbox {
     const fullPath = this.resolvePath(path);
 
     try {
-      await this.validatePathWithRealpath(fullPath);
+      await this.validatePathSafety(fullPath);
       await access(fullPath);
       return true;
     } catch {
@@ -370,7 +559,7 @@ export class LocalSandbox extends BaseSandbox {
    */
   protected async doListDir(path: string): Promise<string[]> {
     const fullPath = this.resolvePath(path);
-    await this.validatePathWithRealpath(fullPath);
+    await this.validatePathSafety(fullPath);
 
     return readdir(fullPath);
   }
@@ -434,67 +623,102 @@ export class LocalSandbox extends BaseSandbox {
   }
 
   /**
-   * 验证路径是否在工作目录内（使用 realpath 防止符号链接绕过）
+   * 验证路径安全性（完整符号链接检查）
+   *
+   * 遍历路径中的每个祖先目录，检查是否存在指向工作目录外的符号链接
+   * 这可以防止通过 "workdir/symlink_to_etc/evil" 这样的路径逃逸
    *
    * @throws {PathOutOfBoundsError} 路径超出工作目录
    * @throws {SymlinkNotAllowedError} 符号链接指向工作目录外
    */
-  private async validatePathWithRealpath(fullPath: string): Promise<void> {
+  private async validatePathSafety(fullPath: string): Promise<void> {
     // 确保有真实工作目录路径
     if (!this.realWorkdir) {
       throw new Error('Sandbox not initialized');
     }
 
-    // 首先做基础路径检查（快速失败）
-    // 注意：在 macOS 上 /var 是 /private/var 的符号链接
-    // 所以我们需要同时使用 this.workdir（逻辑路径）进行基础检查
     const normalizedPath = resolve(fullPath);
+    const normalizedWorkdir = resolve(this.workdir);
 
-    // 用逻辑路径（workdir）做基础检查，避免 macOS 符号链接问题
-    const logicalRelative = relative(resolve(this.workdir), normalizedPath);
+    // 首先做基础路径检查（快速失败）
+    const logicalRelative = relative(normalizedWorkdir, normalizedPath);
     if (logicalRelative.startsWith('..') || isAbsolute(logicalRelative)) {
       throw new PathOutOfBoundsError(fullPath);
     }
 
-    // 检查路径是否存在
-    let pathExists = false;
-    try {
-      await access(fullPath);
-      pathExists = true;
-    } catch {
-      // 文件不存在，只做基础检查（写入新文件的情况）
-      return;
+    // 遍历路径中的每个祖先，检查符号链接
+    // 从工作目录开始，逐级检查到目标路径
+    await this.validatePathAncestors(normalizedPath, normalizedWorkdir);
+  }
+
+  /**
+   * 验证路径的所有祖先目录
+   *
+   * 检查从工作目录到目标路径的每个中间目录，确保没有符号链接指向外部
+   */
+  private async validatePathAncestors(
+    targetPath: string,
+    workdir: string
+  ): Promise<void> {
+    // 获取从工作目录到目标路径的相对路径
+    const relativePath = relative(workdir, targetPath);
+    const segments = relativePath.split(sep).filter(Boolean);
+
+    // 从工作目录开始，逐级检查每个路径段
+    let currentPath = workdir;
+
+    for (const segment of segments) {
+      currentPath = join(currentPath, segment);
+
+      // 检查当前路径是否存在
+      let exists = false;
+      try {
+        await access(currentPath);
+        exists = true;
+      } catch {
+        // 路径不存在，这是正常的（可能是新文件的中间目录）
+        // 继续检查，因为后续的 mkdir 会创建它
+        continue;
+      }
+
+      if (exists) {
+        // 检查是否是符号链接
+        const stat = await lstat(currentPath);
+        if (stat.isSymbolicLink()) {
+          // 获取符号链接的真实目标
+          let realTarget: string;
+          try {
+            realTarget = await realpath(currentPath);
+          } catch {
+            // realpath 失败，可能是断开的符号链接，拒绝
+            throw new SymlinkNotAllowedError(currentPath);
+          }
+
+          // 检查真实目标是否在工作目录内
+          const targetRelative = relative(this.realWorkdir!, realTarget);
+          if (targetRelative.startsWith('..') || isAbsolute(targetRelative)) {
+            throw new SymlinkNotAllowedError(currentPath);
+          }
+
+          // 符号链接指向工作目录内，更新 currentPath 为真实路径继续检查
+          currentPath = realTarget;
+        }
+      }
     }
 
-    // 如果路径存在，进行更严格的符号链接检查
-    if (pathExists) {
-      // 检查是否是符号链接
-      const stat = await lstat(fullPath);
-      if (stat.isSymbolicLink()) {
-        // 获取符号链接的真实目标
-        const realTarget = await realpath(fullPath);
-        const targetRelative = relative(this.realWorkdir, realTarget);
-
-        // 如果真实目标在工作目录外，拒绝
-        if (targetRelative.startsWith('..') || isAbsolute(targetRelative)) {
-          throw new SymlinkNotAllowedError(fullPath);
-        }
+    // 最终检查：如果目标路径存在，验证其 realpath
+    try {
+      await access(targetPath);
+      const realTargetPath = await realpath(targetPath);
+      const finalRelative = relative(this.realWorkdir!, realTargetPath);
+      if (finalRelative.startsWith('..') || isAbsolute(finalRelative)) {
+        throw new PathOutOfBoundsError(targetPath);
       }
-
-      // 使用 realpath 验证最终路径
-      try {
-        const realFullPath = await realpath(fullPath);
-        const finalRelative = relative(this.realWorkdir, realFullPath);
-
-        if (finalRelative.startsWith('..') || isAbsolute(finalRelative)) {
-          throw new PathOutOfBoundsError(fullPath);
-        }
-      } catch (error) {
-        if (error instanceof PathOutOfBoundsError || error instanceof SymlinkNotAllowedError) {
-          throw error;
-        }
-        // realpath 失败可能是其他原因，忽略
+    } catch (error) {
+      if (error instanceof PathOutOfBoundsError || error instanceof SymlinkNotAllowedError) {
+        throw error;
       }
+      // 文件不存在是正常的
     }
   }
 
@@ -566,45 +790,48 @@ export class LocalSandbox extends BaseSandbox {
   }
 
   /**
-   * 验证命令安全性
+   * 解析并验证命令
    *
-   * 检查命令白名单和 shell 元字符注入
+   * 将命令字符串解析为 argv，并验证程序是否在白名单中
+   * 如果命令需要 shell 特性（管道、重定向等），抛出错误
    *
+   * @throws {CommandParseError} 命令无法安全解析
    * @throws {CommandNotAllowedError} 命令不在白名单中
-   * @throws {CommandInjectionError} 检测到潜在命令注入
    */
-  private validateCommand(command: string): void {
-    const allowedCommands = this.localConfig.allowedCommands;
-    const trimmedCommand = command.trim();
-
-    // 检查 shell 元字符（命令注入检测）
-    if (allowedCommands && allowedCommands.length > 0) {
-      // 有白名单时，检测危险元字符
-      if (SHELL_METACHAR_REGEX.test(trimmedCommand)) {
-        throw new CommandInjectionError(trimmedCommand);
-      }
+  private parseAndValidateCommand(command: string, allowedCommands: string[]): string[] {
+    // 检查命令是否需要 shell 特性
+    if (requiresShell(command)) {
+      throw new CommandParseError(
+        command,
+        'Command contains shell features (pipes, redirects, etc.) that cannot be safely executed without a shell. ' +
+        'Use allowUnsafeShell if you trust the command source.'
+      );
     }
 
-    // 白名单检查
-    if (!allowedCommands || allowedCommands.length === 0) {
-      // 未配置白名单，允许所有命令（仅限开发/测试环境）
-      // 生产环境应配置 allowedCommands 限制可执行命令
-      return;
+    // 解析命令为 argv
+    const argv = parseCommandToArgv(command);
+
+    if (argv.length === 0) {
+      throw new CommandParseError(command, 'Empty command');
     }
 
-    // 提取命令的第一个词（程序名）
-    const firstWord = trimmedCommand.split(/\s+/)[0];
-    const commandName = firstWord ?? trimmedCommand;
+    // 获取程序名（第一个参数）
+    const program = argv[0];
+    const programName = basename(program);
 
     // 检查是否在白名单中
     const isAllowed = allowedCommands.some(allowed => {
       // 支持完整路径或命令名匹配
-      return commandName === allowed || commandName.endsWith(`/${allowed}`);
+      return program === allowed ||
+             programName === allowed ||
+             program.endsWith(`/${allowed}`);
     });
 
     if (!isAllowed) {
-      throw new CommandNotAllowedError(commandName);
+      throw new CommandNotAllowedError(program);
     }
+
+    return argv;
   }
 
   /**
@@ -638,7 +865,7 @@ export class LocalSandbox extends BaseSandbox {
     const env = this.buildEnv(options);
 
     // 验证工作目录
-    await this.validatePathWithRealpath(cwd);
+    await this.validatePathSafety(cwd);
 
     return new Promise((resolve, reject) => {
       let timedOut = false;
@@ -729,3 +956,12 @@ export function createLocalSandbox(
 ): LocalSandbox {
   return new LocalSandbox(id, config);
 }
+
+// ============================================================================
+// 已弃用的导出（保持向后兼容）
+// ============================================================================
+
+/**
+ * @deprecated 使用 CommandParseError 或检查 requiresShell
+ */
+export const CommandInjectionError = CommandParseError;

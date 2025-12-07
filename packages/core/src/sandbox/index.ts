@@ -76,7 +76,9 @@ export {
   LocalSandbox,
   createLocalSandbox,
   CommandNotAllowedError,
-  CommandInjectionError,
+  CommandParseError,
+  CommandInjectionError, // 已弃用，保持向后兼容
+  UnsafeShellError,
   PathOutOfBoundsError,
   SymlinkNotAllowedError,
   UnsafeWorkdirError,
