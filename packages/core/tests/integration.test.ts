@@ -47,7 +47,7 @@ async function cleanupTestDir(): Promise<void> {
 /**
  * 创建模拟规划响应
  */
-function createMockPlanningResponse(subtaskCount: number = 3): string {
+function createMockPlanningResponse(subtaskCount = 3): string {
   const subtasks = Array.from({ length: subtaskCount }, (_, i) => ({
     id: `subtask-${i + 1}`,
     objective: `子任务 ${i + 1}: 完成步骤 ${i + 1}`,

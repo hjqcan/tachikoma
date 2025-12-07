@@ -148,9 +148,9 @@ export class Planner {
   async plan(input: PlannerInput): Promise<PlanResult> {
     const { task, availableTools, contextConstraints, maxSubtasks, preferences } = input;
 
-    let totalTokens = { input: 0, output: 0 };
+    const totalTokens = { input: 0, output: 0 };
     let totalRetries = 0;
-    let degraded = false;
+    const degraded = false;
 
     try {
       // 生成用户 Prompt
@@ -295,7 +295,7 @@ export class Planner {
     contextConstraints?: PlannerInput['contextConstraints']
   ): DelegationConfig {
     // 基于复杂度和子任务数量计算 Worker 数量
-    let workerCount = this.calculateWorkerCount(subtasks.length, complexity, executionPlan.isParallel);
+    const workerCount = this.calculateWorkerCount(subtasks.length, complexity, executionPlan.isParallel);
 
     // 基于复杂度和子任务数量计算超时时间
     let timeout = this.calculateTimeout(subtasks, complexity);

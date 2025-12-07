@@ -397,7 +397,7 @@ export class PlanningParser {
   }> {
     let currentResponse = initialResponse;
     let retryCount = 0;
-    let totalTokens = { input: 0, output: 0 };
+    const totalTokens = { input: 0, output: 0 };
 
     // 首次解析
     let result = parsePlanningOutput(currentResponse);

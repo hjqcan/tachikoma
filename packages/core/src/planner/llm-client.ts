@@ -28,7 +28,7 @@ export class LLMClientError extends Error {
     message: string,
     public provider: LLMProvider,
     public code: string,
-    public retryable: boolean = false
+    public retryable = false
   ) {
     super(`[${provider}] ${message}`);
     this.name = 'LLMClientError';
