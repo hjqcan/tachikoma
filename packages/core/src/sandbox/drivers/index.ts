@@ -12,7 +12,10 @@ export {
   LocalSandbox,
   createLocalSandbox,
   CommandNotAllowedError,
+  CommandInjectionError,
   PathOutOfBoundsError,
+  SymlinkNotAllowedError,
+  UnsafeWorkdirError,
 } from './local';
 
 // ============================================================================

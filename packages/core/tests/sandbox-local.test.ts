@@ -5,8 +5,10 @@
  * - 命令执行
  * - 文件读写
  * - 超时终止
- * - 路径安全检查
- * - 命令白名单
+ * - 路径安全检查（含符号链接防护）
+ * - 命令白名单（含命令注入检测）
+ * - 并发执行安全
+ * - 工作目录安全验证
  *
  * 任务 5.3 测试策略实现
  */
@@ -14,7 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { exists, rm } from 'node:fs/promises';
+import { mkdir, symlink, rm, access } from 'node:fs/promises';
 import {
   LocalSandbox,
   createLocalSandbox,
@@ -23,7 +25,24 @@ import {
   createSandboxConfig,
   TimeoutError,
 } from '../src/sandbox';
+import {
+  CommandInjectionError,
+  SymlinkNotAllowedError,
+  UnsafeWorkdirError,
+} from '../src/sandbox/drivers/local';
 import type { SandboxConfig, LocalRuntimeConfig } from '../src/sandbox';
+
+/**
+ * 检查文件是否存在（兼容性辅助函数）
+ */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ============================================================================
 // 测试数据工厂
@@ -598,5 +617,319 @@ describe('LocalSandbox 状态信息', () => {
     expect(context.sandboxId).toBe('log-test-001');
     expect(context.status).toBe('creating');
     expect(context.runtime).toBe('local');
+  });
+});
+
+// ============================================================================
+// 命令注入检测测试
+// ============================================================================
+
+describe('LocalSandbox 命令注入检测', () => {
+  let sandbox: LocalSandbox;
+
+  afterEach(async () => {
+    if (sandbox && sandbox.status !== 'stopped') {
+      await sandbox.destroy();
+    }
+  });
+
+  it('配置白名单时应检测分号注入', async () => {
+    const config = createTestLocalConfig({}, {
+      allowedCommands: ['echo', 'node'],
+    });
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    // 尝试使用分号注入额外命令
+    await expect(
+      sandbox.runCommand('echo hello; rm -rf /')
+    ).rejects.toThrow(CommandInjectionError);
+  });
+
+  it('配置白名单时应检测管道注入', async () => {
+    const config = createTestLocalConfig({}, {
+      allowedCommands: ['echo'],
+    });
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    await expect(
+      sandbox.runCommand('echo hello | cat')
+    ).rejects.toThrow(CommandInjectionError);
+  });
+
+  it('配置白名单时应检测 && 注入', async () => {
+    const config = createTestLocalConfig({}, {
+      allowedCommands: ['echo'],
+    });
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    await expect(
+      sandbox.runCommand('echo hello && rm -rf /')
+    ).rejects.toThrow(CommandInjectionError);
+  });
+
+  it('配置白名单时应检测反引号注入', async () => {
+    const config = createTestLocalConfig({}, {
+      allowedCommands: ['echo'],
+    });
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    await expect(
+      sandbox.runCommand('echo `whoami`')
+    ).rejects.toThrow(CommandInjectionError);
+  });
+
+  it('配置白名单时应检测 $() 注入', async () => {
+    const config = createTestLocalConfig({}, {
+      allowedCommands: ['echo'],
+    });
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    await expect(
+      sandbox.runCommand('echo $(whoami)')
+    ).rejects.toThrow(CommandInjectionError);
+  });
+
+  it('未配置白名单时不应检测元字符（开发模式）', async () => {
+    const config = createTestLocalConfig();
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    // 未配置白名单时允许所有命令（开发模式）
+    const result = await sandbox.runCommand('echo hello && echo world');
+    expect(result.success).toBe(true);
+  });
+});
+
+// ============================================================================
+// 并发执行安全测试
+// ============================================================================
+
+describe('LocalSandbox 并发执行安全', () => {
+  let sandbox: LocalSandbox;
+
+  beforeEach(async () => {
+    const config = createTestLocalConfig();
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+  });
+
+  afterEach(async () => {
+    if (sandbox && sandbox.status !== 'stopped') {
+      await sandbox.destroy();
+    }
+  });
+
+  it('并发执行代码不应互相干扰', async () => {
+    // 同时执行多个代码，验证使用唯一文件名
+    const results = await Promise.all([
+      sandbox.execute('console.log("result-1")'),
+      sandbox.execute('console.log("result-2")'),
+      sandbox.execute('console.log("result-3")'),
+    ]);
+
+    expect(results[0].success).toBe(true);
+    expect(results[0].stdout.trim()).toBe('result-1');
+
+    expect(results[1].success).toBe(true);
+    expect(results[1].stdout.trim()).toBe('result-2');
+
+    expect(results[2].success).toBe(true);
+    expect(results[2].stdout.trim()).toBe('result-3');
+  });
+
+  it('并发执行命令不应互相干扰', async () => {
+    const results = await Promise.all([
+      sandbox.runCommand('echo "cmd-1"'),
+      sandbox.runCommand('echo "cmd-2"'),
+      sandbox.runCommand('echo "cmd-3"'),
+    ]);
+
+    expect(results[0].stdout.trim()).toBe('cmd-1');
+    expect(results[1].stdout.trim()).toBe('cmd-2');
+    expect(results[2].stdout.trim()).toBe('cmd-3');
+  });
+});
+
+// ============================================================================
+// 符号链接安全测试
+// ============================================================================
+
+describe('LocalSandbox 符号链接安全', () => {
+  let sandbox: LocalSandbox;
+  let testSymlinkPath: string | null = null;
+
+  beforeEach(async () => {
+    const config = createTestLocalConfig();
+    sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+  });
+
+  afterEach(async () => {
+    // 清理测试符号链接
+    if (testSymlinkPath) {
+      try {
+        await rm(testSymlinkPath, { force: true });
+      } catch {
+        // 忽略
+      }
+      testSymlinkPath = null;
+    }
+
+    if (sandbox && sandbox.status !== 'stopped') {
+      await sandbox.destroy();
+    }
+  });
+
+  it('应阻止读取指向工作目录外的符号链接', async () => {
+    // 在工作目录内创建指向 /etc 的符号链接
+    const workdir = sandbox.getWorkdir();
+    testSymlinkPath = join(workdir, 'malicious-link');
+
+    try {
+      await symlink('/etc', testSymlinkPath);
+    } catch {
+      // 某些系统可能不允许创建符号链接，跳过测试
+      return;
+    }
+
+    // 尝试通过符号链接读取文件
+    await expect(
+      sandbox.readFile('malicious-link/passwd')
+    ).rejects.toThrow();
+  });
+
+  it('应允许读取指向工作目录内的符号链接', async () => {
+    // 先创建一个真实文件
+    await sandbox.writeFile('real-file.txt', 'real content');
+
+    // 创建指向工作目录内文件的符号链接
+    const workdir = sandbox.getWorkdir();
+    testSymlinkPath = join(workdir, 'internal-link.txt');
+
+    try {
+      await symlink(join(workdir, 'real-file.txt'), testSymlinkPath);
+    } catch {
+      // 某些系统可能不允许创建符号链接，跳过测试
+      return;
+    }
+
+    // 应该可以通过符号链接读取
+    const content = await sandbox.readFile('internal-link.txt');
+    expect(content).toBe('real content');
+  });
+});
+
+// ============================================================================
+// 工作目录安全验证测试
+// ============================================================================
+
+describe('LocalSandbox 工作目录安全', () => {
+  it('不应允许配置根目录作为工作目录', () => {
+    const config = createTestLocalConfig({
+      filesystem: {
+        workdir: '/',
+        mounts: [],
+      },
+    });
+
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+
+    expect(sandbox.initialize()).rejects.toThrow(UnsafeWorkdirError);
+  });
+
+  it('不应允许配置 /tmp 作为工作目录', () => {
+    const config = createTestLocalConfig({
+      filesystem: {
+        workdir: '/tmp',
+        mounts: [],
+      },
+    });
+
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+
+    expect(sandbox.initialize()).rejects.toThrow(UnsafeWorkdirError);
+  });
+
+  it('不应允许配置 /etc 作为工作目录', () => {
+    const config = createTestLocalConfig({
+      filesystem: {
+        workdir: '/etc',
+        mounts: [],
+      },
+    });
+
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+
+    expect(sandbox.initialize()).rejects.toThrow(UnsafeWorkdirError);
+  });
+
+  it('应允许配置安全的深层目录', async () => {
+    const safePath = join(tmpdir(), `safe-sandbox-test-${Date.now()}`);
+
+    const config = createTestLocalConfig({
+      filesystem: {
+        workdir: safePath,
+        mounts: [],
+      },
+    });
+
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+
+    // 应该能成功初始化
+    await sandbox.initialize();
+    expect(sandbox.status).toBe('running');
+
+    await sandbox.destroy();
+  });
+});
+
+// ============================================================================
+// 子进程清理测试
+// ============================================================================
+
+describe('LocalSandbox 子进程清理', () => {
+  it('销毁时应终止活跃的子进程', async () => {
+    const config = createTestLocalConfig({ timeout: 60000 }); // 长超时
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    // 启动一个长时间运行的进程（但不等待完成）
+    const runPromise = sandbox.runCommand('sleep 30');
+
+    // 等待一小段时间确保进程已经启动
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // 销毁沙盒
+    await sandbox.destroy();
+
+    // runPromise 应该最终会失败或被中断
+    try {
+      const result = await runPromise;
+      // 如果返回了结果，应该是被终止的（非正常退出）
+      // 注意：在某些情况下进程可能已经被杀死，result.success 可能是 false
+      expect(result.timedOut || !result.success).toBe(true);
+    } catch {
+      // 被中断抛出错误也是预期行为
+    }
+
+    expect(sandbox.status).toBe('stopped');
+  });
+
+  it('多次销毁应是幂等的', async () => {
+    const config = createTestLocalConfig();
+    const sandbox = new LocalSandbox(createTestSandboxId(), config);
+    await sandbox.initialize();
+
+    // 多次调用销毁不应报错
+    await sandbox.destroy();
+    await sandbox.destroy();
+    await sandbox.destroy();
+
+    expect(sandbox.status).toBe('stopped');
   });
 });

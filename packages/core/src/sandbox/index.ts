@@ -76,7 +76,10 @@ export {
   LocalSandbox,
   createLocalSandbox,
   CommandNotAllowedError,
+  CommandInjectionError,
   PathOutOfBoundsError,
+  SymlinkNotAllowedError,
+  UnsafeWorkdirError,
 } from './drivers';
 
 // Task 5.2 - Docker 驱动
