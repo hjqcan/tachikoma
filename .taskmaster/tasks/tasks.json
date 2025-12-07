@@ -410,10 +410,10 @@
               1
             ],
             "details": "在 packages/core/src/sandbox/drivers/local.ts 实现 LocalSandbox 类；直接使用 Bun.spawn 执行命令，限制工作目录，提供基础超时控制；标记为仅开发/测试使用，生产环境应使用 Docker",
-            "status": "in-progress",
+            "status": "done",
             "testStrategy": "单元测试：验证命令执行、文件读写、超时终止",
             "parentId": "undefined",
-            "updatedAt": "2025-12-07T05:40:57.020Z"
+            "updatedAt": "2025-12-07T05:53:20.901Z"
           },
           {
             "id": 4,
@@ -479,7 +479,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-07T05:51:16.512Z"
+        "updatedAt": "2025-12-07T05:53:20.901Z"
       },
       {
         "id": "6",
@@ -973,7 +973,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-07T05:51:16.514Z",
+      "lastModified": "2025-12-07T05:53:20.902Z",
       "taskCount": 10,
       "completedCount": 4,
       "tags": [
