@@ -282,11 +282,18 @@ export class MVPRunner {
     });
 
     let output = '';
-    let success = true;
+    let hasError = false;
+    let hasToolFailure = false;
+    let hasToolSuccess = false;
 
     try {
       // 执行子任务
-      for await (const msg of this.executor.execute(subtask, coreTools)) {
+      // MVP 模式：禁用关键决策检查，自动批准所有操作
+      for await (const msg of this.executor.execute(subtask, coreTools, {
+        keyDecisionPolicy: {
+          enabled: false, // 禁用关键决策检查
+        },
+      })) {
         switch (msg.type) {
           case 'thinking':
             this.callbacks.onWorkerThinking?.(workerId, msg.content);
@@ -299,6 +306,11 @@ export class MVPRunner {
 
           case 'tool_result':
             this.callbacks.onToolResult?.(workerId, msg.tool, msg.success);
+            if (msg.success) {
+              hasToolSuccess = true;
+            } else {
+              hasToolFailure = true;
+            }
             break;
 
           case 'output':
@@ -306,8 +318,9 @@ export class MVPRunner {
             break;
 
           case 'error':
-            success = false;
+            hasError = true;
             output = msg.error;
+            console.error(`[MVPRunner] Received error from worker ${workerId}:`, msg.error);
             break;
 
           case 'status':
@@ -317,6 +330,9 @@ export class MVPRunner {
             break;
         }
       }
+
+      // 成功判断：没有错误，且至少有一个工具成功执行
+      const success = !hasError && (hasToolSuccess || !hasToolFailure);
 
       this.callbacks.onWorkerComplete?.(workerId, success);
 

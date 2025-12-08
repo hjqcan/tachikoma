@@ -621,9 +621,14 @@ When the task is complete, provide a final summary of what was accomplished.`);
 
         // 检查停止原因
         if (response.stopReason === 'stop' && !containsToolCall(response.content)) {
+          console.debug('[GenericAgentBackend] Loop stop: reason is stop and no tool call');
           done = true;
+        } else {
+          console.debug(`[GenericAgentBackend] Loop check: stopReason=${response.stopReason}, containsToolCall=${containsToolCall(response.content)}`);
         }
       }
+
+      console.debug(`[GenericAgentBackend] Loop finished. done=${done}, round=${round}, maxRounds=${limits.maxThinkingRounds}`);
 
       // 发出完成状态
       yield {
@@ -645,6 +650,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
       }
     } catch (error) {
       const err = error as Error;
+      console.error('[GenericAgentBackend] Execution error:', err);
       yield {
         type: 'error',
         error: err.message,
