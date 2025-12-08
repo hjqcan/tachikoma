@@ -190,13 +190,18 @@ interface ParsedToolCall {
 }
 
 /**
- * 从 LLM 响应中解析工具调用
+ * 解析文本中的工具调用
  *
  * 支持多种格式：
  * - JSON 格式：{"tool": "name", "input": {...}}
  * - 函数调用格式：tool_name(arg1, arg2)
  * - XML 格式：<tool_use><name>...</name><input>...</input></tool_use>
+ * 
+ * 注意：单次响应最多解析 MAX_CALLS_PER_RESPONSE 个工具调用，
+ * 防止 LLM 幻觉生成大量重复调用。
  */
+const MAX_CALLS_PER_RESPONSE = 20;
+
 function parseToolCalls(content: string): ParsedToolCall[] {
   const calls: ParsedToolCall[] = [];
 
@@ -206,6 +211,14 @@ function parseToolCalls(content: string): ParsedToolCall[] {
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (parsed.tool && typeof parsed.tool === 'string') {
+        // 检查是否达到单次响应最大调用数限制
+        if (calls.length >= MAX_CALLS_PER_RESPONSE) {
+          console.warn(
+            `[parseToolCalls] Truncated tool calls: reached max ${MAX_CALLS_PER_RESPONSE} calls per response. ` +
+            `This may indicate LLM generating excessive duplicate tool calls.`
+          );
+          return calls; // 直接返回，不再解析其他格式
+        }
         calls.push({
           name: parsed.tool,
           input: parsed.input || parsed.arguments || {},
@@ -221,6 +234,15 @@ function parseToolCalls(content: string): ParsedToolCall[] {
   const xmlRegex = /<tool_use>([\s\S]*?)<\/tool_use>/g;
   let xmlMatch;
   while ((xmlMatch = xmlRegex.exec(content)) !== null) {
+    // 检查是否达到单次响应最大调用数限制
+    if (calls.length >= MAX_CALLS_PER_RESPONSE) {
+      console.warn(
+        `[parseToolCalls] Truncated tool calls: reached max ${MAX_CALLS_PER_RESPONSE} calls per response. ` +
+        `This may indicate LLM generating excessive duplicate tool calls.`
+      );
+      break;
+    }
+
     const toolBlock = xmlMatch[1];
     const nameMatch = toolBlock?.match(/<name>(.*?)<\/name>/);
     const inputMatch = toolBlock?.match(/<input>([\s\S]*?)<\/input>/);

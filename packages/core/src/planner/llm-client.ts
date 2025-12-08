@@ -180,6 +180,10 @@ export class OpenAILLMClient extends BaseLLMClient {
     this.openaiProvider = createOpenAI({
       ...(config.apiKey && { apiKey: config.apiKey }),
       ...(config.baseUrl && { baseURL: config.baseUrl }),
+      headers: {
+        'HTTP-Referer': 'https://github.com/hjqcan/tachikoma',
+        'X-Title': 'Tachikoma',
+      },
     });
   }
 
@@ -202,7 +206,9 @@ export class OpenAILLMClient extends BaseLLMClient {
       abortSignal,
     } = request;
 
-    // P0 修复：过滤 messages 中的 system 角色，避免与 systemPrompt 双重发送
+    // 过滤 system 消息（因为已经通过 system 参数传递）
+    // 注意：在当前架构中，generic-agent-backend 的 SimpleContextManager
+    // 会将 tool 消息转换为 user 消息，因此这里不需要处理 tool 角色
     const filteredMessages = messages.filter(
       (m) => m.role === 'user' || m.role === 'assistant'
     );
@@ -214,7 +220,9 @@ export class OpenAILLMClient extends BaseLLMClient {
 
     try {
       const result = await generateText({
-        model: this.openaiProvider(this.config.model),
+        // Fix: Use .chat() to force using OpenAIChatLanguageModel (/chat/completions endpoint)
+        // instead of the default which might use /responses endpoint for OpenRouter
+        model: this.openaiProvider.chat(this.config.model),
         system: systemPrompt,
         messages: filteredMessages.map((m) => ({
           role: m.role as 'user' | 'assistant',
@@ -227,7 +235,6 @@ export class OpenAILLMClient extends BaseLLMClient {
         ...(effectiveAbortSignal && { abortSignal: effectiveAbortSignal }),
       });
 
-
       return {
         content: result.text,
         usage: {
@@ -238,6 +245,7 @@ export class OpenAILLMClient extends BaseLLMClient {
         model: this.config.model,
       };
     } catch (error) {
+      console.error('[OpenAILLMClient] Raw error:', error);
       // 处理 AI SDK 错误
       const err = error as Error & { status?: number; code?: string };
       const statusCode = err.status || 0;

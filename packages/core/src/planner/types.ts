@@ -17,8 +17,13 @@ export type LLMProvider = 'anthropic' | 'openai' | 'mock';
 
 /**
  * LLM 消息角色
+ *
+ * 注意：虽然定义了 'tool' 角色，但在当前架构中，
+ * generic-agent-backend 的 SimpleContextManager 会将 tool 消息
+ * 转换为 user 消息，因此 LLMClient 实际上不会收到 tool 角色消息。
+ * 保留此定义是为了将来可能的原生 tool calling 支持。
  */
-export type LLMMessageRole = 'system' | 'user' | 'assistant';
+export type LLMMessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
 /**
  * LLM 消息
@@ -28,6 +33,8 @@ export interface LLMMessage {
   role: LLMMessageRole;
   /** 消息内容 */
   content: string;
+  /** 工具调用 ID (仅 tool 角色需要，预留字段) */
+  toolCallId?: string;
 }
 
 /**
