@@ -27,6 +27,14 @@ bun add @tachikoma/core
 | `tools`        | 原子工具库                      | 🚧 待实现 |
 | `mcp`          | MCP 集成                        | 🚧 待实现 |
 
+## MVP 已知限制
+
+- Claude Agent SDK 模式下，Tachikoma 自有工具的 MCP 桥接尚未实现，必要时请强制使用通用后端或接受工具不可用。
+- 沙盒隔离仅对 `isCommandBased: true` 的工具通过 `sandbox.runCommand` 生效；非命令型 JS 工具在沙盒降级/不可用时仍在宿主进程执行，可开启 `strictSandbox` 拒绝此类工具。
+- 可观测性为轻量 Console/内存实现，未接 OTLP/Prometheus；traceId 主要在 WorkerExecutor 生成，跨层追踪需后续透传。
+- 审批文件协议需 Orchestrator 写入/清理，未配置回调时按默认决策超时处理。
+- MCP 能力、工具库与具体 Agents 仍在建设中，属于后续迭代范围。
+
 ## 核心流程：plan → assign → monitor → aggregate
 
 Orchestrator 实现了完整的任务执行流程：
