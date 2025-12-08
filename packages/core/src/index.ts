@@ -203,10 +203,59 @@ export {
 } from './worker';
 
 // ============================================================================
+// Tools 模块
+// ============================================================================
+
+export * as tools from './tools';
+
+// 常用 Tools 类型顶层导出
+export type {
+  ToolResult,
+  FileReadInput,
+  FileReadOutput,
+  FileWriteInput,
+  FileWriteOutput,
+  FileListInput,
+  FileListOutput,
+  ShellRunInput,
+  ShellRunOutput,
+  CodeSearchInput,
+  CodeSearchOutput,
+} from './tools';
+
+export {
+  coreTools,
+  fileReadTool,
+  fileWriteTool,
+  fileListTool,
+  shellRunTool,
+  codeSearchTool,
+  getToolByName,
+  getToolNames,
+  getToolDefinitions,
+} from './tools';
+
+// ============================================================================
+// MVP 模块
+// ============================================================================
+
+export * as mvp from './mvp';
+
+export type {
+  MVPRunnerConfig,
+  ProgressCallback,
+  RunMetrics,
+} from './mvp';
+
+export {
+  MVPRunner,
+  runMVP,
+} from './mvp';
+
+// ============================================================================
 // TODO: 后续添加以下模块导出
 // ============================================================================
 
 // export * from './agents';      // 具体智能体实现 (Task 5)
 // export * from './context';     // 上下文管理实现 (Task 8)
-// export * from './tools';       // 原子工具实现 (Task 6)
 // export * from './mcp';         // MCP 集成 (Task 7)
