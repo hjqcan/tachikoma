@@ -1,0 +1,29 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`Worker Backend 快照 WorkerMessage 类型结构 1`] = `
+{
+  "status": {
+    "status": "idle",
+    "timestamp": 0,
+    "type": "status",
+  },
+  "thinking": {
+    "content": "test",
+    "timestamp": 0,
+    "type": "thinking",
+  },
+  "tool_call": {
+    "callId": "id-1",
+    "input": {},
+    "timestamp": 0,
+    "tool": "test",
+    "type": "tool_call",
+  },
+}
+`;
+
+exports[`Worker Backend 快照 Backend 能力列表 1`] = `
+[
+  "code-execution",
+]
+`;
