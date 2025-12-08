@@ -133,6 +133,76 @@ export {
 // 但 sandbox 模块中的版本更完善，推荐使用 sandbox.BaseSandbox
 
 // ============================================================================
+// 可观测性模块
+// ============================================================================
+
+export * as observability from './observability';
+
+// 常用类型顶层导出
+export type {
+  Logger,
+  Tracer,
+  Span,
+  MetricsCollector,
+  LogContext,
+  LogLevel,
+  SpanOptions,
+  MetricsSnapshot,
+} from './observability';
+
+export {
+  // Logger
+  ConsoleLogger,
+  NoopLogger,
+  createLogger,
+  defaultLogger,
+  noopLogger,
+  // Tracer
+  NoopTracer,
+  ConsoleTracer,
+  createTracer,
+  defaultTracer,
+  // Metrics
+  MemoryMetrics,
+  NoopMetrics,
+  createMetrics,
+  defaultMetrics,
+  noopMetrics,
+  // 组合工厂
+  createObservability,
+  noopObservability,
+  // 预定义指标
+  WORKER_METRICS,
+  SANDBOX_METRICS,
+} from './observability';
+
+// ============================================================================
+// Worker 模块
+// ============================================================================
+
+export * as worker from './worker';
+
+// 常用 Worker 类型顶层导出
+export type {
+  WorkerBackendType,
+  WorkerMessage,
+  WorkerTask,
+  WorkerExecutionOptions,
+  WorkerExecutionResult,
+  IWorkerBackend,
+} from './worker';
+
+export {
+  WorkerExecutor,
+  createWorkerExecutor,
+  createWorkerBackend,
+  GenericAgentBackend,
+  isKeyDecision,
+  DEFAULT_RISK_POLICY,
+  DEFAULT_RESOURCE_LIMITS,
+} from './worker';
+
+// ============================================================================
 // TODO: 后续添加以下模块导出
 // ============================================================================
 

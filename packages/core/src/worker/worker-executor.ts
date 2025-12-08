@@ -17,6 +17,8 @@ import type {
   WorkerExecutionMetrics,
 } from './types';
 import { createWorkerBackend } from './backend-factory';
+import type { Logger, Tracer, MetricsCollector, Span } from '../observability';
+import { noopLogger, createTracer, noopMetrics, WORKER_METRICS } from '../observability';
 
 // ============================================================================
 // 类型定义
@@ -34,6 +36,12 @@ export interface WorkerExecutorConfig {
   workDir?: string | undefined;
   /** Worker ID */
   workerId: string;
+  /** Logger 实例（可选） */
+  logger?: Logger | undefined;
+  /** Tracer 实例（可选） */
+  tracer?: Tracer | undefined;
+  /** Metrics 收集器（可选） */
+  metrics?: MetricsCollector | undefined;
 }
 
 /**
@@ -86,9 +94,15 @@ export class WorkerExecutor {
   private readonly config: WorkerExecutorConfig;
   private backend: IWorkerBackend | null = null;
   private isInitialized = false;
+  private readonly logger: Logger;
+  private readonly tracer: Tracer;
+  private readonly metrics: MetricsCollector;
 
   constructor(config: WorkerExecutorConfig) {
     this.config = config;
+    this.logger = config.logger ?? noopLogger;
+    this.tracer = config.tracer ?? createTracer({ enabled: false });
+    this.metrics = config.metrics ?? noopMetrics;
   }
 
   /**
@@ -257,6 +271,25 @@ export class WorkerExecutor {
       };
     }
 
+    // 创建执行 Span
+    const taskSpan: Span = this.tracer.startSpan('worker.execute', {
+      attributes: {
+        workerId,
+        subtaskId: subtask.id,
+        objective: subtask.objective,
+      },
+    });
+
+    // 日志上下文
+    const logContext = {
+      traceId: taskSpan.traceId,
+      spanId: taskSpan.spanId,
+      workerId,
+      subtaskId: subtask.id,
+    };
+
+    this.logger.info('Starting subtask execution', logContext);
+
     // 指标收集
     const startTime = Date.now();
     let toolCallCount = 0;
@@ -290,26 +323,38 @@ export class WorkerExecutor {
           await this.persistMessage(sessionManager, workerId, subtask.id, msg);
         }
 
-        // 更新指标
+        // 更新指标和日志
         switch (msg.type) {
           case 'thinking':
             thinkingRounds++;
+            this.logger.debug('Thinking round', { ...logContext, round: thinkingRounds });
+            this.metrics.increment(WORKER_METRICS.THINKING_ROUNDS, 1, { workerId });
             break;
           case 'tool_call':
             toolCallCount++;
+            this.logger.info(`Tool call: ${msg.tool}`, { ...logContext, tool: msg.tool, callId: msg.callId });
+            taskSpan.addEvent('tool_call', { tool: msg.tool, callId: msg.callId });
             break;
-          case 'tool_result':
+          case 'tool_result': {
+            const toolTags = { workerId, tool: msg.tool, success: String(msg.success) };
+            this.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, msg.duration, toolTags);
+            this.metrics.increment(WORKER_METRICS.TOOL_CALLS_COUNT, 1, toolTags);
             if (msg.success) {
-                successfulToolCalls++;
+              successfulToolCalls++;
+              this.logger.debug(`Tool result: ${msg.tool} succeeded`, { ...logContext, duration: msg.duration });
             } else {
-                failedToolCalls++;
+              failedToolCalls++;
+              this.logger.warn(`Tool result: ${msg.tool} failed`, { ...logContext, duration: msg.duration });
+              this.metrics.increment(WORKER_METRICS.ERRORS_COUNT, 1, { workerId });
             }
-          break;
-        case 'status':
-          if (typeof msg.tokensUsed === 'number') {
-            tokensUsed = msg.tokensUsed;
+            break;
           }
-          break;
+          case 'status':
+            if (typeof msg.tokensUsed === 'number') {
+              tokensUsed = msg.tokensUsed;
+              this.metrics.gauge(WORKER_METRICS.TOKENS_USED, tokensUsed, { workerId });
+            }
+            break;
         }
 
         // 发出消息
@@ -324,6 +369,18 @@ export class WorkerExecutor {
           lastHeartbeat: Date.now(),
         });
       }
+
+      // 完成 Span
+      const duration = Date.now() - startTime;
+      taskSpan.addTag('success', true);
+      taskSpan.addTag('toolCallCount', toolCallCount);
+      taskSpan.addTag('thinkingRounds', thinkingRounds);
+      taskSpan.setStatus('ok');
+      taskSpan.end();
+
+      // 记录最终 metrics
+      this.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, duration, { workerId, status: 'success' });
+      this.logger.info('Subtask execution completed', { ...logContext, duration, toolCallCount, thinkingRounds, tokensUsed });
     } catch (error) {
       // 更新 Worker 状态为失败
       if (sessionManager) {
@@ -338,6 +395,18 @@ export class WorkerExecutor {
           lastHeartbeat: Date.now(),
         });
       }
+
+      // 错误 Span
+      const duration = Date.now() - startTime;
+      taskSpan.addTag('success', false);
+      taskSpan.setStatus('error', error instanceof Error ? error.message : 'Unknown error');
+      taskSpan.end();
+
+      // 记录错误 metrics
+      this.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, duration, { workerId, status: 'error' });
+      this.metrics.increment(WORKER_METRICS.ERRORS_COUNT, 1, { workerId });
+      this.logger.error('Subtask execution failed', { ...logContext, error: error instanceof Error ? error.message : 'Unknown error' });
+
       throw error;
     }
 

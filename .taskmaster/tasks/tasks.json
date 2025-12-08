@@ -376,7 +376,7 @@
         "testStrategy": "- 单元：sandbox API mock，验证 execute/文件读写/命令调用参数正确。\n- 集成：在本地 Docker 运行简单 TS 代码，确保隔离与超时生效。\n- 安全：故障注入测试禁止越权文件访问。",
         "priority": "medium",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -478,12 +478,13 @@
               7
             ],
             "details": "为 Sandbox 和 Worker 执行链路添加结构化日志、span/tag、资源消耗 metrics（可从 thinking.jsonl 生成）；更新 packages/core/src/index.ts 导出；编写 README 示例展示文件共享协调机制；运行完整集成测试",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：端到端验证 Worker 执行任务、文件写入、Orchestrator 监控、纠偏响应",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-08T08:26:51.677Z"
           }
         ],
-        "updatedAt": "2025-12-08T08:04:33.944Z"
+        "updatedAt": "2025-12-08T08:26:51.677Z"
       },
       {
         "id": "6",
@@ -977,9 +978,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-08T08:04:33.946Z",
+      "lastModified": "2025-12-08T08:26:51.679Z",
       "taskCount": 10,
-      "completedCount": 4,
+      "completedCount": 5,
       "tags": [
         "master"
       ]

@@ -1021,6 +1021,104 @@ bun run build
 - `checkpoint-manager.test.ts` - CheckpointManager 单元测试
 - `contract.test.ts` - 文件协议契约测试
 - `integration.test.ts` - 端到端集成测试
+- `observability.test.ts` - 可观测性模块测试
+
+## 可观测性
+
+Tachikoma 提供轻量级的可观测性支持，包括结构化日志、Tracing Span 和 Metrics 收集。
+
+### 基本使用
+
+```typescript
+import {
+  createLogger,
+  createTracer,
+  createMetrics,
+  createObservability,
+  WORKER_METRICS,
+} from '@tachikoma/core';
+
+// 创建单独的实例
+const logger = createLogger({ level: 'info' });
+const tracer = createTracer();
+const metrics = createMetrics();
+
+// 或使用组合工厂
+const obs = createObservability({
+  logger: { level: 'debug' },
+  tracer: { enabled: true },
+  metrics: { enabled: true },
+});
+
+// 使用 Logger
+obs.logger.info('任务开始', { taskId: 'task-001', workerId: 'worker-001' });
+obs.logger.debug('详细信息', { step: 1, data: { key: 'value' } });
+
+// 使用 Tracer
+const span = obs.tracer.startSpan('worker.execute', {
+  attributes: { taskId: 'task-001' },
+});
+span.addEvent('tool_call', { tool: 'file_read' });
+span.addTag('success', true);
+span.setStatus('ok');
+span.end();
+
+// 使用 Metrics
+obs.metrics.increment(WORKER_METRICS.TOOL_CALLS_COUNT, 1, { workerId: 'worker-001' });
+obs.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, 1500, { status: 'success' });
+
+// 获取指标快照
+const snapshot = obs.metrics.getMetrics();
+console.log(snapshot.metrics);
+```
+
+### 日志输出格式
+
+```json
+{
+  "level": "info",
+  "ts": "2025-01-01T12:00:00.000Z",
+  "msg": "任务开始",
+  "traceId": "a1b2c3d4e5f6...",
+  "spanId": "1234abcd...",
+  "taskId": "task-001",
+  "workerId": "worker-001"
+}
+```
+
+### 集成到 WorkerExecutor
+
+```typescript
+import { createWorkerExecutor, createObservability } from '@tachikoma/core';
+
+const obs = createObservability({ logger: { level: 'debug' } });
+
+const executor = await createWorkerExecutor({
+  backendConfig: { provider: 'openai', model: 'gpt-4' },
+  workerId: 'worker-001',
+  logger: obs.logger,
+  tracer: obs.tracer,
+  metrics: obs.metrics,
+});
+
+// 执行时会自动记录日志和 metrics
+const result = await executor.executeAndCollect(subtask, tools);
+
+// 获取执行指标
+console.log('Metrics:', obs.metrics.getMetrics());
+```
+
+### 预定义指标
+
+| 名称                        | 类型      | 描述         |
+| --------------------------- | --------- | ------------ |
+| `worker.execution.duration` | histogram | 执行持续时间 |
+| `worker.tool_calls.count`   | counter   | 工具调用次数 |
+| `worker.thinking.rounds`    | counter   | 思考轮次     |
+| `worker.tokens.used`        | gauge     | Token 使用量 |
+| `worker.errors.count`       | counter   | 错误次数     |
+| `sandbox.command.duration`  | histogram | 命令执行耗时 |
+| `sandbox.file.read_count`   | counter   | 文件读取次数 |
 
 ## 许可证
 
