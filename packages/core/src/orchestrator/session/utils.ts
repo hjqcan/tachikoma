@@ -211,6 +211,137 @@ export async function readJsonFile<T>(filePath: string): Promise<T | null> {
 }
 
 // ============================================================================
+// 安全重试读取
+// ============================================================================
+
+/**
+ * 安全重试读取选项
+ */
+export interface SafeReadOptions {
+  /** 重试次数，默认 2 */
+  retries?: number;
+  /** 重试延迟（毫秒），默认 50 */
+  delay?: number;
+}
+
+/**
+ * 默认安全读取选项
+ */
+export const DEFAULT_SAFE_READ_OPTIONS: Required<SafeReadOptions> = {
+  retries: 2,
+  delay: 50,
+};
+
+/**
+ * 安全读取 JSON 文件（带重试）
+ *
+ * 在 JSON 解析失败或文件暂时不可读时进行重试，
+ * 用于处理原子写入过程中的短暂窗口期
+ *
+ * @param filePath - 文件路径
+ * @param options - 重试选项
+ * @returns JSON 数据，文件不存在或解析失败时返回 null
+ *
+ * @example
+ * ```ts
+ * const status = await safeReadJsonFileWithRetry<WorkerStatusFile>(
+ *   '/path/to/status.json',
+ *   { retries: 3, delay: 100 }
+ * );
+ * ```
+ */
+export async function safeReadJsonFileWithRetry<T>(
+  filePath: string,
+  options?: SafeReadOptions
+): Promise<T | null> {
+  const { retries, delay } = { ...DEFAULT_SAFE_READ_OPTIONS, ...options };
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const content = await readFile(filePath, 'utf-8');
+      return JSON.parse(content) as T;
+    } catch (error) {
+      // 文件不存在 - 直接返回 null，不重试
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
+
+      // JSON 解析错误或其他读取错误 - 可能是写入中，重试
+      lastError = error as Error;
+
+      if (attempt < retries) {
+        await sleep(delay);
+      }
+    }
+  }
+
+  // 所有重试都失败，记录警告并返回 null
+  console.warn(
+    `safeReadJsonFileWithRetry: Failed to read ${filePath} after ${retries + 1} attempts:`,
+    lastError?.message
+  );
+  return null;
+}
+
+/**
+ * 安全读取 JSONL 尾部（带重试）
+ *
+ * 在读取或解析失败时进行重试
+ *
+ * @param filePath - 文件路径
+ * @param limit - 最大读取条数
+ * @param options - 重试选项
+ * @returns 记录数组
+ */
+export async function safeReadJsonlTailWithRetry<T>(
+  filePath: string,
+  limit: number,
+  options?: SafeReadOptions
+): Promise<T[]> {
+  const { retries, delay } = { ...DEFAULT_SAFE_READ_OPTIONS, ...options };
+
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const content = await readFile(filePath, 'utf-8');
+      const lines = content.trim().split('\n').filter(line => line.trim());
+      const tailLines = lines.slice(-limit);
+
+      const records: T[] = [];
+      for (const line of tailLines) {
+        try {
+          records.push(JSON.parse(line) as T);
+        } catch {
+          // 跳过解析失败的单行
+        }
+      }
+
+      return records;
+    } catch (error) {
+      // 文件不存在 - 返回空数组
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return [];
+      }
+
+      lastError = error as Error;
+
+      if (attempt < retries) {
+        await sleep(delay);
+      }
+    }
+  }
+
+  console.warn(
+    `safeReadJsonlTailWithRetry: Failed to read ${filePath} after ${retries + 1} attempts:`,
+    lastError?.message
+  );
+  return [];
+}
+
+// ============================================================================
 // 目录操作
 // ============================================================================
 

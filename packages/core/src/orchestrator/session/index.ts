@@ -44,10 +44,16 @@ export type {
   RecoveryStrategy,
   SubtaskSnapshot,
   WorkerSnapshot,
+  // Peer 读取类型
+  PeerReadOptions,
 } from './types';
 
 // 常量导出
-export { DEFAULT_SESSION_CONFIG, DEFAULT_CHECKPOINT_CONFIG } from './types';
+export {
+  DEFAULT_SESSION_CONFIG,
+  DEFAULT_CHECKPOINT_CONFIG,
+  DEFAULT_PEER_READ_OPTIONS,
+} from './types';
 
 // SessionFileManager 导出
 export {
@@ -77,6 +83,9 @@ export {
   readJsonlTail,
   // JSON 操作
   readJsonFile,
+  // 安全重试读取
+  safeReadJsonFileWithRetry,
+  safeReadJsonlTailWithRetry,
   // 目录操作
   ensureDir,
   fileExists,
@@ -92,5 +101,8 @@ export {
   // 辅助函数
   sleep,
   now,
+  // 类型
+  type SafeReadOptions,
+  DEFAULT_SAFE_READ_OPTIONS,
 } from './utils';
 

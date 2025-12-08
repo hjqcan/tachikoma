@@ -57,6 +57,26 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   enableWatch: true,
 };
 
+/**
+ * Peer 读取选项
+ *
+ * 用于读取其他 Worker 或 Orchestrator 数据时的重试配置
+ */
+export interface PeerReadOptions {
+  /** 重试次数，默认 2 */
+  retries?: number;
+  /** 重试延迟（毫秒），默认 50 */
+  backoffDelay?: number;
+}
+
+/**
+ * 默认 Peer 读取选项
+ */
+export const DEFAULT_PEER_READ_OPTIONS: Required<PeerReadOptions> = {
+  retries: 2,
+  backoffDelay: 50,
+};
+
 // ============================================================================
 // Orchestrator 文件类型
 // ============================================================================
@@ -932,6 +952,55 @@ export interface ISessionFileManager {
    * @param limit - 最大条数
    */
   readMessages(limit?: number): Promise<MessageRecord[]>;
+
+  // === Peer 读取方法 ===
+
+  /**
+   * 列出所有已注册的 Worker ID
+   */
+  listPeerWorkers(): Promise<string[]>;
+
+  /**
+   * 读取其他 Worker 的状态
+   * @param workerId - Worker ID
+   * @param opts - 重试选项
+   */
+  readPeerStatus(workerId: string, opts?: PeerReadOptions): Promise<WorkerStatusFile | null>;
+
+  /**
+   * 读取其他 Worker 的思考日志
+   * @param workerId - Worker ID
+   * @param limit - 最大条数
+   * @param opts - 重试选项
+   */
+  readPeerThinking(workerId: string, limit?: number, opts?: PeerReadOptions): Promise<ThinkingRecord[]>;
+
+  /**
+   * 读取其他 Worker 的行动日志
+   * @param workerId - Worker ID
+   * @param limit - 最大条数
+   * @param opts - 重试选项
+   */
+  readPeerActions(workerId: string, limit?: number, opts?: PeerReadOptions): Promise<ActionRecord[]>;
+
+  /**
+   * 列出 Worker 的 artifacts 文件名
+   * @param workerId - Worker ID
+   */
+  listPeerArtifacts(workerId: string): Promise<string[]>;
+
+  /**
+   * 读取 Worker 的单个 artifact 文件内容
+   * @param workerId - Worker ID
+   * @param filename - 文件名
+   */
+  readPeerArtifact(workerId: string, filename: string): Promise<string | null>;
+
+  /**
+   * 读取 Orchestrator 计划（别名方法）
+   * @param opts - 重试选项
+   */
+  readOrchestratorPlan(opts?: PeerReadOptions): Promise<PlanFile | null>;
 
   // === 事件监控 ===
 

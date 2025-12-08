@@ -617,6 +617,50 @@ const actionLogs = await manager.readActionLogs('worker-001', 10);
 await manager.close();
 ```
 
+### Peer 读取 (Worker 间协调)
+
+支持 Worker 读取其他 Worker 或 Orchestrator 的共享数据，用于 Agent 间协调：
+
+```typescript
+import { createAndInitializeSessionFileManager } from '@tachikoma/core/orchestrator';
+
+const manager = await createAndInitializeSessionFileManager('session-001');
+await manager.registerWorker('worker-001');
+await manager.registerWorker('worker-002');
+
+// === 列出所有 Worker ===
+const peerWorkers = await manager.listPeerWorkers();
+console.log('Peer Workers:', peerWorkers); // ['worker-001', 'worker-002']
+
+// === 读取其他 Worker 状态 ===
+const peerStatus = await manager.readPeerStatus('worker-002', {
+  retries: 3, // 可选：重试次数
+  backoffDelay: 100, // 可选：重试间隔(ms)
+});
+if (peerStatus?.status === 'acting') {
+  console.log(`Worker-002 进度: ${peerStatus.progress}%`);
+}
+
+// === 读取思考/行动日志 ===
+const peerThinking = await manager.readPeerThinking('worker-002', 10);
+const peerActions = await manager.readPeerActions('worker-002', 10);
+
+// === 读取 artifacts ===
+const artifacts = await manager.listPeerArtifacts('worker-002');
+if (artifacts.includes('result.json')) {
+  const content = await manager.readPeerArtifact('worker-002', 'result.json');
+  console.log('Artifact:', content);
+}
+
+// === 读取 Orchestrator 计划 ===
+const plan = await manager.readOrchestratorPlan();
+console.log('当前计划:', plan?.plannerOutput.subtasks);
+
+await manager.close();
+```
+
+> **重试机制**: Peer 读取方法内置重试，处理原子写入过程中的短暂窗口期。默认重试 2 次，延迟 50ms。
+
 ## 检查点与任务恢复
 
 CheckpointManager 支持长时任务的检查点保存与恢复：

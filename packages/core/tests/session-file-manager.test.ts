@@ -853,6 +853,188 @@ describe('SessionFileManager', () => {
       expect(path).toContain('worker-001');
     });
   });
+
+  describe('Peer 读取方法', () => {
+    beforeEach(async () => {
+      await manager.initializeSession();
+      await manager.registerWorker('worker-001');
+      await manager.registerWorker('worker-002');
+    });
+
+    describe('listPeerWorkers', () => {
+      it('应列出所有已注册的 Worker', async () => {
+        const workers = await manager.listPeerWorkers();
+        expect(workers).toContain('worker-001');
+        expect(workers).toContain('worker-002');
+        expect(workers.length).toBe(2);
+      });
+
+      it('目录为空时应返回空数组', async () => {
+        // 使用新的 session manager
+        const emptyManager = createSessionFileManager('empty-session', {
+          rootDir: TEST_ROOT_DIR,
+          enableWatch: false,
+        });
+        await emptyManager.initializeSession();
+
+        const workers = await emptyManager.listPeerWorkers();
+        expect(workers).toEqual([]);
+
+        await emptyManager.close();
+      });
+    });
+
+    describe('readPeerStatus', () => {
+      it('应读取其他 Worker 的状态', async () => {
+        await manager.writeWorkerStatus('worker-001', {
+          status: 'thinking',
+          progress: 50,
+          lastHeartbeat: Date.now(),
+        });
+
+        const status = await manager.readPeerStatus('worker-001');
+        expect(status).not.toBeNull();
+        expect(status?.status).toBe('thinking');
+        expect(status?.progress).toBe(50);
+      });
+
+      it('Worker 不存在时应返回 null', async () => {
+        const status = await manager.readPeerStatus('nonexistent-worker');
+        expect(status).toBeNull();
+      });
+    });
+
+    describe('readPeerThinking', () => {
+      it('应读取其他 Worker 的思考日志', async () => {
+        const paths = new SessionPathBuilder(TEST_ROOT_DIR, TEST_SESSION_ID);
+        await appendJsonlRecord(paths.workerThinkingFile('worker-002'), {
+          id: 'think-001',
+          timestamp: Date.now(),
+          subtaskId: 'subtask-001',
+          content: 'Peer thinking content',
+          stage: 'analysis',
+        });
+
+        const logs = await manager.readPeerThinking('worker-002', 10);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]!.content).toBe('Peer thinking content');
+      });
+
+      it('文件不存在时应返回空数组', async () => {
+        const logs = await manager.readPeerThinking('worker-001', 10);
+        expect(logs).toEqual([]);
+      });
+    });
+
+    describe('readPeerActions', () => {
+      it('应读取其他 Worker 的行动日志', async () => {
+        const paths = new SessionPathBuilder(TEST_ROOT_DIR, TEST_SESSION_ID);
+        await appendJsonlRecord(paths.workerActionsFile('worker-002'), {
+          id: 'action-001',
+          timestamp: Date.now(),
+          subtaskId: 'subtask-001',
+          type: 'tool_call',
+          description: 'Peer action',
+        });
+
+        const logs = await manager.readPeerActions('worker-002', 10);
+        expect(logs).toHaveLength(1);
+        expect(logs[0]!.description).toBe('Peer action');
+      });
+    });
+
+    describe('listPeerArtifacts', () => {
+      it('应列出 Worker 的 artifacts', async () => {
+        const paths = new SessionPathBuilder(TEST_ROOT_DIR, TEST_SESSION_ID);
+        const artifactPath = join(paths.workerArtifactsDir('worker-001'), 'output.json');
+        await atomicWriteJson(artifactPath, { result: 'test' });
+
+        const artifacts = await manager.listPeerArtifacts('worker-001');
+        expect(artifacts).toContain('output.json');
+      });
+
+      it('目录为空时应返回空数组', async () => {
+        const artifacts = await manager.listPeerArtifacts('worker-002');
+        expect(artifacts).toEqual([]);
+      });
+    });
+
+    describe('readPeerArtifact', () => {
+      it('应读取 Worker 的 artifact 内容', async () => {
+        const paths = new SessionPathBuilder(TEST_ROOT_DIR, TEST_SESSION_ID);
+        const artifactPath = join(paths.workerArtifactsDir('worker-001'), 'data.txt');
+        await atomicWriteFile(artifactPath, 'Hello from artifact');
+
+        const content = await manager.readPeerArtifact('worker-001', 'data.txt');
+        expect(content).toBe('Hello from artifact');
+      });
+
+      it('文件不存在时应返回 null', async () => {
+        const content = await manager.readPeerArtifact('worker-001', 'nonexistent.txt');
+        expect(content).toBeNull();
+      });
+    });
+
+    describe('readOrchestratorPlan', () => {
+      it('应读取 Orchestrator 计划', async () => {
+        await manager.writePlan({
+          taskId: 'task-001',
+          createdAt: Date.now(),
+          version: 1,
+          plannerOutput: {
+            taskId: 'task-001',
+            subtasks: [],
+            delegation: {
+              mode: 'communication',
+              workerCount: 1,
+              timeout: 60000,
+              retryPolicy: DEFAULT_RETRY_POLICY,
+            },
+            executionPlan: { steps: [], isParallel: false },
+          },
+        });
+
+        const plan = await manager.readOrchestratorPlan();
+        expect(plan).not.toBeNull();
+        expect(plan?.taskId).toBe('task-001');
+      });
+
+      it('计划不存在时应返回 null', async () => {
+        const emptyManager = createSessionFileManager('no-plan-session', {
+          rootDir: TEST_ROOT_DIR,
+          enableWatch: false,
+        });
+        await emptyManager.initializeSession();
+
+        const plan = await emptyManager.readOrchestratorPlan();
+        expect(plan).toBeNull();
+
+        await emptyManager.close();
+      });
+    });
+
+    describe('协调读取集成测试', () => {
+      it('Worker A 应能读取 Worker B 的状态', async () => {
+        // Worker B 更新状态
+        await manager.writeWorkerStatus('worker-002', {
+          status: 'acting',
+          progress: 75,
+          currentSubtask: {
+            id: 'subtask-002',
+            objective: 'Processing data',
+            startedAt: Date.now(),
+          },
+          lastHeartbeat: Date.now(),
+        });
+
+        // Worker A (或任何调用者) 读取 Worker B 的状态
+        const peerStatus = await manager.readPeerStatus('worker-002');
+        expect(peerStatus?.status).toBe('acting');
+        expect(peerStatus?.progress).toBe(75);
+        expect(peerStatus?.currentSubtask?.objective).toBe('Processing data');
+      });
+    });
+  });
 });
 
 // ============================================================================

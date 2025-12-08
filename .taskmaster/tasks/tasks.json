@@ -450,9 +450,10 @@
               4
             ],
             "details": "在 Worker 执行流程中集成：1) 文件写入：thinking.jsonl（流式追加）、actions.jsonl（工具调用记录）、status.json（状态原子更新）；2) 关键决策点检测：isKeyDecision(action) 判断是否为高风险操作（删除文件/修改>100行/多文件重构/外部API）；3) 审批流程：写入 pending_approval.json，等待 Orchestrator 写入 approval_response.json，根据 approved/rejected 继续或调整；4) intervention 响应：监控 intervention.json 并响应纠偏指令",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：验证关键决策检测、审批等待流程、审批/拒绝响应、intervention 处理",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-08T07:48:08.787Z"
           },
           {
             "id": 7,
@@ -462,9 +463,10 @@
               6
             ],
             "details": "在 Worker 中实现 readPeerStatus(workerId)/readSharedContext()/readOrchestratorPlan() 方法；支持读取其他 Worker 的 status.json 和 artifacts/ 用于协调；读取 shared/context.json 获取全局上下文；实现文件锁避免读取不完整数据",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：两个 Worker 互相读取状态并协调执行",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-08T08:04:33.944Z"
           },
           {
             "id": 8,
@@ -481,7 +483,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-08T06:02:10.905Z"
+        "updatedAt": "2025-12-08T08:04:33.944Z"
       },
       {
         "id": "6",
@@ -975,7 +977,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-08T06:02:10.910Z",
+      "lastModified": "2025-12-08T08:04:33.946Z",
       "taskCount": 10,
       "completedCount": 4,
       "tags": [
