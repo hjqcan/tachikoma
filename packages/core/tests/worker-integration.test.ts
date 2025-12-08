@@ -87,6 +87,9 @@ function createMockSessionManager(): ISessionFileManager & {
     acknowledgeIntervention: mock(async () => {}),
     readThinkingLogs: mock(async () => []),
     readActionLogs: mock(async () => []),
+    appendThinking: mock(async () => {}),
+    appendAction: mock(async () => {}),
+    writePendingApproval: mock(async () => {}),
 
     readSharedContext: mock(async () => null),
     writeSharedContext: mock(async () => {}),

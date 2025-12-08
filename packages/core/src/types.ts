@@ -267,6 +267,16 @@ export interface Tool {
   /** 输出 Schema */
   outputSchema: JSONSchema;
 
+  /**
+   * 是否为命令型工具
+   *
+   * 命令型工具通过 sandbox.runCommand() 执行，提供真正的进程隔离
+   * 高风险工具（如 delete, exec）必须设置此标记为 true
+   *
+   * ⚠️ 非命令型工具的 execute() 会在宿主进程中直接执行，无隔离
+   */
+  isCommandBased?: boolean;
+
   /** 执行工具 */
   execute(input: unknown, context: ExecutionContext): Promise<unknown>;
 }

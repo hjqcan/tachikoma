@@ -881,6 +881,27 @@ export interface ISessionFileManager {
    */
   readActionLogs(workerId: string, limit?: number): Promise<ActionRecord[]>;
 
+  /**
+   * 追加 Worker 思考记录
+   * @param workerId - Worker ID
+   * @param record - 思考记录（不含 id）
+   */
+  appendThinking(workerId: string, record: Omit<ThinkingRecord, 'id'>): Promise<void>;
+
+  /**
+   * 追加 Worker 行动记录
+   * @param workerId - Worker ID
+   * @param record - 行动记录（不含 id）
+   */
+  appendAction(workerId: string, record: Omit<ActionRecord, 'id'>): Promise<void>;
+
+  /**
+   * 写入待审批请求文件
+   * @param workerId - Worker ID
+   * @param approval - 待审批请求
+   */
+  writePendingApproval(workerId: string, approval: PendingApprovalFile): Promise<void>;
+
   // === 共享文件操作 ===
 
   /**

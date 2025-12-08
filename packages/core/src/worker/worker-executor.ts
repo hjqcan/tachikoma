@@ -203,6 +203,7 @@ export class WorkerExecutor {
     let successfulToolCalls = 0;
     let failedToolCalls = 0;
     let thinkingRounds = 0;
+    let tokensUsed = 0;
     const allMessages: WorkerMessage[] = [];
 
     try {
@@ -239,11 +240,16 @@ export class WorkerExecutor {
             break;
           case 'tool_result':
             if (msg.success) {
-              successfulToolCalls++;
+                successfulToolCalls++;
             } else {
-              failedToolCalls++;
+                failedToolCalls++;
             }
-            break;
+          break;
+        case 'status':
+          if (typeof msg.tokensUsed === 'number') {
+            tokensUsed = msg.tokensUsed;
+          }
+          break;
         }
 
         // 发出消息
@@ -285,6 +291,7 @@ export class WorkerExecutor {
         successfulToolCalls,
         failedToolCalls,
         thinkingRounds,
+        tokensUsed,
       });
     }
   }
@@ -308,6 +315,7 @@ export class WorkerExecutor {
     let successfulToolCalls = 0;
     let failedToolCalls = 0;
     let thinkingRounds = 0;
+    let tokensUsed = 0;
 
     try {
       for await (const msg of this.execute(subtask, tools, options)) {
@@ -325,6 +333,11 @@ export class WorkerExecutor {
               successfulToolCalls++;
             } else {
               failedToolCalls++;
+            }
+            break;
+          case 'status':
+            if (typeof msg.tokensUsed === 'number') {
+              tokensUsed = msg.tokensUsed;
             }
             break;
           case 'output':
@@ -353,7 +366,7 @@ export class WorkerExecutor {
         successfulToolCalls,
         failedToolCalls,
         retryCount: 0,
-        tokensUsed: 0,
+        tokensUsed,
         thinkingRounds,
       },
     };
@@ -391,9 +404,6 @@ export class WorkerExecutor {
 
   /**
    * 持久化消息到审计日志
-   *
-   * TODO: 需要扩展 SessionFileManager 添加 appendThinking/appendAction 方法
-   * 当前仅记录决策日志
    */
   private async persistMessage(
     sessionManager: ISessionFileManager,
@@ -401,34 +411,72 @@ export class WorkerExecutor {
     subtaskId: string,
     msg: WorkerMessage
   ): Promise<void> {
-    // 仅在开发模式下记录详细日志
-    if (process.env.NODE_ENV === 'development') {
-      switch (msg.type) {
-        case 'thinking':
-          console.debug('[WorkerExecutor] Thinking:', msg.content.slice(0, 100));
-          break;
-        case 'tool_call':
-          console.debug('[WorkerExecutor] Tool call:', msg.tool);
-          break;
-        case 'tool_result':
-          console.debug('[WorkerExecutor] Tool result:', msg.tool, msg.success ? 'success' : 'failed');
-          break;
-      }
-    }
+    switch (msg.type) {
+      case 'thinking':
+        await sessionManager.appendThinking(workerId, {
+          timestamp: msg.timestamp,
+          subtaskId,
+          content: msg.content,
+          stage: 'analysis', // 默认阶段
+        });
+        break;
 
-    // 记录工具调用到决策日志（作为审计记录）
-    if (msg.type === 'tool_result' && !msg.success) {
-      await sessionManager.appendDecision({
-        type: 'retry',
-        workerId,
-        subtaskId,
-        decision: {
-          reason: `Tool ${msg.tool} failed`,
-        },
-        trigger: {
-          source: 'system',
-        },
-      });
+      case 'tool_call':
+        await sessionManager.appendAction(workerId, {
+          timestamp: msg.timestamp,
+          subtaskId,
+          type: 'tool_call',
+          description: `Calling tool: ${msg.tool}`,
+          params: { tool: msg.tool, input: msg.input },
+        });
+        break;
+
+      case 'tool_result':
+        await sessionManager.appendAction(workerId, {
+          timestamp: msg.timestamp,
+          subtaskId,
+          type: 'tool_call',
+          description: `Tool result: ${msg.tool}`,
+          result: {
+            success: msg.success,
+            output: msg.result,
+            duration: msg.duration,
+          },
+        });
+
+        // 失败时记录决策日志
+        if (!msg.success) {
+          await sessionManager.appendDecision({
+            type: 'retry',
+            workerId,
+            subtaskId,
+            decision: {
+              reason: `Tool ${msg.tool} failed`,
+            },
+            trigger: {
+              source: 'system',
+            },
+          });
+        }
+        break;
+
+      case 'approval_request':
+        await sessionManager.writePendingApproval(workerId, {
+          requestId: msg.requestId,
+          workerId,
+          subtaskId,
+          requestedAt: msg.timestamp,
+          type: 'dangerous_operation', // 默认类型
+          description: msg.description,
+          details: {
+            metadata: msg.details,
+            impactScope: 'high',
+            reversible: false,
+          },
+          timeout: 300000, // 5 分钟超时
+          defaultDecision: 'reject',
+        });
+        break;
     }
   }
 }

@@ -424,9 +424,10 @@
               3
             ],
             "details": "在 packages/core/src/agents/worker.ts 实现 Worker 类，继承 BaseAgent；run() 方法初始化沙盒、加载工具列表、按任务指令执行操作；实现重试退避（RetryPolicy）、错误捕获、artifacts/metrics 收集；暴露生命周期钩子",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：mock 沙盒验证任务执行流程、重试逻辑、错误传播",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-08T03:39:57.450Z"
           },
           {
             "id": 5,
@@ -436,9 +437,10 @@
               4
             ],
             "details": "在 Worker 执行流程中集成工具调用层；根据任务指令解析工具名称，从注册表获取工具定义，校验权限后在沙盒中执行；支持工具链串联（前一个工具输出作为下一个输入）；记录每个工具调用的 metrics",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：验证工具链执行、权限拒绝、输出传递",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-08T06:02:10.905Z"
           },
           {
             "id": 6,
@@ -479,7 +481,7 @@
             "parentId": "undefined"
           }
         ],
-        "updatedAt": "2025-12-07T05:53:20.901Z"
+        "updatedAt": "2025-12-08T06:02:10.905Z"
       },
       {
         "id": "6",
@@ -973,7 +975,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-07T05:53:20.902Z",
+      "lastModified": "2025-12-08T06:02:10.910Z",
       "taskCount": 10,
       "completedCount": 4,
       "tags": [

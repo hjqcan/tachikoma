@@ -6,6 +6,7 @@
 
 import type { Task, Tool, RetryPolicy } from '../types';
 import type { Sandbox, SandboxConfig } from '../sandbox';
+import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
 
 // ============================================================================
@@ -105,6 +106,8 @@ export interface WorkerStatusMessage {
   type: 'status';
   status: WorkerStatus;
   progress?: number;
+  /** 可选：累计 token 使用量，用于指标收集 */
+  tokensUsed?: number;
   timestamp: number;
 }
 
@@ -178,6 +181,12 @@ export interface WorkerExecutionOptions {
   riskPolicy?: RiskPolicy;
   /** 资源限制 */
   resourceLimits?: ResourceLimits;
+  /**
+   * Sandbox 安全策略
+   *
+   * 用于控制工具执行的隔离级别
+   */
+  securityPolicy?: SandboxSecurityPolicy;
 }
 
 // ============================================================================

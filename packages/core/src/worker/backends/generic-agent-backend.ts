@@ -19,8 +19,14 @@ import type {
 import { DEFAULT_RISK_POLICY, DEFAULT_RESOURCE_LIMITS } from '../types';
 import type { Tool } from '../../types';
 import type { LLMClient, LLMRequest } from '../../planner/types';
-import type { Sandbox } from '../../sandbox';
+import type { Sandbox, SandboxConfig } from '../../sandbox';
 import { createLLMClient } from '../../planner/llm-client';
+import { createLocalSandbox } from '../../sandbox/drivers/local';
+import { createSandboxConfig } from '../../sandbox/types';
+import {
+  createSandboxToolExecutor,
+  type ISandboxToolExecutor,
+} from '../../sandbox/tool-executor';
 
 // ============================================================================
 // 常量
@@ -280,6 +286,8 @@ export class GenericAgentBackend implements IWorkerBackend {
   private readonly config: GenericBackendConfig;
   private llmClient: LLMClient;
   private sandbox: Sandbox | null = null;
+  private sandboxOwned = false; // 是否由本实例拥有（负责销毁）
+  private sandboxNeedsInit = false; // 是否需要初始化
   private abortController: AbortController | null = null;
   private isExecuting = false;
 
@@ -301,10 +309,53 @@ export class GenericAgentBackend implements IWorkerBackend {
       });
     }
 
-    // 使用提供的沙盒
+    // 使用提供的沙箱或自动创建
     if (config.sandbox) {
       this.sandbox = config.sandbox;
+    } else if (config.sandboxConfig) {
+      // 自动创建本地沙箱（延迟初始化，在 execute 时调用）
+      this.sandbox = this.createSandboxFromConfig(config.sandboxConfig);
+      this.sandboxOwned = true;
+      this.sandboxNeedsInit = true;
     }
+  }
+
+  /**
+   * 确保 Sandbox 已初始化
+   *
+   * 在首次执行前调用，处理初始化失败的情况
+   */
+  private async ensureSandboxInitialized(): Promise<void> {
+    if (!this.sandboxNeedsInit || !this.sandbox) {
+      return;
+    }
+
+    try {
+      await this.sandbox.initialize();
+      this.sandboxNeedsInit = false;
+      console.debug('[GenericAgentBackend] Sandbox initialized successfully');
+    } catch (error) {
+      console.warn(
+        `[GenericAgentBackend] ⚠️ Failed to initialize sandbox: ${error instanceof Error ? error.message : error}\n` +
+        '  Falling back to non-isolated execution. High-risk tools may be rejected.'
+      );
+      this.sandbox = null;
+      this.sandboxOwned = false;
+      this.sandboxNeedsInit = false;
+    }
+  }
+
+  /**
+   * 从配置创建 Sandbox
+   */
+  private createSandboxFromConfig(partialConfig: Partial<SandboxConfig>): Sandbox {
+    console.debug('[GenericAgentBackend] Auto-creating LocalSandbox from config');
+    // 使用辅助函数创建完整配置
+    const fullConfig = createSandboxConfig({
+      ...partialConfig,
+      runtime: 'local', // 强制使用本地沙盒
+    });
+    return createLocalSandbox(`worker-sandbox-${Date.now()}`, fullConfig);
   }
 
   /**
@@ -318,6 +369,9 @@ export class GenericAgentBackend implements IWorkerBackend {
     // 创建 AbortController
     this.abortController = new AbortController();
     this.isExecuting = true;
+
+    // 确保 Sandbox 已初始化（如果使用自动创建）
+    await this.ensureSandboxInitialized();
 
     // 发出初始化状态
     yield {
@@ -388,7 +442,10 @@ When the task is complete, provide a final summary of what was accomplished.`);
         const request: LLMRequest = {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
           messages: context.getMessages(),
-          maxTokens: this.config.maxTokens ?? 4096,
+          maxTokens: Math.min(
+            this.config.maxTokens ?? 4096,
+            limits.maxTokensPerCall
+          ),
           temperature: this.config.temperature ?? 0.3,
           abortSignal: this.abortController.signal,
         };
@@ -544,6 +601,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
         type: 'status',
         status: done ? 'completed' : 'failed',
         timestamp: Date.now(),
+        tokensUsed: context.getTotalTokensUsed(),
       };
 
       // 如果达到最大轮次，发出警告
@@ -580,14 +638,17 @@ When the task is complete, provide a final summary of what was accomplished.`);
   /**
    * 获取后端能力
    *
-   * ⚠️ 注意：当前 sandbox 未连接到 executeTool
-   * 即使声明了 file-operations/shell-commands，实际工具执行仍未隔离
-   * TODO: 实现真正的 sandbox 隔离执行
+   * 隔离说明：
+   * - 工具执行通过 SandboxToolExecutor 处理
+   * - 高风险工具（delete, exec 等）如果没有设置 isCommandBased 将被拒绝
+   * - 开启 strictSandbox 后所有非命令型工具将被拒绝
+   * - 命令型工具 (isCommandBased: true) 通过 sandbox.runCommand() 执行
+   * - 非命令型工具的 execute() 在宿主进程执行（无进程隔离）
    */
   getCapabilities(): WorkerCapability[] {
     const capabilities: WorkerCapability[] = ['code-execution'];
 
-    // 仅在有 sandbox 时声明这些能力（但实际未完全隔离）
+    // 有 sandbox 时声明这些能力
     if (this.sandbox) {
       capabilities.push('file-operations', 'shell-commands');
     }
@@ -616,7 +677,8 @@ When the task is complete, provide a final summary of what was accomplished.`);
    */
   async dispose(): Promise<void> {
     await this.interrupt();
-    if (this.sandbox) {
+    // 仅销毁自己创建的 sandbox
+    if (this.sandbox && this.sandboxOwned) {
       await this.sandbox.destroy();
       this.sandbox = null;
     }
@@ -661,29 +723,21 @@ When the task is complete, provide a final summary of what was accomplished.`);
       };
     }
 
-    try {
-      // 执行工具
-      const context = {
-        taskId: 'worker-task',
-        agentId: 'worker',
-        traceId: `trace-${Date.now()}`,
-        workDir: options.workDir || process.cwd(),
-        env: options.env || {},
-      };
+    // 创建工具执行器（使用 sandbox 如果可用）
+    const toolExecutor: ISandboxToolExecutor = createSandboxToolExecutor(this.sandbox);
 
-      const result = await tool.execute(call.input, context);
+    // 执行工具
+    const result = await toolExecutor.execute(tool, call.input, {
+      workDir: options.workDir || process.cwd(),
+      timeout: 60000, // 1 分钟超时
+      ...(options.env && { env: options.env }),
+      ...(options.securityPolicy && { securityPolicy: options.securityPolicy }),
+    });
 
-      return {
-        success: true,
-        output: result,
-      };
-    } catch (error) {
-      const err = error as Error;
-      return {
-        success: false,
-        output: `Tool execution failed: ${err.message}`,
-      };
-    }
+    return {
+      success: result.success,
+      output: result.success ? result.result : result.error,
+    };
   }
 
   /**

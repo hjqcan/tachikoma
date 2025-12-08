@@ -263,6 +263,37 @@ const result = await executor.executeAndCollect(subtask, tools, {
 });
 ```
 
+### Sandbox 安全策略
+
+```typescript
+// 工具定义：高风险工具必须设置 isCommandBased: true
+const deleteTool: Tool = {
+  name: 'delete_file',
+  description: 'Delete a file',
+  isCommandBased: true, // 必须为 true，否则将被拒绝执行
+  inputSchema: { type: 'object', properties: { path: { type: 'string' } } },
+  outputSchema: { type: 'object' },
+  execute: async (input, ctx) => {
+    /* 通过 sandbox.runCommand 实现 */
+  },
+};
+
+// 安全策略配置
+const result = await toolExecutor.execute(tool, input, {
+  workDir: process.cwd(),
+  securityPolicy: {
+    strictSandbox: true, // 开启后所有工具必须是 isCommandBased
+    highRiskTools: ['delete', 'rm', 'exec'], // 自定义高风险工具列表
+  },
+});
+```
+
+> ⚠️ **安全注意事项**：
+>
+> - 高风险工具（如 delete, exec）如果没有设置 `isCommandBased: true` 将被拒绝执行
+> - 非命令型工具的 `execute()` 会在宿主进程中直接执行，无进程隔离
+> - 建议在生产环境开启 `strictSandbox` 模式
+
 ## 完整 Orchestrator 示例
 
 ```typescript

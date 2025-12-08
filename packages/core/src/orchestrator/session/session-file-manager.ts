@@ -426,6 +426,60 @@ export class SessionFileManager implements ISessionFileManager {
     return readJsonlRecords<ActionRecord>(this.paths.workerActionsFile(workerId));
   }
 
+  /**
+   * 追加 Worker 思考记录
+   *
+   * @param workerId - Worker ID
+   * @param record - 思考记录（不含 id）
+   */
+  async appendThinking(
+    workerId: string,
+    record: Omit<ThinkingRecord, 'id'>
+  ): Promise<void> {
+    const fullRecord: ThinkingRecord = {
+      ...record,
+      id: generateTimestampId('thinking'),
+    };
+    await appendJsonlRecord(this.paths.workerThinkingFile(workerId), fullRecord);
+
+    // 发出思考更新事件
+    this.emit('thinking_updated', fullRecord, workerId, this.paths.workerThinkingFile(workerId));
+  }
+
+  /**
+   * 追加 Worker 行动记录
+   *
+   * @param workerId - Worker ID
+   * @param record - 行动记录（不含 id）
+   */
+  async appendAction(
+    workerId: string,
+    record: Omit<ActionRecord, 'id'>
+  ): Promise<void> {
+    const fullRecord: ActionRecord = {
+      ...record,
+      id: generateTimestampId('action'),
+    };
+    await appendJsonlRecord(this.paths.workerActionsFile(workerId), fullRecord);
+
+    // 发出行动完成事件
+    this.emit('action_completed', fullRecord, workerId, this.paths.workerActionsFile(workerId));
+  }
+
+  /**
+   * 写入待审批请求文件
+   *
+   * @param workerId - Worker ID
+   * @param approval - 待审批请求
+   */
+  async writePendingApproval(workerId: string, approval: PendingApprovalFile): Promise<void> {
+    const approvalPath = this.paths.workerPendingApprovalFile(workerId);
+    await atomicWriteJson(approvalPath, approval);
+
+    // 发出审批请求事件
+    this.emit('pending_approval_created', approval, workerId, approvalPath);
+  }
+
   // ============================================================================
   // 共享文件操作
   // ============================================================================
