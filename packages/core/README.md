@@ -21,10 +21,10 @@ bun add @tachikoma/core
 | `session`      | 共享文件系统协调机制            | ✅ 完成   |
 | `checkpoint`   | 检查点与任务恢复                | ✅ 完成   |
 | `worker`       | Worker 后端（混合架构）         | ✅ 完成   |
+| `context`      | 上下文管理（压缩、摘要、卸载）  | ✅ 完成   |
+| `sandbox`      | 沙盒管理（隔离执行）            | ✅ 完成   |
 | `agents`       | 智能体实现（工作者等）          | 🚧 待实现 |
-| `context`      | 上下文管理（压缩、摘要、卸载）  | 🚧 待实现 |
 | `tools`        | 原子工具库                      | 🚧 待实现 |
-| `sandbox`      | 沙盒管理                        | 🚧 待实现 |
 | `mcp`          | MCP 集成                        | 🚧 待实现 |
 
 ## 核心流程：plan → assign → monitor → aggregate
