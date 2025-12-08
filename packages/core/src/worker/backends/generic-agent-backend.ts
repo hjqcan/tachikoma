@@ -14,9 +14,8 @@ import type {
   WorkerExecutionOptions,
   GenericBackendConfig,
   WorkerApprovalRequestMessage,
-  RiskPolicy,
 } from '../types';
-import { DEFAULT_RISK_POLICY, DEFAULT_RESOURCE_LIMITS } from '../types';
+import { DEFAULT_RESOURCE_LIMITS, DEFAULT_KEY_DECISION_POLICY } from '../types';
 import type { Tool } from '../../types';
 import type { LLMClient, LLMRequest } from '../../planner/types';
 import type { Sandbox, SandboxConfig } from '../../sandbox';
@@ -27,6 +26,7 @@ import {
   createSandboxToolExecutor,
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
+import { isKeyDecision } from '../key-decision';
 
 // ============================================================================
 // 常量
@@ -430,6 +430,23 @@ When the task is complete, provide a final summary of what was accomplished.`);
           break;
         }
 
+        // 检查 intervention（每轮开始时）
+        // eslint-disable-next-line no-await-in-loop -- Intervention check is intentionally sequential
+        const interventionResult = await this.checkAndHandleIntervention(options);
+        if (interventionResult === 'abort') {
+          yield {
+            type: 'status',
+            status: 'interrupted',
+            timestamp: Date.now(),
+          };
+          done = true;
+          break;
+        } else if (interventionResult === 'pause') {
+          // pause 时暂时跳过本轮，等待下一轮重新检查
+          // 实际实现中可能需要等待一段时间
+          continue;
+        }
+
         // 发出思考状态
         yield {
           type: 'status',
@@ -503,45 +520,57 @@ When the task is complete, provide a final summary of what was accomplished.`);
               timestamp: Date.now(),
             };
 
-            // 检查是否需要审批
-            if (options.requireApproval && this.isHighRiskOperation(call.name, call.input, options.riskPolicy)) {
+            // 查找工具定义（用于元数据检查）
+            const tool = tools.find((t) => t.name === call.name);
+
+            // 检查关键决策（使用新的 isKeyDecision 函数）
+            const keyDecisionResult = isKeyDecision(
+              call.name,
+              call.input,
+              tool,
+              options.keyDecisionPolicy,
+              options.riskPolicy,
+              options.unknownToolPolicy
+            );
+
+            if (keyDecisionResult.isKeyDecision) {
               const approvalRequest: WorkerApprovalRequestMessage = {
                 type: 'approval_request',
                 requestId: `approval-${call.callId}`,
                 action: call.name,
-                description: `Execute ${call.name} with input: ${JSON.stringify(call.input)}`,
-                details: { tool: call.name, input: call.input },
+                description: `${keyDecisionResult.reason}: ${call.name}`,
+                details: { 
+                  tool: call.name, 
+                  input: call.input,
+                  category: keyDecisionResult.category,
+                  riskLevel: keyDecisionResult.riskLevel,
+                },
                 timestamp: Date.now(),
+                category: keyDecisionResult.category,
+                defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision,
+                timeout: options.keyDecisionPolicy?.approvalTimeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout,
               };
 
               yield approvalRequest;
 
-              // 等待审批
-              if (options.onApprovalRequest) {
+              // 等待审批（阻塞 + 超时）
+              // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
+              const approved = await this.waitForApproval(approvalRequest, options, task.id);
+              if (!approved) {
+                const rejectedResult = `Tool call ${call.name} was rejected by approval process (${keyDecisionResult.reason}).`;
+                context.addToolResult(call.callId, rejectedResult);
+
                 yield {
-                  type: 'status',
-                  status: 'waiting-approval',
+                  type: 'tool_result',
+                  tool: call.name,
+                  callId: call.callId,
+                  result: rejectedResult,
+                  success: false,
+                  duration: 0,
                   timestamp: Date.now(),
                 };
 
-                // eslint-disable-next-line no-await-in-loop -- Approval callback is intentionally sequential
-                const approved = await options.onApprovalRequest(approvalRequest);
-                if (!approved) {
-                  const rejectedResult = `Tool call ${call.name} was rejected by approval process.`;
-                  context.addToolResult(call.callId, rejectedResult);
-
-                  yield {
-                    type: 'tool_result',
-                    tool: call.name,
-                    callId: call.callId,
-                    result: rejectedResult,
-                    success: false,
-                    duration: 0,
-                    timestamp: Date.now(),
-                  };
-
-                  continue;
-                }
+                continue;
               }
             }
 
@@ -741,33 +770,246 @@ When the task is complete, provide a final summary of what was accomplished.`);
   }
 
   /**
-   * 判断是否为高风险操作
+   * 等待审批（阻塞 + 超时）
    *
-   * 使用可配置的风险策略
+   * 审批流程优先级：
+   * 1. 如果有 onApprovalRequest 回调，使用回调
+   * 2. 如果有文件协议回调，使用文件协议（写入 pending_approval，轮询 approval_response）
+   * 3. 都没有时，警告并使用默认决策
+   *
+   * @param request - 审批请求
+   * @param options - 执行选项
+   * @param subtaskId - 子任务 ID（用于文件协议）
+   * @returns 是否批准
    */
-  private isHighRiskOperation(
-    toolName: string,
-    input: Record<string, unknown>,
-    riskPolicy?: RiskPolicy
-  ): boolean {
-    const policy = {
-      highRiskTools: riskPolicy?.highRiskTools ?? DEFAULT_RISK_POLICY.highRiskTools,
-      dangerousPatterns: riskPolicy?.dangerousPatterns ?? DEFAULT_RISK_POLICY.dangerousPatterns,
-    };
+  private async waitForApproval(
+    request: WorkerApprovalRequestMessage,
+    options: WorkerExecutionOptions,
+    subtaskId?: string
+  ): Promise<boolean> {
+    const timeout = request.timeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout;
+    const defaultDecision = request.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision;
+    const pollInterval = 1000; // 1 秒轮询间隔
 
-    // 自定义评估函数优先
-    if (riskPolicy?.customEvaluator) {
-      return riskPolicy.customEvaluator(toolName, input);
+    // 优先级 1: 使用回调
+    if (options.onApprovalRequest) {
+      return this.waitForApprovalViaCallback(request, options, timeout, defaultDecision);
     }
 
-    // 检查高风险工具名称
-    if (policy.highRiskTools.some((t) => toolName.toLowerCase().includes(t.toLowerCase()))) {
-      return true;
+    // 优先级 2: 使用文件协议
+    if (options.onWritePendingApproval && options.onReadApprovalResponse) {
+      return this.waitForApprovalViaFileProtocol(
+        request, options, subtaskId, timeout, defaultDecision, pollInterval
+      );
     }
 
-    // 检查输入中的危险模式
-    const inputStr = JSON.stringify(input).toLowerCase();
-    return policy.dangerousPatterns.some((pattern) => inputStr.includes(pattern.toLowerCase()));
+    // 都没有时，警告并使用默认决策
+    console.warn(
+      `[GenericAgentBackend] ⚠️ No approval mechanism available for request ${request.requestId}. ` +
+      `Neither callback nor file protocol configured. Using default decision: ${defaultDecision}`
+    );
+    return defaultDecision === 'approve';
+  }
+
+  /**
+   * 通过回调等待审批
+   */
+  private async waitForApprovalViaCallback(
+    request: WorkerApprovalRequestMessage,
+    options: WorkerExecutionOptions,
+    timeout: number,
+    defaultDecision: 'approve' | 'reject'
+  ): Promise<boolean> {
+    try {
+      // 创建超时 Promise
+      const timeoutPromise = new Promise<boolean>((resolve) => {
+        setTimeout(() => {
+          console.warn(
+            `[GenericAgentBackend] Approval timeout for request ${request.requestId}, ` +
+            `using default decision: ${defaultDecision}`
+          );
+          resolve(defaultDecision === 'approve');
+        }, timeout);
+      });
+
+      // 竞争：审批回调 vs 超时
+      const approved = await Promise.race([
+        options.onApprovalRequest!(request),
+        timeoutPromise,
+      ]);
+
+      return approved;
+    } catch (error) {
+      console.error(`[GenericAgentBackend] Approval callback error:`, error);
+      return defaultDecision === 'approve';
+    }
+  }
+
+  /**
+   * 通过文件协议等待审批
+   *
+   * 流程：
+   * 1. 写入 pending_approval.json
+   * 2. 轮询 approval_response.json
+   * 3. 超时后使用 defaultDecision
+   * 4. 清理 pending_approval
+   */
+  private async waitForApprovalViaFileProtocol(
+    request: WorkerApprovalRequestMessage,
+    options: WorkerExecutionOptions,
+    subtaskId: string | undefined,
+    timeout: number,
+    defaultDecision: 'approve' | 'reject',
+    pollInterval: number
+  ): Promise<boolean> {
+    try {
+      // 1. 写入待审批请求文件
+      const approvalInput = {
+        requestId: request.requestId,
+        subtaskId: subtaskId || 'unknown',
+        type: this.mapCategoryToApprovalType(request.category),
+        description: request.description,
+        details: {
+          metadata: request.details,
+          impactScope: 'high' as const,
+          reversible: false,
+        },
+        timeout,
+        defaultDecision,
+      };
+
+      await options.onWritePendingApproval!(approvalInput);
+      console.log(`[GenericAgentBackend] Wrote pending approval: ${request.requestId}`);
+
+      // 2. 轮询等待响应
+      const startTime = Date.now();
+      while (Date.now() - startTime < timeout) {
+        // 检查是否中断
+        if (this.abortController?.signal.aborted) {
+          console.log(`[GenericAgentBackend] Approval wait aborted`);
+          return false;
+        }
+
+        // 读取审批响应
+        const response = await options.onReadApprovalResponse!();
+        if (response && response.requestId === request.requestId) {
+          console.log(
+            `[GenericAgentBackend] Approval response received: ${response.approved ? 'approved' : 'rejected'}`
+          );
+
+          // 3. 清理待审批文件
+          if (options.onClearPendingApproval) {
+            await options.onClearPendingApproval();
+          }
+
+          return response.approved;
+        }
+
+        // 等待轮询间隔
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+      }
+
+      // 超时
+      console.warn(
+        `[GenericAgentBackend] Approval timeout for request ${request.requestId}, ` +
+        `using default decision: ${defaultDecision}`
+      );
+
+      // 清理待审批文件
+      if (options.onClearPendingApproval) {
+        await options.onClearPendingApproval();
+      }
+
+      return defaultDecision === 'approve';
+    } catch (error) {
+      console.error(`[GenericAgentBackend] File protocol approval error:`, error);
+      return defaultDecision === 'approve';
+    }
+  }
+
+  /**
+   * 将 ApprovalCategory 映射到 ApprovalRequestType
+   */
+  private mapCategoryToApprovalType(
+    category?: string
+  ): 'file_deletion' | 'multi_file_refactor' | 'external_api_call' | 'dangerous_operation' | 'resource_intensive' {
+    switch (category) {
+      case 'key_decision':
+        return 'dangerous_operation';
+      case 'high_risk_tool':
+        return 'dangerous_operation';
+      case 'dangerous_pattern':
+        return 'dangerous_operation';
+      default:
+        return 'dangerous_operation';
+    }
+  }
+
+  /**
+   * 检查并处理干预指令
+   *
+   * @param options - 执行选项
+   * @returns 'continue' | 'pause' | 'abort'
+   */
+  private async checkAndHandleIntervention(
+    options: WorkerExecutionOptions
+  ): Promise<'continue' | 'pause' | 'abort'> {
+    // 如果没有 intervention 检查回调，直接继续
+    if (!options.onCheckIntervention) {
+      return 'continue';
+    }
+
+    try {
+      const intervention = await options.onCheckIntervention();
+
+      // 没有干预或已确认的干预，继续执行
+      if (!intervention || intervention.acknowledged) {
+        return 'continue';
+      }
+
+      console.log(
+        `[GenericAgentBackend] Intervention detected: ${intervention.type} - ${intervention.reason}`
+      );
+
+      // 根据干预类型处理
+      switch (intervention.type) {
+        case 'abort':
+          // 确认干预
+          if (options.onAcknowledgeIntervention) {
+            await options.onAcknowledgeIntervention(intervention.interventionId);
+          }
+          return 'abort';
+
+        case 'pause':
+          // 暂停时不确认，保持 pending 状态
+          return 'pause';
+
+        case 'resume':
+          // 确认恢复指令并继续
+          if (options.onAcknowledgeIntervention) {
+            await options.onAcknowledgeIntervention(intervention.interventionId);
+          }
+          return 'continue';
+
+        case 'redirect':
+        case 'guidance':
+          // 对于 redirect 和 guidance，记录指导但继续执行
+          // 实际实现中可能需要将 instructions 注入到上下文
+          console.log(
+            `[GenericAgentBackend] Guidance: ${intervention.instructions}`
+          );
+          if (options.onAcknowledgeIntervention) {
+            await options.onAcknowledgeIntervention(intervention.interventionId);
+          }
+          return 'continue';
+
+        default:
+          return 'continue';
+      }
+    } catch (error) {
+      console.warn(`[GenericAgentBackend] Error checking intervention:`, error);
+      return 'continue';
+    }
   }
 
   /**

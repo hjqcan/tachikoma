@@ -868,6 +868,12 @@ export interface ISessionFileManager {
   readIntervention(workerId: string): Promise<InterventionFile | null>;
 
   /**
+   * 确认干预指令
+   * @param workerId - Worker ID
+   */
+  acknowledgeIntervention(workerId: string): Promise<void>;
+
+  /**
    * 读取 Worker 思考日志
    * @param workerId - Worker ID
    * @param limit - 最大条数（从尾部读取）

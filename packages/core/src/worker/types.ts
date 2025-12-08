@@ -8,6 +8,10 @@ import type { Task, Tool, RetryPolicy } from '../types';
 import type { Sandbox, SandboxConfig } from '../sandbox';
 import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
+import type { InterventionFile } from '../orchestrator/session/types';
+
+// Re-export for external use
+export type { InterventionFile };
 
 // ============================================================================
 // Worker 后端类型
@@ -112,6 +116,15 @@ export interface WorkerStatusMessage {
 }
 
 /**
+ * 审批请求类别
+ */
+export type ApprovalCategory =
+  | 'key_decision'       // 关键决策点
+  | 'high_risk_tool'     // 高风险工具
+  | 'dangerous_pattern'  // 危险模式
+  | 'custom';            // 自定义
+
+/**
  * Worker 审批请求消息
  */
 export interface WorkerApprovalRequestMessage {
@@ -121,6 +134,12 @@ export interface WorkerApprovalRequestMessage {
   description: string;
   details: Record<string, unknown>;
   timestamp: number;
+  /** 审批类别 */
+  category?: ApprovalCategory;
+  /** 超时后默认决策 */
+  defaultDecision?: 'approve' | 'reject';
+  /** 审批超时时间（毫秒） */
+  timeout?: number;
 }
 
 /**
@@ -175,7 +194,7 @@ export interface WorkerExecutionOptions {
   retryPolicy?: RetryPolicy;
   /** 是否需要审批高风险操作 */
   requireApproval?: boolean;
-  /** 审批回调 */
+  /** 审批回调（优先级高于文件协议） */
   onApprovalRequest?: (request: WorkerApprovalRequestMessage) => Promise<boolean>;
   /** 风险策略配置 */
   riskPolicy?: RiskPolicy;
@@ -187,6 +206,80 @@ export interface WorkerExecutionOptions {
    * 用于控制工具执行的隔离级别
    */
   securityPolicy?: SandboxSecurityPolicy;
+  /** 关键决策策略 */
+  keyDecisionPolicy?: KeyDecisionPolicy;
+  /**
+   * Intervention 检查回调
+   * 返回 InterventionFile 如果有干预，否则 null
+   */
+  onCheckIntervention?: () => Promise<InterventionFile | null>;
+  /**
+   * Intervention 确认回调
+   */
+  onAcknowledgeIntervention?: (interventionId: string) => Promise<void>;
+
+  // === 审批文件协议回调 ===
+
+  /**
+   * 写入待审批请求文件
+   * 用于基于 SessionFileManager 的审批流程
+   */
+  onWritePendingApproval?: (approval: PendingApprovalInput) => Promise<void>;
+
+  /**
+   * 读取审批响应文件
+   * 返回 ApprovalResponseResult 如果有响应，否则 null
+   */
+  onReadApprovalResponse?: () => Promise<ApprovalResponseResult | null>;
+
+  /**
+   * 清除待审批请求文件（审批完成后）
+   */
+  onClearPendingApproval?: () => Promise<void>;
+
+  // === 安全策略 ===
+
+  /**
+   * 未知工具策略
+   * - 'approve': 默认批准未知工具
+   * - 'reject': 默认拒绝未知工具
+   * - 'require_approval': 未知工具需要审批
+   */
+  unknownToolPolicy?: 'approve' | 'reject' | 'require_approval';
+
+  /**
+   * 是否要求 Sandbox 必须可用
+   * 如果为 true 且 Sandbox 初始化失败，将拒绝执行高风险工具
+   */
+  strictSandboxRequired?: boolean;
+}
+
+/**
+ * 待审批请求输入（简化版，不含自动生成字段）
+ */
+export interface PendingApprovalInput {
+  requestId: string;
+  subtaskId: string;
+  type: 'file_deletion' | 'multi_file_refactor' | 'external_api_call' | 'dangerous_operation' | 'resource_intensive';
+  description: string;
+  details: {
+    affectedFiles?: string[];
+    impactScope?: 'low' | 'medium' | 'high';
+    reversible?: boolean;
+    metadata?: Record<string, unknown>;
+  };
+  timeout: number;
+  defaultDecision: 'approve' | 'reject';
+}
+
+/**
+ * 审批响应结果
+ */
+export interface ApprovalResponseResult {
+  requestId: string;
+  approved: boolean;
+  reason?: string;
+  instructions?: string;
 }
 
 // ============================================================================
@@ -246,6 +339,58 @@ export const DEFAULT_RESOURCE_LIMITS: Required<ResourceLimits> = {
   maxMessageWindow: 50,        // 保留最近 50 条消息
   maxThinkingRounds: 50,       // 最大 50 轮
   maxToolCalls: 100,           // 最大 100 次工具调用
+};
+
+// ============================================================================
+// 关键决策策略
+// ============================================================================
+
+/**
+ * 关键决策触发条件
+ */
+export interface KeyDecisionTriggers {
+  /** 大文件修改阈值（行数），默认 100 */
+  maxLinesThreshold?: number;
+  /** 多文件操作阈值，默认 3 */
+  multiFileThreshold?: number;
+  /** 检测外部 API 调用 */
+  detectExternalApi?: boolean;
+  /** 检测不可逆操作 */
+  detectIrreversible?: boolean;
+}
+
+/**
+ * 关键决策策略配置
+ */
+export interface KeyDecisionPolicy {
+  /** 启用关键决策检测 */
+  enabled?: boolean;
+  /** 审批超时时间（毫秒），默认 5 分钟 */
+  approvalTimeout?: number;
+  /** 超时后默认决策，默认 reject */
+  defaultDecision?: 'approve' | 'reject';
+  /** 触发关键决策的条件 */
+  triggers?: KeyDecisionTriggers;
+}
+
+/**
+ * 默认关键决策触发条件
+ */
+export const DEFAULT_KEY_DECISION_TRIGGERS: Required<KeyDecisionTriggers> = {
+  maxLinesThreshold: 100,
+  multiFileThreshold: 3,
+  detectExternalApi: true,
+  detectIrreversible: true,
+};
+
+/**
+ * 默认关键决策策略
+ */
+export const DEFAULT_KEY_DECISION_POLICY: Required<Omit<KeyDecisionPolicy, 'triggers'>> & { triggers: Required<KeyDecisionTriggers> } = {
+  enabled: true,
+  approvalTimeout: 300_000, // 5 分钟
+  defaultDecision: 'reject',
+  triggers: DEFAULT_KEY_DECISION_TRIGGERS,
 };
 
 // ============================================================================

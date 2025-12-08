@@ -153,6 +153,66 @@ export class WorkerExecutor {
       ...options,
     };
 
+    // 注入 intervention 检查回调
+    if (sessionManager && !execOptions.onCheckIntervention) {
+      execOptions.onCheckIntervention = async () => {
+        return sessionManager.readIntervention(workerId);
+      };
+    }
+
+    // 注入 intervention 确认回调
+    if (sessionManager && !execOptions.onAcknowledgeIntervention) {
+      execOptions.onAcknowledgeIntervention = async () => {
+        await sessionManager.acknowledgeIntervention(workerId);
+      };
+    }
+
+    // 注入审批文件协议回调（如果没有提供 onApprovalRequest）
+    if (sessionManager && !execOptions.onApprovalRequest) {
+      // 写入待审批请求
+      if (!execOptions.onWritePendingApproval) {
+        execOptions.onWritePendingApproval = async (approval) => {
+          await sessionManager.writePendingApproval(workerId, {
+            requestId: approval.requestId,
+            workerId,
+            subtaskId: approval.subtaskId,
+            requestedAt: Date.now(),
+            type: approval.type,
+            description: approval.description,
+            details: approval.details,
+            timeout: approval.timeout,
+            defaultDecision: approval.defaultDecision,
+          });
+        };
+      }
+
+      // 读取审批响应
+      if (!execOptions.onReadApprovalResponse) {
+        execOptions.onReadApprovalResponse = async () => {
+          const response = await sessionManager.readApprovalResponse(workerId);
+          if (response) {
+            const result: { requestId: string; approved: boolean; reason?: string; instructions?: string } = {
+              requestId: response.requestId,
+              approved: response.approved,
+            };
+            if (response.reason) result.reason = response.reason;
+            if (response.instructions) result.instructions = response.instructions;
+            return result;
+          }
+          return null;
+        };
+      }
+
+      // 清除待审批请求（通过读取后删除文件实现）
+      if (!execOptions.onClearPendingApproval) {
+        execOptions.onClearPendingApproval = async () => {
+          // SessionFileManager 目前没有 clearPendingApproval 方法
+          // 审批完成后 Orchestrator 应该负责清理
+          // 这里暂时不做操作
+        };
+      }
+    }
+
     // 如果有审批回调，包装以持久化
     if (options.onApprovalRequest) {
       const originalCallback = options.onApprovalRequest;
