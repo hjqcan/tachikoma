@@ -236,7 +236,7 @@ function requiresShell(command: string): boolean {
   let escaped = false;
 
   for (let i = 0; i < command.length; i++) {
-    const char = command[i];
+    const char = command.charAt(i);
 
     if (escaped) {
       escaped = false;
@@ -488,7 +488,6 @@ export class LocalSandbox extends BaseSandbox {
     const hasWhitelist = allowedCommands && allowedCommands.length > 0;
 
     let args: string[];
-    let useShell = false;
     let extraEnv: Record<string, string> | undefined;
 
     if (hasWhitelist) {
@@ -498,7 +497,6 @@ export class LocalSandbox extends BaseSandbox {
       extraEnv = parsed.extraEnv;
     } else if (this.localConfig.allowUnsafeShell) {
       // 不安全 shell 模式：通过 shell 执行
-      useShell = true;
       const shell = this.localConfig.shell || DEFAULT_SHELL;
       const shellArgs = process.platform === 'win32'
         ? ['/c', trimmedCommand]
@@ -823,9 +821,20 @@ export class LocalSandbox extends BaseSandbox {
 
     // 提取前置环境变量赋值（例如 FOO=bar node app.ts）
     const extraEnv: Record<string, string> = {};
-    while (argv.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[0]!)) {
-      const [key, ...rest] = argv.shift()!.split('=');
-      extraEnv[key] = rest.join('=');
+    while (argv.length > 0) {
+      const first = argv[0];
+      if (!first || !/^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) {
+        break;
+      }
+      const shifted = argv.shift();
+      if (shifted) {
+        const eqIndex = shifted.indexOf('=');
+        if (eqIndex > 0) {
+          const key = shifted.substring(0, eqIndex);
+          const value = shifted.substring(eqIndex + 1);
+          extraEnv[key] = value;
+        }
+      }
     }
 
     if (argv.length === 0) {
@@ -834,6 +843,9 @@ export class LocalSandbox extends BaseSandbox {
 
     // 获取程序名（第一个参数）
     const program = argv[0];
+    if (!program) {
+      throw new CommandParseError(command, 'No program found after parsing');
+    }
     const programName = basename(program);
 
     // 检查是否在白名单中
@@ -848,7 +860,11 @@ export class LocalSandbox extends BaseSandbox {
       throw new CommandNotAllowedError(program);
     }
 
-    return { argv, extraEnv: Object.keys(extraEnv).length > 0 ? extraEnv : undefined };
+    const result: { argv: string[]; extraEnv?: Record<string, string> } = { argv };
+    if (Object.keys(extraEnv).length > 0) {
+      result.extraEnv = extraEnv;
+    }
+    return result;
   }
 
   /**
