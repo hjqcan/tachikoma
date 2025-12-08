@@ -56,3 +56,11 @@ export type { WorkerBackendInfo } from './backend-factory';
 // 后端实现导出
 export { ClaudeAgentSDKBackend } from './backends/claude-agent-backend';
 export { GenericAgentBackend, GenericBackendError } from './backends/generic-agent-backend';
+
+// 执行器导出
+export { WorkerExecutor, createWorkerExecutor } from './worker-executor';
+export type { WorkerExecutorConfig, ExecutionResult } from './worker-executor';
+
+// 类型重导出
+export type { RiskPolicy, ResourceLimits } from './types';
+export { DEFAULT_RISK_POLICY, DEFAULT_RESOURCE_LIMITS } from './types';

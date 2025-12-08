@@ -20,6 +20,7 @@ bun add @tachikoma/core
 | `orchestrator` | 统筹者（plan→assign→aggregate） | ✅ 完成   |
 | `session`      | 共享文件系统协调机制            | ✅ 完成   |
 | `checkpoint`   | 检查点与任务恢复                | ✅ 完成   |
+| `worker`       | Worker 后端（混合架构）         | ✅ 完成   |
 | `agents`       | 智能体实现（工作者等）          | 🚧 待实现 |
 | `context`      | 上下文管理（压缩、摘要、卸载）  | 🚧 待实现 |
 | `tools`        | 原子工具库                      | 🚧 待实现 |
@@ -196,6 +197,70 @@ console.log(`任务状态: ${result.status}`);
 console.log(`成功子任务: ${result.metrics.successCount}`);
 console.log(`失败子任务: ${result.metrics.failureCount}`);
 console.log(`总耗时: ${result.metrics.duration}ms`);
+```
+
+## Worker Backend (混合架构)
+
+Worker Backend 提供统一的后端抽象，支持：
+
+- **Claude 模型**: 使用 Claude Agent SDK（可选）
+- **OpenAI/Gemini**: 使用自研通用后端（GenericAgentBackend）
+
+### 基本使用
+
+```typescript
+import { createWorkerExecutor, type WorkerExecutorConfig } from '@tachikoma/core/worker';
+
+// 创建执行器
+const executor = await createWorkerExecutor({
+  backendConfig: {
+    provider: 'anthropic', // 或 'openai', 'google'
+    model: 'claude-3-5-sonnet-20241022',
+    apiKey: process.env.ANTHROPIC_API_KEY,
+  },
+  sessionManager, // 可选，用于审计日志
+  workerId: 'worker-001',
+});
+
+// 执行子任务（流式）
+for await (const msg of executor.execute(subtask, tools)) {
+  switch (msg.type) {
+    case 'thinking':
+      console.log('思考:', msg.content);
+      break;
+    case 'tool_call':
+      console.log('调用工具:', msg.tool);
+      break;
+    case 'output':
+      console.log('输出:', msg.content);
+      break;
+  }
+}
+
+// 或收集完整结果
+const result = await executor.executeAndCollect(subtask, tools);
+console.log(`成功: ${result.success}, 耗时: ${result.metrics.duration}ms`);
+
+// 释放资源
+await executor.dispose();
+```
+
+### 资源限制配置
+
+```typescript
+const result = await executor.executeAndCollect(subtask, tools, {
+  resourceLimits: {
+    maxThinkingRounds: 30, // 最大思考轮数
+    maxToolCalls: 100, // 最大工具调用次数
+    maxTotalTokens: 500_000, // Token 预算
+    maxMessageWindow: 50, // 上下文消息窗口
+  },
+  riskPolicy: {
+    sensitiveTools: ['rm', 'delete', 'drop'],
+    sensitivePatterns: [/password/i, /secret/i],
+    highRiskThreshold: 0.8,
+  },
+});
 ```
 
 ## 完整 Orchestrator 示例

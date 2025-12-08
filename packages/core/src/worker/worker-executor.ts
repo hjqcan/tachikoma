@@ -1,0 +1,449 @@
+/**
+ * Worker 执行器
+ *
+ * 连接 WorkerPool 和 IWorkerBackend，处理任务执行流程
+ * 集成 SessionFileManager 实现审计日志
+ */
+
+import type { Tool } from '../types';
+import type { SubTask } from '../orchestrator/types';
+import type { ISessionFileManager } from '../orchestrator/session/types';
+import type {
+  IWorkerBackend,
+  WorkerMessage,
+  WorkerTask,
+  WorkerExecutionOptions,
+  WorkerBackendConfig,
+  WorkerExecutionMetrics,
+} from './types';
+import { createWorkerBackend } from './backend-factory';
+
+// ============================================================================
+// 类型定义
+// ============================================================================
+
+/**
+ * Worker 执行器配置
+ */
+export interface WorkerExecutorConfig {
+  /** 后端配置 */
+  backendConfig: WorkerBackendConfig;
+  /** 会话管理器（可选，用于审计日志） */
+  sessionManager?: ISessionFileManager | undefined;
+  /** 工作目录 */
+  workDir?: string | undefined;
+  /** Worker ID */
+  workerId: string;
+}
+
+/**
+ * 执行结果
+ */
+export interface ExecutionResult {
+  /** 是否成功 */
+  success: boolean;
+  /** 输出内容 */
+  output: string;
+  /** 执行指标 */
+  metrics: WorkerExecutionMetrics;
+  /** 所有消息 */
+  messages: WorkerMessage[];
+  /** 错误信息 */
+  error?: string | undefined;
+}
+
+// ============================================================================
+// WorkerExecutor 实现
+// ============================================================================
+
+/**
+ * Worker 执行器
+ *
+ * 职责：
+ * 1. 管理 IWorkerBackend 生命周期
+ * 2. 将 SubTask 转换为 WorkerTask
+ * 3. 流式处理消息并写入审计日志
+ * 4. 收集执行指标
+ *
+ * @example
+ * ```ts
+ * const executor = new WorkerExecutor({
+ *   backendConfig: { provider: 'anthropic', model: 'claude-3-5-sonnet' },
+ *   sessionManager: sessionFileManager,
+ *   workerId: 'worker-001',
+ * });
+ *
+ * await executor.initialize();
+ *
+ * for await (const msg of executor.execute(subtask, tools)) {
+ *   console.log(msg);
+ * }
+ *
+ * await executor.dispose();
+ * ```
+ */
+export class WorkerExecutor {
+  private readonly config: WorkerExecutorConfig;
+  private backend: IWorkerBackend | null = null;
+  private isInitialized = false;
+
+  constructor(config: WorkerExecutorConfig) {
+    this.config = config;
+  }
+
+  /**
+   * 初始化执行器
+   *
+   * 创建后端实例
+   */
+  async initialize(): Promise<void> {
+    if (this.isInitialized) return;
+
+    this.backend = await createWorkerBackend(this.config.backendConfig);
+    this.isInitialized = true;
+  }
+
+  /**
+   * 获取后端实例
+   */
+  getBackend(): IWorkerBackend | null {
+    return this.backend;
+  }
+
+  /**
+   * 检查是否可用
+   */
+  isAvailable(): boolean {
+    return this.isInitialized && this.backend !== null && this.backend.isAvailable();
+  }
+
+  /**
+   * 执行子任务
+   *
+   * @param subtask - 子任务
+   * @param tools - 可用工具列表
+   * @param options - 执行选项
+   * @returns 消息流
+   */
+  async *execute(
+    subtask: SubTask,
+    tools: Tool[],
+    options: Partial<WorkerExecutionOptions> = {}
+  ): AsyncIterable<WorkerMessage> {
+    if (!this.backend) {
+      throw new Error('WorkerExecutor not initialized. Call initialize() first.');
+    }
+
+    const workerId = this.config.workerId;
+    const sessionManager = this.config.sessionManager;
+
+    // 转换 SubTask 为 WorkerTask
+    const workerTask: WorkerTask = {
+      id: subtask.id,
+      type: 'atomic', // 子任务默认为原子任务
+      objective: subtask.objective,
+      constraints: subtask.constraints,
+      parentTaskId: subtask.parentId,
+      ...(subtask.priority !== undefined && { priority: subtask.priority }),
+    };
+
+    // 构建执行选项
+    const execOptions: WorkerExecutionOptions = {
+      workDir: this.config.workDir || process.cwd(),
+      ...options,
+    };
+
+    // 如果有审批回调，包装以持久化
+    if (options.onApprovalRequest) {
+      const originalCallback = options.onApprovalRequest;
+      execOptions.onApprovalRequest = async (request) => {
+        // 记录审批请求到决策日志
+        if (sessionManager) {
+          await sessionManager.appendDecision({
+            type: 'approval',
+            workerId,
+            subtaskId: subtask.id,
+            decision: {
+              reason: `Approval request: ${request.action} - ${request.description}`,
+            },
+            trigger: {
+              source: 'worker_request',
+              requestId: request.requestId,
+            },
+          });
+        }
+
+        // 调用原始回调
+        const approved = await originalCallback(request);
+
+        // 记录审批结果到决策日志
+        if (sessionManager) {
+          await sessionManager.appendDecision({
+            type: 'approval',
+            workerId,
+            subtaskId: subtask.id,
+            decision: {
+              approved,
+              reason: approved ? 'User approved' : 'User rejected',
+            },
+            trigger: {
+              source: 'manual',
+              requestId: request.requestId,
+            },
+          });
+        }
+
+        return approved;
+      };
+    }
+
+    // 指标收集
+    const startTime = Date.now();
+    let toolCallCount = 0;
+    let successfulToolCalls = 0;
+    let failedToolCalls = 0;
+    let thinkingRounds = 0;
+    const allMessages: WorkerMessage[] = [];
+
+    try {
+      // 更新 Worker 状态
+      if (sessionManager) {
+        await sessionManager.writeWorkerStatus(workerId, {
+          status: 'thinking',
+          progress: 0,
+          currentSubtask: {
+            id: subtask.id,
+            objective: subtask.objective,
+            startedAt: Date.now(),
+          },
+          lastHeartbeat: Date.now(),
+        });
+      }
+
+      // 执行任务
+      for await (const msg of this.backend.execute(workerTask, tools, execOptions)) {
+        allMessages.push(msg);
+
+        // 持久化消息到审计日志
+        if (sessionManager) {
+          await this.persistMessage(sessionManager, workerId, subtask.id, msg);
+        }
+
+        // 更新指标
+        switch (msg.type) {
+          case 'thinking':
+            thinkingRounds++;
+            break;
+          case 'tool_call':
+            toolCallCount++;
+            break;
+          case 'tool_result':
+            if (msg.success) {
+              successfulToolCalls++;
+            } else {
+              failedToolCalls++;
+            }
+            break;
+        }
+
+        // 发出消息
+        yield msg;
+      }
+
+      // 更新 Worker 状态为完成
+      if (sessionManager) {
+        await sessionManager.writeWorkerStatus(workerId, {
+          status: 'idle',
+          progress: 100,
+          lastHeartbeat: Date.now(),
+        });
+      }
+    } catch (error) {
+      // 更新 Worker 状态为失败
+      if (sessionManager) {
+        await sessionManager.writeWorkerStatus(workerId, {
+          status: 'error',
+          progress: 0,
+          error: {
+            code: 'EXECUTION_ERROR',
+            message: error instanceof Error ? error.message : 'Unknown error',
+            timestamp: Date.now(),
+          },
+          lastHeartbeat: Date.now(),
+        });
+      }
+      throw error;
+    }
+
+    // 构建最终指标（用于调试日志）
+    const endTime = Date.now();
+    const duration = endTime - startTime;
+    if (process.env.NODE_ENV === 'development') {
+      console.debug('[WorkerExecutor] Execution completed', {
+        duration,
+        toolCallCount,
+        successfulToolCalls,
+        failedToolCalls,
+        thinkingRounds,
+      });
+    }
+  }
+
+  /**
+   * 执行子任务并收集完整结果
+   *
+   * 便捷方法，等待执行完成并返回结果
+   */
+  async executeAndCollect(
+    subtask: SubTask,
+    tools: Tool[],
+    options: Partial<WorkerExecutionOptions> = {}
+  ): Promise<ExecutionResult> {
+    const messages: WorkerMessage[] = [];
+    let output = '';
+    let errorMsg: string | undefined;
+
+    const startTime = Date.now();
+    let toolCallCount = 0;
+    let successfulToolCalls = 0;
+    let failedToolCalls = 0;
+    let thinkingRounds = 0;
+
+    try {
+      for await (const msg of this.execute(subtask, tools, options)) {
+        messages.push(msg);
+
+        switch (msg.type) {
+          case 'thinking':
+            thinkingRounds++;
+            break;
+          case 'tool_call':
+            toolCallCount++;
+            break;
+          case 'tool_result':
+            if (msg.success) {
+              successfulToolCalls++;
+            } else {
+              failedToolCalls++;
+            }
+            break;
+          case 'output':
+            output = msg.content;
+            break;
+          case 'error':
+            errorMsg = msg.error;
+            break;
+        }
+      }
+    } catch (err) {
+      errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    }
+
+    const endTime = Date.now();
+
+    const result: ExecutionResult = {
+      success: !errorMsg,
+      output,
+      messages,
+      metrics: {
+        startTime,
+        endTime,
+        duration: endTime - startTime,
+        toolCallCount,
+        successfulToolCalls,
+        failedToolCalls,
+        retryCount: 0,
+        tokensUsed: 0,
+        thinkingRounds,
+      },
+    };
+
+    if (errorMsg) {
+      result.error = errorMsg;
+    }
+
+    return result;
+  }
+
+  /**
+   * 中断执行
+   */
+  async interrupt(): Promise<void> {
+    if (this.backend) {
+      await this.backend.interrupt();
+    }
+  }
+
+  /**
+   * 释放资源
+   */
+  async dispose(): Promise<void> {
+    if (this.backend) {
+      await this.backend.dispose();
+      this.backend = null;
+    }
+    this.isInitialized = false;
+  }
+
+  // ============================================================================
+  // 私有方法
+  // ============================================================================
+
+  /**
+   * 持久化消息到审计日志
+   *
+   * TODO: 需要扩展 SessionFileManager 添加 appendThinking/appendAction 方法
+   * 当前仅记录决策日志
+   */
+  private async persistMessage(
+    sessionManager: ISessionFileManager,
+    workerId: string,
+    subtaskId: string,
+    msg: WorkerMessage
+  ): Promise<void> {
+    // 仅在开发模式下记录详细日志
+    if (process.env.NODE_ENV === 'development') {
+      switch (msg.type) {
+        case 'thinking':
+          console.debug('[WorkerExecutor] Thinking:', msg.content.slice(0, 100));
+          break;
+        case 'tool_call':
+          console.debug('[WorkerExecutor] Tool call:', msg.tool);
+          break;
+        case 'tool_result':
+          console.debug('[WorkerExecutor] Tool result:', msg.tool, msg.success ? 'success' : 'failed');
+          break;
+      }
+    }
+
+    // 记录工具调用到决策日志（作为审计记录）
+    if (msg.type === 'tool_result' && !msg.success) {
+      await sessionManager.appendDecision({
+        type: 'retry',
+        workerId,
+        subtaskId,
+        decision: {
+          reason: `Tool ${msg.tool} failed`,
+        },
+        trigger: {
+          source: 'system',
+        },
+      });
+    }
+  }
+}
+
+// ============================================================================
+// 工厂函数
+// ============================================================================
+
+/**
+ * 创建 Worker 执行器
+ *
+ * 便捷函数，创建并初始化执行器
+ */
+export async function createWorkerExecutor(config: WorkerExecutorConfig): Promise<WorkerExecutor> {
+  const executor = new WorkerExecutor(config);
+  await executor.initialize();
+  return executor;
+}
