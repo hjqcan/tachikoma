@@ -159,6 +159,71 @@ export interface CodeSearchOutput {
 }
 
 /**
+ * apply_patch 输入
+ */
+export interface ApplyPatchInput {
+  /** 文件路径（相对于工作目录） */
+  path: string;
+  /** 补丁操作列表 */
+  patches: {
+    /** 要匹配的精确文本 */
+    search: string;
+    /** 替换内容（空字符串表示删除） */
+    replace: string;
+    /** 匹配第几个出现（默认 1，0 表示全部） */
+    occurrence?: number;
+  }[];
+  /** 是否创建备份（默认 false） */
+  backup?: boolean;
+}
+
+/**
+ * apply_patch 输出
+ */
+export interface ApplyPatchOutput {
+  /** 修改的文件路径 */
+  path: string;
+  /** 应用的补丁数量 */
+  patchesApplied: number;
+  /** 修改前后的差异行数 */
+  linesChanged: number;
+  /** 修改前后的字节差 */
+  bytesDelta: number;
+}
+
+/**
+ * replace_between_markers 输入
+ */
+export interface ReplaceBetweenMarkersInput {
+  /** 文件路径（相对于工作目录） */
+  path: string;
+  /** 开始标记（精确匹配） */
+  startMarker: string;
+  /** 结束标记（精确匹配） */
+  endMarker: string;
+  /** 新内容（不包含标记） */
+  content: string;
+  /** 是否包含标记本身（默认 false，只替换中间内容） */
+  includeMarkers?: boolean;
+  /** 匹配第几对标记（默认 1，0 表示全部） */
+  occurrence?: number;
+}
+
+/**
+ * replace_between_markers 输出
+ */
+export interface ReplaceBetweenMarkersOutput {
+  /** 修改的文件路径 */
+  path: string;
+  /** 替换的区域数量 */
+  regionsReplaced: number;
+  /** 修改前后的行数差 */
+  linesDelta: number;
+  /** 修改前后的字节差 */
+  bytesDelta: number;
+}
+
+/**
  * 创建工具函数类型
  */
 export type CreateToolFn = () => Tool;

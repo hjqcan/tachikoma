@@ -1,7 +1,10 @@
 /**
  * MVP Runner
  *
- * 简化的端到端任务执行器，用于 CLI 演示
+ * 简化的端到端任务执行器，用于 CLI 演示,当前 MVP runner 是一次性执行模式，没有错误反馈循环。
+ * 用户任务 → Planner 规划 → Worker 执行 → 结束
+                                    ↑
+                              没有反馈循环！
  * 集成 Planner + WorkerExecutor + Tools
  */
 
@@ -216,7 +219,8 @@ export class MVPRunner {
         type: 'composite',
         objective: this.config.task,
         constraints: [
-          `工作目录: ${this.config.workdir}`,
+          `当前工作目录: ${resolve(this.config.workdir)}`,
+          '所有文件操作使用相对路径（如 ./src/file.js），不要在路径中包含工作目录名称',
           `可用工具:\n${toolDescriptions}`,
           '请生成清晰的子任务，每个子任务应该可以独立执行',
         ],

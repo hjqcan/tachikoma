@@ -54,7 +54,32 @@ export const fileWriteTool: Tool = {
   },
 
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<FileWriteOutput>> {
+    // 检测格式错误的输入（LLM 生成的 JSON 解析失败时可能出现 raw 字段）
+    const rawInput = input as Record<string, unknown>;
+    if ('raw' in rawInput) {
+      return {
+        success: false,
+        error: `Malformed input detected: the input contains a 'raw' field which indicates JSON parsing failed. ` +
+               `Please ensure your tool call uses the correct format: {"path": "file.txt", "content": "..."}. ` +
+               `Received raw value: ${String(rawInput.raw).substring(0, 100)}...`,
+      };
+    }
+
     const { path: filePath, content, append = false } = input as FileWriteInput;
+
+    // 验证必填字段
+    if (!filePath || typeof filePath !== 'string') {
+      return {
+        success: false,
+        error: `Missing or invalid 'path' field. Expected a string path, got: ${typeof filePath}`,
+      };
+    }
+    if (content === undefined || content === null) {
+      return {
+        success: false,
+        error: `Missing 'content' field. The file content must be provided.`,
+      };
+    }
 
     try {
       // 确保工作目录存在

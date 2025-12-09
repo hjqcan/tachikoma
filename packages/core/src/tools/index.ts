@@ -21,6 +21,10 @@ export type {
   CodeSearchInput,
   CodeSearchOutput,
   SearchMatch,
+  ApplyPatchInput,
+  ApplyPatchOutput,
+  ReplaceBetweenMarkersInput,
+  ReplaceBetweenMarkersOutput,
 } from './types';
 
 // 核心工具导出
@@ -30,6 +34,8 @@ export {
   fileListTool,
   shellRunTool,
   codeSearchTool,
+  applyPatchTool,
+  replaceBetweenMarkersTool,
 } from './core';
 
 // 工具注册表
@@ -39,6 +45,8 @@ import {
   fileListTool,
   shellRunTool,
   codeSearchTool,
+  applyPatchTool,
+  replaceBetweenMarkersTool,
 } from './core';
 
 /**
@@ -50,6 +58,8 @@ export const coreTools: Tool[] = [
   fileListTool,
   shellRunTool,
   codeSearchTool,
+  applyPatchTool,
+  replaceBetweenMarkersTool,
 ];
 
 /**

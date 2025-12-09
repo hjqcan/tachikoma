@@ -37,7 +37,46 @@ import { isKeyDecision } from '../key-decision';
  */
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant that can use tools to accomplish tasks.
 When given a task, think step by step about how to accomplish it, then use the available tools.
-Always provide clear explanations of what you're doing and why.`;
+Always provide clear explanations of what you're doing and why.
+
+## File Path Guidelines
+
+⚠️ CRITICAL: Always use RELATIVE paths for all file operations.
+- ✅ Correct: \`./src/index.js\`, \`package.json\`, \`src/utils/helper.ts\`
+- ❌ Wrong: \`/absolute/path/project/src/index.js\`, \`project-name/src/index.js\`
+
+DO NOT create directories that duplicate the project name. You are already in the project directory.
+
+## File Modification Guidelines
+
+IMPORTANT: When modifying existing files, prefer incremental edits over full rewrites to reduce output size and errors.
+
+**Tool Selection Priority:**
+1. \`apply_patch\` - For search/replace edits (PREFERRED for modifications)
+2. \`replace_between_markers\` - For replacing content between markers/delimiters
+3. \`file_write\` with \`append: true\` - For adding content to end of files
+4. \`file_write\` (full content) - ONLY for new files or complete rewrites when necessary
+
+**When to use apply_patch:**
+- Changing function names, parameters, or return values
+- Fixing bugs or typos in specific lines
+- Adding/removing imports, exports, or dependencies
+- Any targeted modification to existing code
+
+**Example apply_patch usage:**
+\`\`\`json
+{
+  "path": "config.js",
+  "patches": [
+    { "search": "debug: false", "replace": "debug: true" },
+    { "search": "port: 3000", "replace": "port: 8080" }
+  ]
+}
+\`\`\`
+
+**When creating new files:**
+- For large files (>50 lines), consider creating a skeleton first, then using apply_patch to fill in details
+- This helps avoid output truncation issues`;
 
 // ============================================================================
 // 错误类型
@@ -174,6 +213,190 @@ class SimpleContextManager {
       }
     }
   }
+}
+
+// ============================================================================
+// 进度追踪器
+// ============================================================================
+
+/**
+ * 单轮执行进度
+ */
+interface RoundProgress {
+  round: number;
+  stopReason: string;
+  toolCallsAttempted: number;     // 解析出的工具调用数
+  toolCallsSucceeded: number;     // 成功执行的工具调用数
+  toolCallsParseFailed: boolean;  // 工具调用 XML 被截断
+  outputHash: string;             // 输出内容 hash（检测重复）
+  toolCallHash?: string;          // 工具调用内容 hash（检测重复调用）
+}
+
+/**
+ * 降级策略级别
+ */
+type DegradationLevel = 0 | 1 | 2 | 3;
+
+/**
+ * 进度追踪器
+ * 
+ * 追踪执行进度，检测死循环和无进展状态。
+ * 当连续多轮没有实质进展时，触发策略降级。
+ */
+class ProgressTracker {
+  private history: RoundProgress[] = [];
+  private noProgressCount = 0;
+  private lastOutputHash = '';
+  private lastInjectedLevel: DegradationLevel = 0;
+  private toolCallHashHistory: string[] = [];  // 追踪最近的工具调用 hash
+  private repeatToolCallCount = 0;             // 连续重复工具调用计数
+  
+  /**
+   * 记录一轮执行的进度
+   */
+  recordRound(progress: RoundProgress): void {
+    this.history.push(progress);
+    
+    if (this.hasProgress(progress)) {
+      this.noProgressCount = 0;
+      this.lastInjectedLevel = 0; // Reset on progress
+    } else {
+      this.noProgressCount++;
+      console.warn(
+        `[ProgressTracker] No progress detected. Count: ${this.noProgressCount}. ` +
+        `stopReason=${progress.stopReason}, toolCallsSucceeded=${progress.toolCallsSucceeded}, ` +
+        `toolCallsParseFailed=${progress.toolCallsParseFailed}`
+      );
+    }
+    
+    this.lastOutputHash = progress.outputHash;
+  }
+  
+  /**
+   * 判断本轮是否有实质进展
+   */
+  private hasProgress(progress: RoundProgress): boolean {
+    // 正常完成（没有工具调用请求且 stop reason 是 stop）
+    if (progress.stopReason === 'stop' && progress.toolCallsAttempted === 0) {
+      return true;
+    }
+    
+    // 检测重复的工具调用
+    if (progress.toolCallHash) {
+      const lastHash = this.toolCallHashHistory[this.toolCallHashHistory.length - 1];
+      if (lastHash === progress.toolCallHash) {
+        this.repeatToolCallCount++;
+        console.warn(
+          `[ProgressTracker] Repeated tool call detected. RepeatCount: ${this.repeatToolCallCount}`
+        );
+        // 连续 3 次相同的工具调用 = 卡死
+        if (this.repeatToolCallCount >= 3) {
+          return false;
+        }
+      } else {
+        this.repeatToolCallCount = 0;
+      }
+      // 保留最近 10 个 hash
+      this.toolCallHashHistory.push(progress.toolCallHash);
+      if (this.toolCallHashHistory.length > 10) {
+        this.toolCallHashHistory.shift();
+      }
+    }
+    
+    // 有成功的工具调用
+    if (progress.toolCallsSucceeded > 0) {
+      return true;
+    }
+    
+    // 被截断且无工具调用成功 = 无进展
+    if (progress.stopReason === 'length' || progress.toolCallsParseFailed) {
+      return false;
+    }
+    
+    // 输出与上轮相同 = 无进展
+    if (progress.outputHash === this.lastOutputHash && this.lastOutputHash !== '') {
+      return false;
+    }
+    
+    return true;
+  }
+  
+  getNoProgressCount(): number {
+    return this.noProgressCount;
+  }
+  
+  shouldDegradeStrategy(): boolean {
+    return this.noProgressCount >= 3;
+  }
+  
+  /**
+   * 获取降级级别
+   * 0 = 正常, 1 = 第一次降级（约束输出）, 2 = 第二次降级（终止任务）, 3+ = 强制终止
+   */
+  getDegradationLevel(): DegradationLevel {
+    if (this.noProgressCount < 3) return 0;
+    if (this.noProgressCount < 6) return 1;
+    if (this.noProgressCount < 9) return 2;
+    return 3;
+  }
+  
+  /**
+   * 获取降级提示消息（仅当级别提升时返回消息）
+   */
+  getDegradationMessage(): string | null {
+    const level = this.getDegradationLevel();
+    
+    // 只有当级别提升时才返回消息，避免重复注入
+    if (level === 0 || level <= this.lastInjectedLevel) return null;
+    
+    // 更新已注入的级别
+    this.lastInjectedLevel = level;
+    
+    if (level === 1) {
+      return `⚠️ 检测到你的输出被截断了（已连续 ${this.noProgressCount} 次无进展）。
+
+请调整你的策略：
+1. 不要一次性生成完整文件
+2. 每次只生成一个函数或一个代码块（最多 100 行）
+3. 使用 <!-- CONTINUE_FROM: 上次结束的位置 --> 标记
+4. 优先使用 apply_patch 工具进行增量修改
+
+如果文件很长，请分多次写入。`;
+    }
+    
+    if (level === 2) {
+      return `⚠️ 连续 ${this.noProgressCount} 次无进展。请立即完成当前步骤或报告问题。
+
+建议：
+- 简化你的输出，只完成最小可行版本
+- 如果任务太复杂，请说明并建议如何拆分`;
+    }
+    
+    return null; // level 3 会直接终止，不需要消息
+  }
+  
+  getHistory(): RoundProgress[] {
+    return [...this.history];
+  }
+  
+  reset(): void {
+    this.history = [];
+    this.noProgressCount = 0;
+    this.lastOutputHash = '';
+  }
+}
+
+/**
+ * 简单 hash 函数（用于检测重复输出）
+ */
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return hash.toString(16);
 }
 
 // ============================================================================
@@ -438,6 +661,9 @@ When the task is complete, provide a final summary of what was accomplished.`);
       let round = 0;
       let done = false;
       let totalToolCalls = 0;
+      
+      // 创建进度追踪器
+      const progressTracker = new ProgressTracker();
 
       while (!done && round < limits.maxThinkingRounds) {
         round++;
@@ -521,9 +747,14 @@ When the task is complete, provide a final summary of what was accomplished.`);
         // 添加到上下文
         context.addAssistantMessage(response.content);
 
+        // 追踪本轮进度
+        const hasToolCallMarker = containsToolCall(response.content);
+        const toolCalls = hasToolCallMarker ? parseToolCalls(response.content) : [];
+        const toolCallsParseFailed = hasToolCallMarker && toolCalls.length === 0;
+        let toolCallsSucceeded = 0;
+
         // 检查是否有工具调用
-        if (containsToolCall(response.content)) {
-          const toolCalls = parseToolCalls(response.content);
+        if (hasToolCallMarker && toolCalls.length > 0) {
 
           for (const call of toolCalls) {
             // 发出工具调用消息
@@ -602,6 +833,11 @@ When the task is complete, provide a final summary of what was accomplished.`);
             const result = await this.executeTool(call, tools, options);
             const duration = Date.now() - startTime;
             totalToolCalls++;
+            
+            // 记录成功的工具调用
+            if (result.success) {
+              toolCallsSucceeded++;
+            }
 
             // 检查工具调用次数限制
             if (totalToolCalls >= limits.maxToolCalls) {
@@ -641,12 +877,62 @@ When the task is complete, provide a final summary of what was accomplished.`);
           };
         }
 
+        // 记录本轮进度
+        // 计算工具调用 hash 用于检测重复调用
+        const toolCallHash = toolCalls.length > 0
+          ? simpleHash(toolCalls.map(c => `${c.name}:${JSON.stringify(c.input)}`).join('|'))
+          : undefined;
+        
+        progressTracker.recordRound({
+          round,
+          stopReason: response.stopReason ?? 'unknown',
+          toolCallsAttempted: toolCalls.length,
+          toolCallsSucceeded,
+          toolCallsParseFailed,
+          outputHash: simpleHash(response.content),
+          ...(toolCallHash && { toolCallHash }),
+        });
+
+        // 检查是否需要降级策略
+        if (progressTracker.shouldDegradeStrategy()) {
+          const degradationLevel = progressTracker.getDegradationLevel();
+          const degradationMessage = progressTracker.getDegradationMessage();
+          
+          console.warn(
+            `[GenericAgentBackend] Strategy degradation triggered. Level: ${degradationLevel}, ` +
+            `noProgressCount: ${progressTracker.getNoProgressCount()}`
+          );
+          
+          // Level 3: 强制终止
+          if (degradationLevel >= 3) {
+            yield {
+              type: 'error',
+              error: `Task stuck: no progress after ${progressTracker.getNoProgressCount()} rounds. ` +
+                     `Consider breaking down the task into smaller subtasks.`,
+              code: 'NO_PROGRESS_TERMINATION',
+              retryable: false,
+              timestamp: Date.now(),
+            };
+            done = true;
+            break;
+          }
+          
+          // Level 1-2: 注入降级提示
+          if (degradationMessage) {
+            context.addUserMessage(degradationMessage);
+          }
+        }
+
         // 检查停止原因
-        if (response.stopReason === 'stop' && !containsToolCall(response.content)) {
+        if (response.stopReason === 'stop' && !hasToolCallMarker) {
           console.debug('[GenericAgentBackend] Loop stop: reason is stop and no tool call');
           done = true;
         } else {
-          console.debug(`[GenericAgentBackend] Loop check: stopReason=${response.stopReason}, containsToolCall=${containsToolCall(response.content)}`);
+          console.debug(
+            `[GenericAgentBackend] Loop check: stopReason=${response.stopReason}, ` +
+            `containsToolCall=${hasToolCallMarker}, toolCallsParsed=${toolCalls.length}, ` +
+            `toolCallsSucceeded=${toolCallsSucceeded}`
+          );
         }
       }
 

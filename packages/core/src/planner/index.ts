@@ -89,3 +89,14 @@ export {
   type PlanResult,
   type DegradationStrategy,
 } from './planner';
+
+// ============================================================================
+// Subtask Validator 导出
+// ============================================================================
+
+export {
+  validateSubtask,
+  validateSubtasks,
+  injectToolRecommendations,
+  type SubtaskValidationResult,
+} from './subtask-validator';

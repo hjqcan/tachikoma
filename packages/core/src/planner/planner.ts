@@ -29,6 +29,7 @@ import {
   DEFAULT_DELEGATION_DEFAULTS,
   DEFAULT_RETRY_POLICY,
 } from '../orchestrator/config';
+import { injectToolRecommendations } from './subtask-validator';
 
 // ============================================================================
 // 类型定义
@@ -261,7 +262,25 @@ export class Planner {
     _preferences?: PlannerInput['preferences'] // 保留用于将来扩展
   ): PlannerOutput {
     // 转换子任务
-    const subtasks = convertToSubTasks(planningOutput, task.id);
+    let subtasks = convertToSubTasks(planningOutput, task.id);
+
+    // 验证并优化子任务（注入工具推荐）
+    const subtasksForValidation = subtasks.map(st => ({
+      objective: st.objective,
+      constraints: st.constraints ?? [],
+    }));
+    const enhancedSubtasks = injectToolRecommendations(subtasksForValidation);
+    
+    // 合并增强后的约束条件
+    subtasks = subtasks.map((st, i) => {
+      const enhanced = enhancedSubtasks[i];
+      const stConstraints = st.constraints ?? [];
+      const enhancedConstraints = enhanced?.constraints ?? [];
+      if (enhancedConstraints.length > stConstraints.length) {
+        return { ...st, constraints: enhancedConstraints };
+      }
+      return st;
+    });
 
     // 转换执行计划
     const executionPlan = convertToExecutionPlan(planningOutput);

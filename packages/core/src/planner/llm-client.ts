@@ -92,7 +92,7 @@ export class AnthropicLLMClient extends BaseLLMClient {
     const {
       systemPrompt,
       messages,
-      maxTokens = this.config.maxTokens || 4096,
+      maxTokens = this.config.maxTokens || 8192,
       temperature = this.config.temperature ?? 0.3,
       stopSequences,
       abortSignal,
