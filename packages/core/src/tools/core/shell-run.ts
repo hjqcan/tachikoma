@@ -54,12 +54,14 @@ async function executeCommand(
   command: string,
   cwd: string,
   timeout: number
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut?: boolean }> {
   return new Promise((resolve) => {
-    // 使用 shell 执行命令
+    let timedOut = false;
+    
+    // 使用 shell 执行命令，启用 detached 模式以便能杀死整个进程组
     const child = spawn('sh', ['-c', command], {
       cwd,
-      timeout,
+      detached: true, // 创建新进程组
       env: {
         ...process.env,
         // 安全限制
@@ -83,8 +85,9 @@ async function executeCommand(
     child.on('close', (code) => {
       resolve({
         stdout,
-        stderr,
-        exitCode: code ?? 1,
+        stderr: timedOut ? stderr + '\n[Command timed out and was killed]' : stderr,
+        exitCode: timedOut ? 124 : (code ?? 1), // 124 是 timeout 命令的标准退出码
+        timedOut,
       });
     });
 
@@ -96,17 +99,35 @@ async function executeCommand(
       });
     });
 
-    // 超时处理
-    setTimeout(() => {
-      if (!child.killed) {
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) {
-            child.kill('SIGKILL');
-          }
-        }, 1000);
+    // 超时处理：杀死整个进程组
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      console.warn(`[shell_run] Command timed out after ${timeout}ms, killing process group...`);
+      
+      try {
+        // 使用负数 pid 杀死整个进程组
+        if (child.pid) {
+          process.kill(-child.pid, 'SIGTERM');
+          setTimeout(() => {
+            try {
+              if (child.pid && !child.killed) {
+                process.kill(-child.pid, 'SIGKILL');
+              }
+            } catch {
+              // 进程可能已经退出
+            }
+          }, 1000);
+        }
+      } catch {
+        // 进程可能已经退出
+        child.kill('SIGKILL');
       }
     }, timeout);
+
+    // 进程正常退出时清除超时
+    child.on('exit', () => {
+      clearTimeout(timeoutId);
+    });
   });
 }
 
