@@ -253,6 +253,33 @@ export {
 } from './mvp';
 
 // ============================================================================
+// 多轮对话模块
+// ============================================================================
+
+export * as conversation from './conversation';
+
+export type {
+  ConversationalRunnerConfig,
+  SessionState,
+  StreamEvent,
+  ConversationMessage,
+  ExecutionSummary,
+  Checkpoint,
+  IntentAnalysisResult,
+  FeedbackAnalysisResult,
+} from './conversation';
+
+export {
+  ConversationalRunner,
+  SessionStore,
+  IntentAnalyzer,
+  FeedbackLoop,
+  ContextManager,
+  UserIntent,
+  FeedbackAction,
+} from './conversation';
+
+// ============================================================================
 // TODO: 后续添加以下模块导出
 // ============================================================================
 
