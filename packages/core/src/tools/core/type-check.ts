@@ -9,10 +9,12 @@ import type { Tool, ExecutionContext } from '../../types';
 import type { TypeCheckInput, TypeCheckOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
+import { mergeEnv } from '../env-utils';
 import { truncateWithNotice, DEFAULT_MAX_OUTPUT } from './security';
+import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 
-/** 默认类型检查超时时间 (120 秒) */
-const DEFAULT_TYPECHECK_TIMEOUT = 120000;
+/** 默认类型检查超时时间 (120秒，使用constants统一默认值的30s的4倍) */
+const DEFAULT_TYPE_CHECK_TIMEOUT = DEFAULT_RESOURCE_LIMITS.maxExecutionTime * 4;
 
 /**
  * 解析 tsc 输出，提取错误数量
@@ -54,12 +56,7 @@ async function executeTscCommand(
     const child = spawn('npx', ['tsc', ...args], {
       cwd,
       detached: true,
-      env: {
-        ...context.env, // 使用context.env而不是process.env
-        PATH: context.env.PATH || process.env.PATH,
-        HOME: context.env.HOME || process.env.HOME,
-        FORCE_COLOR: '0',
-      },
+      env: mergeEnv(context), // 使用统一的env合并逻辑
     });
 
     let stdout = '';
@@ -185,7 +182,7 @@ export const typeCheckTool: Tool = {
     const {
       cwd,
       project,
-      timeout = DEFAULT_TYPECHECK_TIMEOUT,
+      timeout = DEFAULT_TYPE_CHECK_TIMEOUT,
     } = (input as TypeCheckInput) || {};
 
     try {

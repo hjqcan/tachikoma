@@ -10,11 +10,11 @@ import type { FileReadInput, FileReadOutput, ToolResult } from '../types';
 import {
   validatePath,
   ensureWorkDir,
-  truncateOutput,
   isBinaryFile,
   isBinaryContent,
-  DEFAULT_MAX_OUTPUT,
+  truncateOutput,
 } from './utils';
+import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 
 /** 文件读取输入（扩展版） */
 interface ExtendedFileReadInput extends FileReadInput {
@@ -80,7 +80,6 @@ export const fileReadTool: Tool = {
     const {
       path: filePath,
       encoding,
-      maxOutput = DEFAULT_MAX_OUTPUT,
     } = input as ExtendedFileReadInput;
 
     try {
@@ -95,9 +94,9 @@ export const fileReadTool: Tool = {
 
       const absolutePath = validatePath(filePath, context.workDir);
 
-      // 应用资源限制（使用默认值如果未提供）
-      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024; // 50MB
-      const maxOutputSize = context.resourceLimits?.maxOutputSize || maxOutput;
+      // 应用资源限制（使用统一默认值）
+      const maxFileSize = context.resourceLimits?.maxFileSize || DEFAULT_RESOURCE_LIMITS.maxFileSize;
+      const maxOutputSize = context.resourceLimits?.maxOutputSize || DEFAULT_RESOURCE_LIMITS.maxOutputSize;
 
       // 获取文件信息
       const fileStat = await stat(absolutePath);
@@ -138,16 +137,14 @@ export const fileReadTool: Tool = {
         content = buffer.toString('utf-8');
       }
 
-      // 使用资源限制的截断处理
-      const truncated = content.length > maxOutputSize;
-      if (truncated) {
-        content = content.substring(0, maxOutputSize);
-      }
+      // 使用资源限制的截断处理（带提示）
+      const truncatedContent = truncateOutput(content, maxOutputSize);
+      const truncated = truncatedContent.length !== content.length;
 
       return {
         success: true,
         data: {
-          content,
+          content: truncatedContent,
           size: fileStat.size,
           isBinary,
           truncated,

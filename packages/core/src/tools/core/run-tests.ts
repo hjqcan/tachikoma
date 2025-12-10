@@ -9,10 +9,12 @@ import type { Tool, ExecutionContext } from '../../types';
 import type { RunTestsInput, RunTestsOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
+import { mergeEnv } from '../env-utils';
 import { truncateWithNotice, DEFAULT_MAX_OUTPUT } from './security';
+import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 
-/** 默认测试超时时间 (60 秒) */
-const DEFAULT_TEST_TIMEOUT = 60000;
+/** 默认测试超时时间 (60秒，使用constants统一默认值的30s的2倍) */
+const DEFAULT_TEST_TIMEOUT = DEFAULT_RESOURCE_LIMITS.maxExecutionTime * 2;
 
 /**
  * 执行测试命令
@@ -35,13 +37,7 @@ async function executeTestCommand(
     const child = spawn(command, args, {
       cwd,
       detached: true,
-      env: {
-        ...context.env, // 使用context.env而不是process.env
-        PATH: context.env.PATH || process.env.PATH, // 确保PATH存在
-        HOME: context.env.HOME || process.env.HOME, // 确保HOME存在
-        FORCE_COLOR: '0',
-        CI: 'true',
-      },
+      env: mergeEnv(context), // 使用统一的env合并逻辑
     });
 
     let stdout = '';

@@ -10,6 +10,7 @@ import type { Tool, ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
+import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 
 /**
  * 单个补丁操作
@@ -243,8 +244,8 @@ export const applyPatchTool: Tool = {
         await writeFile(backupPath, originalContent);
       }
 
-      // 应用资源限制检查
-      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024;
+      // 应用资源限制检查（使用统一默认值）
+      const maxFileSize = context.resourceLimits?.maxFileSize || DEFAULT_RESOURCE_LIMITS.maxFileSize;
       if (originalBytes > maxFileSize) {
         return {
           success: false,

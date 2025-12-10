@@ -8,12 +8,8 @@ import { spawn } from 'node:child_process';
 import type { Tool, ExecutionContext } from '../../types';
 import type { ShellRunInput, ShellRunOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
-import {
-  validatePath,
-  ensureWorkDir,
-  truncateOutput,
-  DEFAULT_MAX_OUTPUT,
-} from './utils';
+import { validatePath, ensureWorkDir, truncateOutput, DEFAULT_MAX_OUTPUT } from './utils';
+import { mergeEnv } from '../env-utils';
 
 /** Shell 运行输入（扩展版） */
 interface ExtendedShellRunInput extends ShellRunInput {
@@ -46,31 +42,6 @@ const DANGEROUS_PATTERNS = [
 
 function isDangerousCommand(command: string): boolean {
   return DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
-}
-
-/**
- * 合并环境变量
- * 使用context.env覆盖process.env，实现多租户隔离
- */
-function mergeEnv(context: ExecutionContext): Record<string, string> {
-  // 基础环境变量白名单
-  const envWhitelist = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG'];
-  
-  const baseEnv: Record<string, string> = {};
-  for (const key of envWhitelist) {
-    const value = process.env[key];
-    if (value) {
-      baseEnv[key] = value;
-    }
-  }
-  
-  // context.env优先级更高，并添加安全限制
-  return {
-    ...baseEnv,
-    ...context.env,
-    FORCE_COLOR: '0',
-    TERM: 'dumb',
-  };
 }
 
 /**

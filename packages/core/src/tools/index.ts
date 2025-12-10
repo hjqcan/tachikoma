@@ -50,18 +50,21 @@ export type {
 export { ToolPermission, ToolLayer, ToolCategory } from './types';
 
 // 权限和注册表导出
-export {
-  PermissionValidator,
-  type PermissionValidationResult,
-} from './permission-validator';
+// 导出所有核心工具和管理类
+export { PermissionValidator } from './permission-validator';
+export { ToolRegistry, globalToolRegistry } from './registry';
+export { SandboxToolWrapper, sandboxToolWrapper } from './sandbox-wrapper';
+export { ToolChain } from './chain';
+export { ProgressiveDisclosure, progressiveDisclosure } from './progressive-disclosure';
+export { ToolExecutor, globalToolExecutor } from './tool-executor';
+export { mergeEnv } from './env-utils';
+export type { PermissionDeniedError, ToolNotFoundError, ToolDefinition } from './registry';
+export type { ToolChainStep, ToolChainResult } from './chain';
+export type { ToolMetadata, BasicToolDefinition } from './progressive-disclosure';
+export type { ToolExecutionConfig } from './tool-executor';
 
-export {
-  ToolRegistry,
-  globalToolRegistry,
-  PermissionDeniedError,
-  ToolNotFoundError,
-  type ToolDefinition,
-} from './registry';
+// 导出常量
+export { DEFAULT_RESOURCE_LIMITS, ENV_WHITELIST, SHELL_SAFETY } from './constants';
 
 // 核心工具导出
 export {

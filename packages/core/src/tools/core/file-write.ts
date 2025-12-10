@@ -10,6 +10,7 @@ import type { Tool, ExecutionContext } from '../../types';
 import type { FileWriteInput, FileWriteOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
+import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 
 /**
  * file_write 工具定义
@@ -109,8 +110,8 @@ export const fileWriteTool: Tool = {
       const parentDir = dirname(absolutePath);
       await mkdir(parentDir, { recursive: true });
 
-      // 应用资源限制检查
-      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024; // 50MB默认
+      // 应用资源限制检查（使用统一默认值）
+      const maxFileSize = context.resourceLimits?.maxFileSize || DEFAULT_RESOURCE_LIMITS.maxFileSize;
       const buffer = Buffer.from(content, 'utf-8');
       
       if (buffer.length > maxFileSize) {

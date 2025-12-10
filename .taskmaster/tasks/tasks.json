@@ -494,7 +494,7 @@
         "testStrategy": "- 单元：每个工具的入参校验与成功/失败路径覆盖。\n- 集成：通过 worker 执行工具链，验证串联数据传递。\n- 安全：非法路径/命令被拒绝。",
         "priority": "medium",
         "dependencies": [],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -502,9 +502,10 @@
             "description": "建立完全兼容MCP的工具类型系统",
             "dependencies": [],
             "details": "在 packages/core/src/tools/types.ts 扩展工具类型定义，完全兼容 MCP 标准：\n- Tool 接口：name, title, description, inputSchema, outputSchema, annotations (MCP标准)\n- Tachikoma 扩展：permissions (细粒度权限), layer (分层标记), category (工具分类)\n- ToolAnnotations: audience, priority, idempotent, estimatedDuration, cacheable\n- ToolPermission 枚举: FileSystemRead/Write/Delete, NetworkRead/Write, ShellExec, ProcessSpawn, EnvRead\n- ToolLayer 枚举: Atomic (layer1), Sandbox (layer2), CodeExecution (layer3)\n- ToolCategory 枚举: FileSystem, Shell, Browser, Search, Communication, DataProcessing, Agent\n- 扩展 ExecutionContext: 添加 permissions 和 resourceLimits 字段",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "类型检查通过；Tool接口完全兼容MCP规范；ExecutionContext支持权限和资源限制；与现有代码接口对齐",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T07:33:27.061Z"
           },
           {
             "id": 2,
@@ -514,9 +515,10 @@
               1
             ],
             "details": "创建两个核心组件：\n1. PermissionValidator (packages/core/src/tools/permission-validator.ts):\n   - validate(): 检查工具权限是否符合上下文允许列表\n   - requiresSandbox(): 判断高风险工具是否强制沙盒\n   - 资源限制验证\n2. ToolRegistry (packages/core/src/tools/registry.ts):\n   - 工具注册/注销\n   - 多维度查询: getByName/Layer/Category/Permissions\n   - 渐进披露: getDefinitions() 支持按层级、Token限制返回\n   - execute(): 带权限检查的执行接口\n性能要求：查询<1ms，校验<0.5ms",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：权限校验逻辑、多维度查询、权限拦截；性能测试达标；测试覆盖率>90%",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T07:33:34.776Z"
           },
           {
             "id": 3,
@@ -527,9 +529,10 @@
               2
             ],
             "details": "对现有11个工具进行 Breaking Change 重构：\n1. file-read/write/list: 添加 FileSystemRead/Write 权限, idempotent, cacheable annotations\n2. shell-run: 添加 ShellExec+ProcessSpawn 权限, estimatedDuration annotation\n3. code-search: 添加 FileSystemRead 权限, cacheable annotation\n4. file-patch/replace-markers: 添加 FileSystemWrite 权限\n5. run-tests: 添加 ShellExec 权限, estimatedDuration annotation\n6. type-check: 添加 ShellExec 权限, cacheable annotation\n7. package-info: 添加 FileSystemRead 权限, cacheable annotation\n8. env-get: 添加 EnvRead 权限, idempotent annotation\n统一添加: title, layer (Atomic), category, 修复所有调用代码",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "所有工具符合新接口；权限声明准确；annotations合理；所有测试通过；性能无回归",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T08:04:09.498Z"
           },
           {
             "id": 4,
@@ -540,9 +543,10 @@
               3
             ],
             "details": "实现 SandboxToolWrapper (packages/core/src/tools/sandbox-wrapper.ts):\n- wrap(): 将工具包装为沙盒版本 (name前缀sandbox_, layer改为Sandbox)\n- generateExecutionScript(): 生成沙盒执行脚本\n- execute(): 序列化input → 沙盒执行 → 解析结果\n- 应用资源限制 (timeout, maxFileSize, maxOutputSize)\n- 捕获并包装 stdout/stderr/exitCode\n性能要求：沙盒开销<20%",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：沙盒隔离验证、资源限制生效、stdout/stderr捕获；错误处理完善；性能测试达标",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T08:04:19.019Z"
           },
           {
             "id": 5,
@@ -552,9 +556,10 @@
               2
             ],
             "details": "实现 ToolChain (packages/core/src/tools/chain.ts):\n- ToolChainStep 接口: toolName, input, inputMapping (支持从前一步输出映射)\n- execute(): 顺序执行工具链\n- applyInputMapping(): 应用输入映射逻辑\n- 失败处理: 返回部分完成结果\n- Metrics 收集: 每步执行时间、Token消耗\n- ToolChainResult: success, completedSteps, results, error",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：串联执行、输出映射、中间失败处理、Metrics收集；覆盖率>85%",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T08:04:25.778Z"
           },
           {
             "id": 6,
@@ -564,9 +569,10 @@
               2
             ],
             "details": "实现 ProgressiveDisclosure (packages/core/src/tools/progressive-disclosure.ts):\n- getMetadata(): Level 1 仅元数据 (~50 tokens/tool): name, title, category, layer\n- getBasicDefinition(): Level 2 基础定义 (~200 tokens/tool): 添加 description, 简化的 inputSchema, permissions\n- getFullDefinition(): Level 3 完整定义\n- simplifySchema(): 移除 examples/default 等非必需字段\n- recommend(): 智能推荐相关工具 (基于关键词、类别匹配)\nToken消耗目标：相比直接加载减少80%+",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "Token消耗测试：Level1<Level2<Level3，验证80%减少目标；推荐算法准确率>80%；性能基准通过",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T08:04:32.356Z"
           },
           {
             "id": 7,
@@ -609,7 +615,8 @@
             "testStrategy": "导出完整；文档清晰；Worker集成测试通过；性能达标；测试覆盖率>85%",
             "parentId": "undefined"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-10T08:04:32.356Z"
       },
       {
         "id": "7",
@@ -993,8 +1000,8 @@
         "id": "11",
         "title": "智能路由与模型选择 (Routing)",
         "description": "实现基于任务特征的智能路由器，根据任务复杂度、成本、模型能力自动选择最优 Backend。",
-        "details": "- TaskRouter：分析任务类型（分类/生成/推理）、复杂度评分、成本预算，选择最优模型（Anthropic/OpenAI/Gemini）。\\n- 路由策略：基于规则（complexity \u003e 8 → Claude Opus）、基于 LLM 预测（轻量模型判断）、基于历史性能（成功率/成本记录）。\\n- 与 Orchestrator 集成：在 executePlanPhase 前插入路由层，为每个子任务分配最优 Worker Backend。\\n- 成本跟踪：记录每个模型的 token 消耗与任务成功率，用于优化路由决策。",
-        "testStrategy": "- 单元：给定任务特征，验证路由器选择正确模型；复杂度边界条件测试。\\n- 集成：执行多类型任务（简单/复杂/代码生成），验证路由分配符合策略。\\n- 性能：路由决策延迟 \u003c 50ms；成本降低 \u003e 30%（相比固定使用最贵模型）。",
+        "details": "- TaskRouter：分析任务类型（分类/生成/推理）、复杂度评分、成本预算，选择最优模型（Anthropic/OpenAI/Gemini）。\\n- 路由策略：基于规则（complexity > 8 → Claude Opus）、基于 LLM 预测（轻量模型判断）、基于历史性能（成功率/成本记录）。\\n- 与 Orchestrator 集成：在 executePlanPhase 前插入路由层，为每个子任务分配最优 Worker Backend。\\n- 成本跟踪：记录每个模型的 token 消耗与任务成功率，用于优化路由决策。",
+        "testStrategy": "- 单元：给定任务特征，验证路由器选择正确模型；复杂度边界条件测试。\\n- 集成：执行多类型任务（简单/复杂/代码生成），验证路由分配符合策略。\\n- 性能：路由决策延迟 < 50ms；成本降低 > 30%（相比固定使用最贵模型）。",
         "priority": "high",
         "dependencies": [],
         "status": "pending",
@@ -1029,7 +1036,7 @@
               1,
               2
             ],
-            "details": "在 packages/core/src/routing/strategies/rule-based.ts 实现 RuleBasedRouter；定义规则集（complexity \u003e 8 → claude-opus, complexity 3-7 → claude-sonnet, complexity \u003c 3 → claude-haiku；type=code → claude-sonnet；costBudget \u003c threshold → 便宜模型）；支持规则优先级与组合",
+            "details": "在 packages/core/src/routing/strategies/rule-based.ts 实现 RuleBasedRouter；定义规则集（complexity > 8 → claude-opus, complexity 3-7 → claude-sonnet, complexity < 3 → claude-haiku；type=code → claude-sonnet；costBudget < threshold → 便宜模型）；支持规则优先级与组合",
             "status": "pending",
             "testStrategy": "单元测试：各规则触发正确模型；规则冲突时按优先级",
             "parentId": "undefined"
@@ -1081,19 +1088,19 @@
             "dependencies": [
               6
             ],
-            "details": "在 packages/core/tests/routing 添加特征提取、路由策略、成本跟踪的单元测试；端到端测试：执行混合复杂度任务，验证路由分配与成本节省；编写 README 说明路由策略配置与扩展方法；性能基准：路由决策延迟 \u003c 50ms",
+            "details": "在 packages/core/tests/routing 添加特征提取、路由策略、成本跟踪的单元测试；端到端测试：执行混合复杂度任务，验证路由分配与成本节省；编写 README 说明路由策略配置与扩展方法；性能基准：路由决策延迟 < 50ms",
             "status": "pending",
-            "testStrategy": "bun test 全量通过；端到端验证成本降低 \u003e 30%；文档示例可运行",
+            "testStrategy": "bun test 全量通过；端到端验证成本降低 > 30%；文档示例可运行",
             "parentId": "undefined"
           }
         ]
       },
       {
         "id": "12",
-        "title": "学习与适应机制 (Learning \u0026 Adaptation)",
+        "title": "学习与适应机制 (Learning & Adaptation)",
         "description": "实现失败案例记录、根因分析、Prompt 微调与 Few-shot 示例更新，构建系统持续学习能力。",
         "details": "- 失败案例收集：SessionFileManager 扩展 lessons/ 目录，记录失败任务的上下文、错误、根因。\\n- 根因分析：LLM 分析失败 trace，生成诊断报告（环境问题/工具误用/规划错误/模型能力不足）。\\n- Prompt 微调：基于失败案例更新 Planner/Worker 的 system prompt，增加注意事项。\\n- Few-shot 学习：成功修复的案例作为 Few-shot 示例，动态注入相似任务的上下文。\\n- A/B Testing：测试不同 Prompt 版本的成功率，保留最优版本。",
-        "testStrategy": "- 单元：失败案例记录完整；根因分析输出符合 schema；Prompt 更新生效。\\n- 集成：相同类型任务再次执行时，成功率提升 \u003e 20%；Few-shot 示例正确注入。\\n- 回归：A/B 测试框架可运行，统计数据准确。",
+        "testStrategy": "- 单元：失败案例记录完整；根因分析输出符合 schema；Prompt 更新生效。\\n- 集成：相同类型任务再次执行时，成功率提升 > 20%；Few-shot 示例正确注入。\\n- 回归：A/B 测试框架可运行，统计数据准确。",
         "priority": "high",
         "dependencies": [],
         "status": "pending",
@@ -1179,7 +1186,7 @@
             ],
             "details": "在 packages/core/src/planner/planner.ts 的 plan() 方法中：1) 调用 FewShotManager 检索相似成功案例；2) 读取当前 taskType 的 prompt 增强（learnings）；3) 将 Few-shot 示例和 learnings 注入到 planning prompt；4) 生成计划后记录到 trace",
             "status": "pending",
-            "testStrategy": "集成测试：相同类型任务重复执行，验证成功率提升 \u003e 20%",
+            "testStrategy": "集成测试：相同类型任务重复执行，验证成功率提升 > 20%",
             "parentId": "undefined"
           },
           {
@@ -1260,7 +1267,7 @@
             "dependencies": [
               4
             ],
-            "details": "在 Planner 识别复杂任务（complexity \u003e 7 或特定 keywords）时，选择合适的链模板；在 Orchestrator 执行时调用 ChainExecutor；记录每步中间结果到 orchestrator/chain-trace.jsonl；支持人工介入点（HITL）",
+            "details": "在 Planner 识别复杂任务（complexity > 7 或特定 keywords）时，选择合适的链模板；在 Orchestrator 执行时调用 ChainExecutor；记录每步中间结果到 orchestrator/chain-trace.jsonl；支持人工介入点（HITL）",
             "status": "pending",
             "testStrategy": "集成测试：复杂任务自动触发链式执行；trace 记录完整",
             "parentId": "undefined"
@@ -1306,7 +1313,7 @@
             "dependencies": [
               1
             ],
-            "details": "在 packages/core/src/reasoning/tot-generator.ts 实现 ToTGenerator 类；对复杂任务（complexity \u003e 8）生成候选方案树（每层 3-5 个分支）；每个分支调用 LLM 评估价值（0-10 分）；使用广度优先或最佳优先搜索选择最优路径；返回最优方案",
+            "details": "在 packages/core/src/reasoning/tot-generator.ts 实现 ToTGenerator 类；对复杂任务（complexity > 8）生成候选方案树（每层 3-5 个分支）；每个分支调用 LLM 评估价值（0-10 分）；使用广度优先或最佳优先搜索选择最优路径；返回最优方案",
             "status": "pending",
             "testStrategy": "单元测试：树生成完整；评估分数计算；最优路径选择",
             "parentId": "undefined"
@@ -1344,7 +1351,7 @@
               3,
               4
             ],
-            "details": "在 Planner 中：complexity \u003e 8 触发 ToT；在 Orchestrator 中：检测到方案分歧触发 Debate；任务完成后调用 SelfReflection；支持配置化推理策略（reasoning-mode: cot/tot/debate）",
+            "details": "在 Planner 中：complexity > 8 触发 ToT；在 Orchestrator 中：检测到方案分歧触发 Debate；任务完成后调用 SelfReflection；支持配置化推理策略（reasoning-mode: cot/tot/debate）",
             "status": "pending",
             "testStrategy": "集成测试：不同复杂度任务触发对应推理模式；反思结果记录",
             "parentId": "undefined"
@@ -1368,7 +1375,7 @@
         "title": "Inter-Agent Communication 横向消息总线",
         "description": "实现 Worker 间横向通信的消息总线，支持 Coder→Reviewer→Tester 流水线。",
         "details": "- MessageBus：Worker 间发送/接收消息，支持主题订阅（topic-based）与点对点（peer-to-peer）。\\n- 消息协议：定义 AgentMessage 结构（from/to/topic/payload/timestamp）与消息类型（request/response/broadcast/ack）。\\n- 流水线模式：支持 Coder→Reviewer→Tester 链式协作，每个 Worker 完成后通知下游。\\n- Orchestrator 监控：消息总线集成到 SessionFileManager，Orchestrator 可监控消息流。",
-        "testStrategy": "- 单元：消息发送/接收正确；主题订阅过滤；消息持久化。\\n- 集成：Coder→Reviewer→Tester 流水线端到端验证；Orchestrator 监控消息流。\\n- 性能：消息延迟 \u003c 100ms；支持 10+ Worker 并发通信。",
+        "testStrategy": "- 单元：消息发送/接收正确；主题订阅过滤；消息持久化。\\n- 集成：Coder→Reviewer→Tester 流水线端到端验证；Orchestrator 监控消息流。\\n- 性能：消息延迟 < 100ms；支持 10+ Worker 并发通信。",
         "priority": "low",
         "dependencies": [],
         "status": "pending",
@@ -1438,7 +1445,7 @@
             "dependencies": [
               5
             ],
-            "details": "在 packages/core/tests/communication 添加消息总线、订阅、流水线的单元测试；端到端测试：10 个 Worker 并发通信；编写 README 说明流水线配置与扩展；性能基准：消息延迟 \u003c 100ms",
+            "details": "在 packages/core/tests/communication 添加消息总线、订阅、流水线的单元测试；端到端测试：10 个 Worker 并发通信；编写 README 说明流水线配置与扩展；性能基准：消息延迟 < 100ms",
             "status": "pending",
             "testStrategy": "bun test 通过；性能测试满足延迟要求；并发通信稳定",
             "parentId": "undefined"
@@ -1447,10 +1454,10 @@
       },
       {
         "id": "16",
-        "title": "Exploration \u0026 Discovery 主动探索",
+        "title": "Exploration & Discovery 主动探索",
         "description": "实现 Agent 主动探索能力，发现潜在问题、提出改进建议、生成假设并验证。",
         "details": "- ExplorationMode：任务完成后 Agent 主动分析代码，发现潜在问题（并发 bug、性能瓶颈、安全漏洞）。\\n- 假设生成：根据代码模式生成假设（'这个函数可能有内存泄漏'），并设计验证实验（运行压力测试）。\\n- 改进建议：分析架构，提出优化建议（'建议使用缓存减少数据库查询'），估算收益。\\n- 发现报告：生成 Discovery Report（findings/hypotheses/experiments/recommendations）并通知用户。",
-        "testStrategy": "- 单元：假设生成合理；实验设计可执行；建议有价值。\\n- 集成：探索模式发现真实问题（引入已知 bug 验证检测）；建议被采纳后效果提升。\\n- 用户反馈：探索发现的问题 \u003e 50% 被用户认可。",
+        "testStrategy": "- 单元：假设生成合理；实验设计可执行；建议有价值。\\n- 集成：探索模式发现真实问题（引入已知 bug 验证检测）；建议被采纳后效果提升。\\n- 用户反馈：探索发现的问题 > 50% 被用户认可。",
         "priority": "low",
         "dependencies": [],
         "status": "pending",
@@ -1523,7 +1530,7 @@
             ],
             "details": "在 packages/core/tests/exploration 添加代码分析、假设生成、建议引擎的单元测试；端到端测试：引入已知 bug，验证探索检测；用户反馈机制：记录建议采纳率；编写 README 说明探索模式配置",
             "status": "pending",
-            "testStrategy": "bun test 通过；已知问题检测率 \u003e 80%；建议采纳率 \u003e 50%",
+            "testStrategy": "bun test 通过；已知问题检测率 > 80%；建议采纳率 > 50%",
             "parentId": "undefined"
           }
         ]
@@ -1531,7 +1538,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-10T04:04:16.000Z",
+      "lastModified": "2025-12-10T08:04:32.358Z",
       "taskCount": 16,
       "completedCount": 5,
       "tags": [

@@ -5,8 +5,9 @@
  */
 
 import type { Tool, ExecutionContext } from '../types';
-import type { ToolLayer, ToolCategory } from './types';
+import type { ToolResult, ToolLayer, ToolCategory } from './types';
 import { PermissionValidator } from './permission-validator';
+import { ToolExecutor } from './tool-executor';
 import type { PermissionValidationResult } from './permission-validator';
 
 /**
@@ -54,10 +55,16 @@ export class ToolNotFoundError extends Error {
  */
 export class ToolRegistry {
   /** 工具存储（按名称索引） */
-  private readonly tools = new Map<string, Tool>();
-  
+  private tools: Map<string, Tool> = new Map();
   /** 权限校验器 */
-  private readonly validator = new PermissionValidator();
+  private validator: PermissionValidator;
+  /** 工具执行器 */
+  private executor: ToolExecutor;
+
+  constructor() {
+    this.validator = new PermissionValidator();
+    this.executor = new ToolExecutor();
+  }
 
   /**
    * 注册工具
@@ -230,42 +237,30 @@ export class ToolRegistry {
   }
 
   /**
-   * 执行工具（带权限检查）
+   * 执行工具（自动权限校验）
    * 
    * @param toolName - 工具名称
-   * @param input - 工具输入
+   * @param input - 输入参数
    * @param context - 执行上下文
-   * @returns 工具执行结果
-   * @throws ToolNotFoundError 如果工具不存在
-   * @throws PermissionDeniedError 如果权限不足
+   * @param skipPermissionCheck - 是否跳过权限检查
+   * @returns 执行结果
    */
   async execute(
     toolName: string,
     input: unknown,
-    context: ExecutionContext
-  ): Promise<unknown> {
-    // 1. 查找工具
+    context: ExecutionContext,
+    skipPermissionCheck = false
+  ): Promise<ToolResult> {
     const tool = this.getByName(toolName);
     if (!tool) {
       throw new ToolNotFoundError(toolName);
     }
 
-    // 2. 权限校验
-    const validation = this.validator.validate(tool, context);
-    if (!validation.allowed) {
-      throw new PermissionDeniedError(toolName, validation.reason || '未知原因');
-    }
-
-    // 3. 执行工具
-    try {
-      return await tool.execute(input, context);
-    } catch (error) {
-      // 包装错误以提供更好的上下文
-      if (error instanceof Error) {
-        error.message = `工具 "${toolName}" 执行失败: ${error.message}`;
-      }
-      throw error;
-    }
+    // 使用ToolExecutor执行，自动集成权限校验
+    return this.executor.execute(tool, input, context, {
+      skipPermissionCheck,
+      throwOnError: false, // 返回ToolResult而不抛异常
+    });
   }
 
   /**
