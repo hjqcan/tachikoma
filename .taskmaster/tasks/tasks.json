@@ -974,12 +974,551 @@
             "parentId": "undefined"
           }
         ]
+      },
+      {
+        "id": "11",
+        "title": "智能路由与模型选择 (Routing)",
+        "description": "实现基于任务特征的智能路由器，根据任务复杂度、成本、模型能力自动选择最优 Backend。",
+        "details": "- TaskRouter：分析任务类型（分类/生成/推理）、复杂度评分、成本预算，选择最优模型（Anthropic/OpenAI/Gemini）。\\n- 路由策略：基于规则（complexity \u003e 8 → Claude Opus）、基于 LLM 预测（轻量模型判断）、基于历史性能（成功率/成本记录）。\\n- 与 Orchestrator 集成：在 executePlanPhase 前插入路由层，为每个子任务分配最优 Worker Backend。\\n- 成本跟踪：记录每个模型的 token 消耗与任务成功率，用于优化路由决策。",
+        "testStrategy": "- 单元：给定任务特征，验证路由器选择正确模型；复杂度边界条件测试。\\n- 集成：执行多类型任务（简单/复杂/代码生成），验证路由分配符合策略。\\n- 性能：路由决策延迟 \u003c 50ms；成本降低 \u003e 30%（相比固定使用最贵模型）。",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义 TaskRouter 接口与路由策略类型",
+            "description": "设计任务特征提取、路由决策、模型选择的核心类型",
+            "dependencies": [],
+            "details": "在 packages/core/src/routing/types.ts 定义 TaskRouter 接口（route(task) → BackendType）、TaskFeatures（type/complexity/estimatedTokens/costBudget）、RoutingStrategy（rule-based/llm-based/historical）、ModelCapability（支持的任务类型、速度、成本系数）；定义 BackendType 枚举（claude-opus/claude-sonnet/gpt4/gemini-pro）",
+            "status": "pending",
+            "testStrategy": "类型检查通过；接口符合设计",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现任务特征提取器",
+            "description": "分析任务 objective/constraints 提取路由所需特征",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/routing/feature-extractor.ts 实现 TaskFeatureExtractor 类；基于关键词/长度分析任务类型（classification/generation/code/reasoning）；估算复杂度分数（1-10）基于任务长度、约束数量、输出要求；估算 token 消耗（简单公式：objective 长度 * 系数）",
+            "status": "pending",
+            "testStrategy": "单元测试：各类任务提取正确特征；边界条件（空任务、超长任务）",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现基于规则的路由策略",
+            "description": "根据任务特征匹配预定义的模型选择规则",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "在 packages/core/src/routing/strategies/rule-based.ts 实现 RuleBasedRouter；定义规则集（complexity \u003e 8 → claude-opus, complexity 3-7 → claude-sonnet, complexity \u003c 3 → claude-haiku；type=code → claude-sonnet；costBudget \u003c threshold → 便宜模型）；支持规则优先级与组合",
+            "status": "pending",
+            "testStrategy": "单元测试：各规则触发正确模型；规则冲突时按优先级",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现历史性能路由策略",
+            "description": "基于历史任务执行记录选择最优模型",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "在 packages/core/src/routing/strategies/historical.ts 实现 HistoricalRouter；维护任务类型 → 模型性能映射（成功率、平均耗时、平均 token）；选择该类型任务历史表现最佳的模型；冷启动时 fallback 到规则路由；定期更新性能统计（每 N 个任务）",
+            "status": "pending",
+            "testStrategy": "单元测试：历史记录更新正确；性能排序逻辑；冷启动 fallback",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "实现成本跟踪与优化器",
+            "description": "记录每个模型的 token 消耗与成本，优化路由决策",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "在 packages/core/src/routing/cost-tracker.ts 实现 CostTracker 类；记录每个任务的模型、token 消耗、执行时间、成功/失败；计算实际成本（token * 单价）；暴露 getCostReport(timeRange) API；与 HistoricalRouter 集成，在性能相近时优选低成本模型",
+            "status": "pending",
+            "testStrategy": "单元测试：成本记录累积正确；成本报告生成；优化决策验证",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "集成到 Orchestrator 执行流程",
+            "description": "在任务分配前插入路由层，为子任务选择最优 Backend",
+            "dependencies": [
+              3,
+              4,
+              5
+            ],
+            "details": "在 packages/core/src/orchestrator/orchestrator.ts 的 executePlanPhase 方法中，调用 TaskRouter.route(subtask) 获取推荐 BackendType；在创建 Worker 时传递 backendType 配置；记录路由决策到 orchestrator/decisions.jsonl；支持配置化路由策略选择（rule-based/historical）",
+            "status": "pending",
+            "testStrategy": "集成测试：执行计划时子任务被正确路由；decisions.jsonl 记录路由选择",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "完善测试与文档",
+            "description": "补充端到端测试，编写路由策略配置文档",
+            "dependencies": [
+              6
+            ],
+            "details": "在 packages/core/tests/routing 添加特征提取、路由策略、成本跟踪的单元测试；端到端测试：执行混合复杂度任务，验证路由分配与成本节省；编写 README 说明路由策略配置与扩展方法；性能基准：路由决策延迟 \u003c 50ms",
+            "status": "pending",
+            "testStrategy": "bun test 全量通过；端到端验证成本降低 \u003e 30%；文档示例可运行",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "12",
+        "title": "学习与适应机制 (Learning \u0026 Adaptation)",
+        "description": "实现失败案例记录、根因分析、Prompt 微调与 Few-shot 示例更新，构建系统持续学习能力。",
+        "details": "- 失败案例收集：SessionFileManager 扩展 lessons/ 目录，记录失败任务的上下文、错误、根因。\\n- 根因分析：LLM 分析失败 trace，生成诊断报告（环境问题/工具误用/规划错误/模型能力不足）。\\n- Prompt 微调：基于失败案例更新 Planner/Worker 的 system prompt，增加注意事项。\\n- Few-shot 学习：成功修复的案例作为 Few-shot 示例，动态注入相似任务的上下文。\\n- A/B Testing：测试不同 Prompt 版本的成功率，保留最优版本。",
+        "testStrategy": "- 单元：失败案例记录完整；根因分析输出符合 schema；Prompt 更新生效。\\n- 集成：相同类型任务再次执行时，成功率提升 \u003e 20%；Few-shot 示例正确注入。\\n- 回归：A/B 测试框架可运行，统计数据准确。",
+        "priority": "high",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "扩展 SessionFileManager 支持 lessons 目录",
+            "description": "在会话目录新增 lessons/ 存储失败案例与修复记录",
+            "dependencies": [],
+            "details": "在 packages/core/src/orchestrator/session/ 扩展 SessionFileManager，增加 lessons/{taskType}/failures.jsonl 与 successes.jsonl；定义 LessonEntry 类型（taskId/taskType/objective/failure/rootCause/fix/timestamp）；提供 appendFailure/appendSuccess/queryLessons API",
+            "status": "pending",
+            "testStrategy": "单元测试：文件写入、查询、按 taskType 过滤",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现失败案例自动记录",
+            "description": "在任务失败时自动捕获上下文并写入 lessons",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/orchestrator/orchestrator.ts 的任务失败处理分支中，调用 SessionFileManager.appendFailure；收集任务上下文（objective/constraints/执行 trace/错误信息）；记录到 lessons/{taskType}/failures.jsonl；标记为待分析",
+            "status": "pending",
+            "testStrategy": "集成测试：模拟任务失败，验证失败记录写入",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现 LLM 根因分析器",
+            "description": "分析失败案例，生成诊断报告",
+            "dependencies": [
+              1,
+              2
+            ],
+            "details": "在 packages/core/src/learning/root-cause-analyzer.ts 实现 RootCauseAnalyzer 类；读取失败记录，构造分析 prompt（包含任务、trace、错误）；调用 LLM 生成诊断报告（category: environment/tool-misuse/planning-error/model-limitation, diagnosis: 详细分析, recommendation: 修复建议）；更新 failures.jsonl 添加 rootCause 字段",
+            "status": "pending",
+            "testStrategy": "单元测试：mock LLM 响应验证诊断解析；各类失败模式覆盖",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现 Prompt 增强器",
+            "description": "基于失败案例更新 system prompt",
+            "dependencies": [
+              3
+            ],
+            "details": "在 packages/core/src/learning/prompt-enhancer.ts 实现 PromptEnhancer 类；读取相关 taskType 的失败根因；生成注意事项（'避免...，应该...'）；更新 Planner/Worker 的 SYSTEM_PROMPT 模板（在现有 prompt 后追加 LEARNINGS 部分）；支持版本管理与回滚",
+            "status": "pending",
+            "testStrategy": "单元测试：注意事项生成正确；prompt 更新生效；版本管理",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "实现 Few-shot 示例管理器",
+            "description": "维护成功案例库，动态注入相似任务上下文",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/learning/few-shot-manager.ts 实现 FewShotManager 类；从 successes.jsonl 加载成功案例；基于任务相似度（关键词匹配/向量相似度）检索 top-K 示例；格式化为 Few-shot prompt（'类似任务：...，解决方案：...'）；在 Planner 生成计划前注入上下文",
+            "status": "pending",
+            "testStrategy": "单元测试：相似度计算；示例检索排序；prompt 格式化",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "实现 A/B Testing 框架",
+            "description": "测试不同 Prompt 版本的成功率",
+            "dependencies": [
+              4
+            ],
+            "details": "在 packages/core/src/learning/ab-testing.ts 实现 ABTestRunner 类；定义实验配置（version A/B prompt、流量分配）；执行任务时随机选择版本；记录成功率/耗时到 experiments.jsonl；提供统计分析（卡方检验）确定最优版本",
+            "status": "pending",
+            "testStrategy": "单元测试：流量分配正确；统计计算准确；最优版本选择",
+            "parentId": "undefined"
+          },
+          {
+            "id": 7,
+            "title": "集成到 Planner 执行流程",
+            "description": "在规划阶段查询 lessons 并注入学习内容",
+            "dependencies": [
+              4,
+              5
+            ],
+            "details": "在 packages/core/src/planner/planner.ts 的 plan() 方法中：1) 调用 FewShotManager 检索相似成功案例；2) 读取当前 taskType 的 prompt 增强（learnings）；3) 将 Few-shot 示例和 learnings 注入到 planning prompt；4) 生成计划后记录到 trace",
+            "status": "pending",
+            "testStrategy": "集成测试：相同类型任务重复执行，验证成功率提升 \u003e 20%",
+            "parentId": "undefined"
+          },
+          {
+            "id": 8,
+            "title": "完善测试与文档",
+            "description": "补充端到端测试，编写学习机制配置文档",
+            "dependencies": [
+              6,
+              7
+            ],
+            "details": "在 packages/core/tests/learning 添加失败记录、根因分析、Prompt 增强、Few-shot 检索的单元测试；端到端测试：执行失败任务 → 分析 → 重新执行 → 成功；A/B 测试示例；编写 README 说明学习机制启用与扩展；确保 bun test 通过",
+            "status": "pending",
+            "testStrategy": "端到端验证学习闭环；成功率提升统计；文档示例可运行",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "13",
+        "title": "Prompt Chaining 链式推理管道",
+        "description": "实现多步骤 Prompt 管道，将复杂任务分解为链式处理流程（分析→建议→实施）。",
+        "details": "- PromptChain：定义链式节点（每个节点一个独立 Prompt），前一节点输出作为后一节点输入。\\n- 链式模板：预定义常用链模式（代码审查链：静态分析→安全检查→建议；需求分析链：理解→拆解→验证）。\\n- 与 Planner 集成：复杂任务自动触发链式分解，每步生成中间结果并校验。\\n- 流程控制：支持条件分支（if-then）、循环（retry-until）、并行分叉。",
+        "testStrategy": "- 单元：链式节点配置正确；输出传递无损；分支/循环逻辑验证。\\n- 集成：代码审查链端到端测试，验证每步输出质量与最终聚合结果。\\n- 回归：对比单步 vs 链式方案的准确率与 token 消耗。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义 PromptChain 配置与节点类型",
+            "description": "设计链式 Prompt 的配置结构与执行流控制",
+            "dependencies": [],
+            "details": "在 packages/core/src/prompt-chain/types.ts 定义 PromptChainNode（id/prompt/outputSchema/nextNode）、PromptChain（nodes/startNode/flowControl）、FlowControl（condition/branch/loop/parallel）；定义链式执行上下文（ChainContext: 中间结果堆栈）",
+            "status": "pending",
+            "testStrategy": "类型检查通过；配置 schema 验证",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现链式执行引擎",
+            "description": "按序执行链式节点，传递中间结果",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/prompt-chain/executor.ts 实现 ChainExecutor 类；从 startNode 开始执行，调用 LLM 生成结果，存入 ChainContext；按 nextNode 引用执行下一节点；支持输出验证（outputSchema）与错误处理",
+            "status": "pending",
+            "testStrategy": "单元测试：线性链执行正确；中间结果传递；输出校验失败重试",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现流程控制（分支/循环/并行）",
+            "description": "支持条件分支、重试循环、并行分叉",
+            "dependencies": [
+              2
+            ],
+            "details": "扩展 ChainExecutor 支持 FlowControl；条件分支：根据前一节点输出选择 nextNode（if-then-else）；循环：retry-until 逻辑（最大重试次数）；并行：fork 多个节点同时执行并聚合结果",
+            "status": "pending",
+            "testStrategy": "单元测试：条件分支选择正确路径；循环达到条件退出；并行节点结果聚合",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "构建预定义链模板库",
+            "description": "提供常用链式模板（代码审查、需求分析等）",
+            "dependencies": [
+              3
+            ],
+            "details": "在 packages/core/src/prompt-chain/templates/ 定义链模板：code-review-chain（静态分析→安全检查→建议）、requirement-analysis-chain（理解→拆解→验证）、debug-chain（reproduce→diagnose→fix→verify）；支持模板参数化",
+            "status": "pending",
+            "testStrategy": "集成测试：加载模板并执行，验证每步输出符合预期",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "集成到 Planner 与 Orchestrator",
+            "description": "复杂任务触发链式分解",
+            "dependencies": [
+              4
+            ],
+            "details": "在 Planner 识别复杂任务（complexity \u003e 7 或特定 keywords）时，选择合适的链模板；在 Orchestrator 执行时调用 ChainExecutor；记录每步中间结果到 orchestrator/chain-trace.jsonl；支持人工介入点（HITL）",
+            "status": "pending",
+            "testStrategy": "集成测试：复杂任务自动触发链式执行；trace 记录完整",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "完善测试与文档",
+            "description": "补充端到端测试与链式模板文档",
+            "dependencies": [
+              5
+            ],
+            "details": "在 packages/core/tests/prompt-chain 添加执行引擎、流程控制、模板加载的单元测试；端到端测试：代码审查链完整执行；编写 README 说明自定义链模板与扩展方法；性能对比：单步 vs 链式的准确率与 token 消耗",
+            "status": "pending",
+            "testStrategy": "bun test 通过；对比测试显示链式方案质量提升",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "14",
+        "title": "Reasoning Techniques 推理技术系统化",
+        "description": "系统化实现 CoT、ToT、Debate 等推理模式，提升规划与决策质量。",
+        "details": "- Chain-of-Thought (CoT)：强制 Planner/Worker 输出推理步骤，记录到 reasoning 字段。\\n- Tree-of-Thought (ToT)：对复杂重构任务生成多候选方案树，LLM 评估每个分支价值，选择最优路径。\\n- Debate：多 Agent 辩论机制，不同 Worker 提出方案并互相质疑，Orchestrator 裁决最优方案。\\n- Self-Reflection：任务完成后 Agent 自我评估，生成改进建议。",
+        "testStrategy": "- 单元：CoT 输出包含推理步骤；ToT 生成树结构；Debate 记录辩论过程。\\n- 集成：复杂任务使用 ToT 方案质量提升；Debate 机制解决分歧。\\n- 回归：Self-Reflection 建议可被后续任务采纳。",
+        "priority": "medium",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "强制 CoT 输出与结构化提取",
+            "description": "更新 Planner/Worker Prompt 要求输出推理步骤",
+            "dependencies": [],
+            "details": "在 packages/core/src/planner/prompts.ts 和 worker prompts 中，添加 'reasoning' 字段要求（'在输出计划/行动前，先说明你的推理过程'）；更新输出 schema 包含 reasoning: string；在解析时提取并记录到 trace",
+            "status": "pending",
+            "testStrategy": "单元测试：LLM 输出包含 reasoning；解析正确；trace 记录",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现 Tree-of-Thought 生成器",
+            "description": "为复杂任务生成多方案树并评估选优",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/reasoning/tot-generator.ts 实现 ToTGenerator 类；对复杂任务（complexity \u003e 8）生成候选方案树（每层 3-5 个分支）；每个分支调用 LLM 评估价值（0-10 分）；使用广度优先或最佳优先搜索选择最优路径；返回最优方案",
+            "status": "pending",
+            "testStrategy": "单元测试：树生成完整；评估分数计算；最优路径选择",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现 Debate 辩论机制",
+            "description": "多 Worker 辩论并由 Orchestrator 裁决",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/reasoning/debate.ts 实现 DebateFacilitator 类；为分歧任务（如架构选择）创建 2-3 个 Worker，每个提出方案；轮流质疑对方方案（2-3 轮）；Orchestrator 基于辩论记录裁决最优方案；记录辩论过程到 orchestrator/debates.jsonl",
+            "status": "pending",
+            "testStrategy": "集成测试：辩论轮次执行正确；裁决选择合理方案",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现 Self-Reflection 自我评估",
+            "description": "任务完成后 Agent 自我反思",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/reasoning/reflection.ts 实现 SelfReflection 类；任务完成后调用 LLM 评估自己的表现（成功/失败原因、可改进点）；生成 ReflectionReport（performance/strengths/weaknesses/improvements）；存储到 sessions/{sessionId}/reflections.jsonl",
+            "status": "pending",
+            "testStrategy": "单元测试：反思报告生成完整；改进建议合理",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "集成到 Planner 与 Orchestrator",
+            "description": "在规划/执行阶段选择合适的推理模式",
+            "dependencies": [
+              2,
+              3,
+              4
+            ],
+            "details": "在 Planner 中：complexity \u003e 8 触发 ToT；在 Orchestrator 中：检测到方案分歧触发 Debate；任务完成后调用 SelfReflection；支持配置化推理策略（reasoning-mode: cot/tot/debate）",
+            "status": "pending",
+            "testStrategy": "集成测试：不同复杂度任务触发对应推理模式；反思结果记录",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "完善测试与文档",
+            "description": "补充推理模式测试与配置文档",
+            "dependencies": [
+              5
+            ],
+            "details": "在 packages/core/tests/reasoning 添加 CoT/ToT/Debate/Reflection 的单元测试；端到端测试：复杂任务使用 ToT 质量提升；编写 README 说明推理策略配置；性能对比：不同推理模式的质量与成本",
+            "status": "pending",
+            "testStrategy": "bun test 通过；ToT/Debate 提升方案质量统计",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "15",
+        "title": "Inter-Agent Communication 横向消息总线",
+        "description": "实现 Worker 间横向通信的消息总线，支持 Coder→Reviewer→Tester 流水线。",
+        "details": "- MessageBus：Worker 间发送/接收消息，支持主题订阅（topic-based）与点对点（peer-to-peer）。\\n- 消息协议：定义 AgentMessage 结构（from/to/topic/payload/timestamp）与消息类型（request/response/broadcast/ack）。\\n- 流水线模式：支持 Coder→Reviewer→Tester 链式协作，每个 Worker 完成后通知下游。\\n- Orchestrator 监控：消息总线集成到 SessionFileManager，Orchestrator 可监控消息流。",
+        "testStrategy": "- 单元：消息发送/接收正确；主题订阅过滤；消息持久化。\\n- 集成：Coder→Reviewer→Tester 流水线端到端验证；Orchestrator 监控消息流。\\n- 性能：消息延迟 \u003c 100ms；支持 10+ Worker 并发通信。",
+        "priority": "low",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义 AgentMessage 协议与消息总线接口",
+            "description": "设计 Worker 间消息的数据结构与通信接口",
+            "dependencies": [],
+            "details": "在 packages/core/src/communication/types.ts 定义 AgentMessage（from/to/topic/payload/timestamp/messageId）、MessageType（request/response/broadcast/ack）、MessageBus 接口（publish/subscribe/send/receive）；定义消息持久化存储结构",
+            "status": "pending",
+            "testStrategy": "类型检查通过；消息 schema 验证",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现基于文件的消息总线",
+            "description": "基于 SessionFileManager 实现消息持久化与传递",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/communication/file-message-bus.ts 实现 FileMessageBus 类；消息写入 sessions/{sessionId}/messages/{topic}.jsonl 或 workers/{workerId}/inbox.jsonl；Worker 轮询 inbox.jsonl 读取消息；支持消息确认（ack）与已读标记",
+            "status": "pending",
+            "testStrategy": "单元测试：消息写入/读取；inbox 轮询；ack 机制",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现主题订阅与点对点通信",
+            "description": "支持 topic-based 广播和 peer-to-peer 消息",
+            "dependencies": [
+              2
+            ],
+            "details": "扩展 FileMessageBus：subscribe(topic) 订阅主题（如 'code-review'），publish(topic, payload) 广播到所有订阅者；send(targetWorkerId, payload) 点对点发送；维护订阅表（topic → workerIds）",
+            "status": "pending",
+            "testStrategy": "单元测试：订阅/发布正确；点对点消息路由；订阅表维护",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现流水线协作模式",
+            "description": "支持 Coder→Reviewer→Tester 链式协作",
+            "dependencies": [
+              3
+            ],
+            "details": "在 packages/core/src/communication/pipeline.ts 实现 PipelineCoordinator 类；定义流水线配置（stages: [coder, reviewer, tester]）；每个 stage Worker 完成后发送消息通知下游；下游 Worker 订阅上游 topic 自动触发执行",
+            "status": "pending",
+            "testStrategy": "集成测试：Coder 完成→Reviewer 触发→Tester 触发；流水线端到端",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "集成到 Orchestrator 监控",
+            "description": "Orchestrator 监控消息总线流量与异常",
+            "dependencies": [
+              4
+            ],
+            "details": "在 Orchestrator 中订阅所有消息主题；监控消息流量（发送/接收速率）；检测异常（消息丢失、超时未响应）；记录消息流到 orchestrator/message-trace.jsonl；支持消息重放（replay）用于调试",
+            "status": "pending",
+            "testStrategy": "集成测试：Orchestrator 监控消息流；异常检测触发告警",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "完善测试与文档",
+            "description": "补充消息总线测试与流水线配置文档",
+            "dependencies": [
+              5
+            ],
+            "details": "在 packages/core/tests/communication 添加消息总线、订阅、流水线的单元测试；端到端测试：10 个 Worker 并发通信；编写 README 说明流水线配置与扩展；性能基准：消息延迟 \u003c 100ms",
+            "status": "pending",
+            "testStrategy": "bun test 通过；性能测试满足延迟要求；并发通信稳定",
+            "parentId": "undefined"
+          }
+        ]
+      },
+      {
+        "id": "16",
+        "title": "Exploration \u0026 Discovery 主动探索",
+        "description": "实现 Agent 主动探索能力，发现潜在问题、提出改进建议、生成假设并验证。",
+        "details": "- ExplorationMode：任务完成后 Agent 主动分析代码，发现潜在问题（并发 bug、性能瓶颈、安全漏洞）。\\n- 假设生成：根据代码模式生成假设（'这个函数可能有内存泄漏'），并设计验证实验（运行压力测试）。\\n- 改进建议：分析架构，提出优化建议（'建议使用缓存减少数据库查询'），估算收益。\\n- 发现报告：生成 Discovery Report（findings/hypotheses/experiments/recommendations）并通知用户。",
+        "testStrategy": "- 单元：假设生成合理；实验设计可执行；建议有价值。\\n- 集成：探索模式发现真实问题（引入已知 bug 验证检测）；建议被采纳后效果提升。\\n- 用户反馈：探索发现的问题 \u003e 50% 被用户认可。",
+        "priority": "low",
+        "dependencies": [],
+        "status": "pending",
+        "subtasks": [
+          {
+            "id": 1,
+            "title": "定义 ExplorationMode 与 Discovery 类型",
+            "description": "设计探索模式的配置与发现报告结构",
+            "dependencies": [],
+            "details": "在 packages/core/src/exploration/types.ts 定义 ExplorationConfig（triggers/scope/depth）、Discovery（type/severity/description/evidence/recommendation）、Hypothesis（statement/experiment/expectedResult）、DiscoveryReport（findings/hypotheses/experiments/recommendations）",
+            "status": "pending",
+            "testStrategy": "类型检查通过；报告 schema 验证",
+            "parentId": "undefined"
+          },
+          {
+            "id": 2,
+            "title": "实现代码分析探索器",
+            "description": "分析代码发现潜在问题",
+            "dependencies": [
+              1
+            ],
+            "details": "在 packages/core/src/exploration/code-analyzer.ts 实现 CodeExplorer 类；静态分析：检测常见反模式（未处理错误、硬编码、重复代码）；安全扫描：查找常见漏洞（SQL 注入、XSS）；性能分析：识别慢查询、N+1 查询；生成 Discovery 列表",
+            "status": "pending",
+            "testStrategy": "单元测试：已知问题代码被检测；无问题代码不误报",
+            "parentId": "undefined"
+          },
+          {
+            "id": 3,
+            "title": "实现假设生成与实验设计",
+            "description": "基于代码生成假设并设计验证实验",
+            "dependencies": [
+              2
+            ],
+            "details": "在 packages/core/src/exploration/hypothesis-generator.ts 实现 HypothesisGenerator 类；基于代码模式生成假设（如：'循环中的 await 可能导致性能问题'）；设计实验（'运行性能测试对比批量处理'）；定义预期结果；调用 LLM 辅助生成假设与实验",
+            "status": "pending",
+            "testStrategy": "单元测试：假设合理性；实验可执行性；mock LLM 响应验证",
+            "parentId": "undefined"
+          },
+          {
+            "id": 4,
+            "title": "实现改进建议生成器",
+            "description": "分析架构提出优化建议",
+            "dependencies": [
+              2
+            ],
+            "details": "在 packages/core/src/exploration/recommendation-engine.ts 实现 RecommendationEngine 类；分析代码结构与依赖关系；识别优化机会（缓存机会、批处理机会、并行化机会）；估算收益（性能提升、成本降低）；生成优先级排序的建议列表",
+            "status": "pending",
+            "testStrategy": "单元测试：建议合理性；收益估算公式；优先级排序",
+            "parentId": "undefined"
+          },
+          {
+            "id": 5,
+            "title": "实现探索触发与报告生成",
+            "description": "任务完成后触发探索并生成报告",
+            "dependencies": [
+              3,
+              4
+            ],
+            "details": "在 packages/core/src/exploration/explorer.ts 实现 ExplorationAgent 类；在 Orchestrator 任务完成后触发 explore(artifacts)；调用 CodeExplorer/HypothesisGenerator/RecommendationEngine；汇总生成 DiscoveryReport；写入 sessions/{sessionId}/discoveries.json；通知用户审阅",
+            "status": "pending",
+            "testStrategy": "集成测试：任务完成触发探索；报告生成完整；用户通知发送",
+            "parentId": "undefined"
+          },
+          {
+            "id": 6,
+            "title": "完善测试与文档",
+            "description": "补充探索模式测试与配置文档",
+            "dependencies": [
+              5
+            ],
+            "details": "在 packages/core/tests/exploration 添加代码分析、假设生成、建议引擎的单元测试；端到端测试：引入已知 bug，验证探索检测；用户反馈机制：记录建议采纳率；编写 README 说明探索模式配置",
+            "status": "pending",
+            "testStrategy": "bun test 通过；已知问题检测率 \u003e 80%；建议采纳率 \u003e 50%",
+            "parentId": "undefined"
+          }
+        ]
       }
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-08T08:26:51.679Z",
-      "taskCount": 10,
+      "lastModified": "2025-12-10T04:04:16.000Z",
+      "taskCount": 16,
       "completedCount": 5,
       "tags": [
         "master"
