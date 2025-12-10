@@ -25,6 +25,18 @@ export type {
   ApplyPatchOutput,
   ReplaceBetweenMarkersInput,
   ReplaceBetweenMarkersOutput,
+  // 扩展工具类型
+  RunTestsInput,
+  RunTestsOutput,
+  TypeCheckInput,
+  TypeCheckOutput,
+  PackageInfoInput,
+  PackageInfoOutput,
+  PackageManager,
+  EnvGetInput,
+  EnvGetOutput,
+  ScriptRunInput,
+  ScriptRunOutput,
 } from './types';
 
 // 核心工具导出
@@ -36,6 +48,20 @@ export {
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  // 扩展工具
+  runTestsTool,
+  typeCheckTool,
+  packageInfoTool,
+  envGetTool,
+  // 安全工具函数
+  DEFAULT_ENV_WHITELIST,
+  isEnvAllowed,
+  filterEnvRequests,
+  isDangerousScript,
+  DANGEROUS_SCRIPT_PATTERNS,
+  truncateWithNotice,
+  DEFAULT_MAX_OUTPUT,
+  detectPackageManager,
 } from './core';
 
 // 工具注册表
@@ -47,6 +73,10 @@ import {
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  runTestsTool,
+  typeCheckTool,
+  packageInfoTool,
+  envGetTool,
 } from './core';
 
 /**
@@ -60,6 +90,11 @@ export const coreTools: Tool[] = [
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  // 扩展工具
+  runTestsTool,
+  typeCheckTool,
+  packageInfoTool,
+  envGetTool,
 ];
 
 /**

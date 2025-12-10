@@ -223,6 +223,173 @@ export interface ReplaceBetweenMarkersOutput {
   bytesDelta: number;
 }
 
+// ============================================================================
+// run_tests 工具类型
+// ============================================================================
+
+/**
+ * 测试运行输入
+ */
+export interface RunTestsInput {
+  /** 测试文件路径或模式 (bun 模式必填；npm 模式可选，仅用于日志) */
+  pattern?: string;
+  /** 工作目录 (相对于上下文 workDir) */
+  cwd?: string;
+  /** 超时时间 (毫秒，默认 60000) */
+  timeout?: number;
+  /** 是否使用 bun test (默认 true，否则使用 npm test) */
+  useBun?: boolean;
+  /** 额外参数 (npm 模式下用于实际筛选，如 --testPathPattern) */
+  extraArgs?: string[];
+}
+
+/**
+ * 测试运行输出
+ */
+export interface RunTestsOutput {
+  /** 标准输出 */
+  stdout: string;
+  /** 标准错误 */
+  stderr: string;
+  /** 退出码 */
+  exitCode: number;
+  /** 输出是否被截断 */
+  truncated: boolean;
+  /** 是否超时 */
+  timedOut: boolean;
+}
+
+// ============================================================================
+// type_check 工具类型
+// ============================================================================
+
+/**
+ * 类型检查输入
+ */
+export interface TypeCheckInput {
+  /** 工作目录 (相对于上下文 workDir) */
+  cwd?: string;
+  /** tsconfig 项目路径 (--project 参数) */
+  project?: string;
+  /** 超时时间 (毫秒，默认 120000) */
+  timeout?: number;
+}
+
+/**
+ * 类型检查输出
+ */
+export interface TypeCheckOutput {
+  /** 是否通过类型检查 */
+  passed: boolean;
+  /** 错误数量 */
+  errorCount: number;
+  /** 诊断输出 */
+  diagnostics: string;
+  /** 输出是否被截断 */
+  truncated: boolean;
+}
+
+// ============================================================================
+// package_info 工具类型
+// ============================================================================
+
+/**
+ * 包信息输入
+ */
+export interface PackageInfoInput {
+  /** package.json 路径 (相对于上下文 workDir，默认 '.') */
+  path?: string;
+  /** 是否解析锁文件获取实际版本 */
+  resolveLockfile?: boolean;
+}
+
+/** 检测到的包管理器类型 */
+export type PackageManager = 'bun' | 'npm' | 'yarn' | 'pnpm' | 'unknown';
+
+/**
+ * 包信息输出
+ */
+export interface PackageInfoOutput {
+  /** 包名 */
+  name: string;
+  /** 版本 */
+  version: string;
+  /** 生产依赖 */
+  dependencies: Record<string, string>;
+  /** 开发依赖 */
+  devDependencies: Record<string, string>;
+  /** Peer 依赖 */
+  peerDependencies: Record<string, string>;
+  /** 锁文件解析的实际版本 (key: packageName, value: resolvedVersion) */
+  resolvedVersions?: Record<string, string>;
+  /** 检测到的包管理器 */
+  packageManager: PackageManager;
+}
+
+// ============================================================================
+// env_get 工具类型
+// ============================================================================
+
+/**
+ * 环境变量读取输入
+ */
+export interface EnvGetInput {
+  /** 要读取的环境变量名称列表 */
+  names: string[];
+}
+
+/**
+ * 环境变量读取输出
+ */
+export interface EnvGetOutput {
+  /** 成功读取的变量 */
+  values: Record<string, string>;
+  /** 被拒绝的变量 (不在白名单) */
+  denied: string[];
+  /** 不存在的变量 */
+  missing: string[];
+}
+
+// ============================================================================
+// script_run 兜底工具类型 (低优先级)
+// ============================================================================
+
+/**
+ * 脚本运行输入
+ */
+export interface ScriptRunInput {
+  /** 脚本名称 (package.json scripts 中的 key) */
+  script: string;
+  /** 工作目录 */
+  cwd?: string;
+  /** 超时时间 (毫秒，默认 60000) */
+  timeout?: number;
+  /** 是否使用 bun (默认 true，否则使用 npm) */
+  useBun?: boolean;
+  /** 额外参数 */
+  args?: string[];
+}
+
+/**
+ * 脚本运行输出
+ */
+export interface ScriptRunOutput {
+  /** 标准输出 */
+  stdout: string;
+  /** 标准错误 */
+  stderr: string;
+  /** 退出码 */
+  exitCode: number;
+  /** 输出是否被截断 */
+  truncated: boolean;
+  /** 是否超时 */
+  timedOut: boolean;
+}
+
+// ============================================================================
+// 工具函数类型
+// ============================================================================
+
 /**
  * 创建工具函数类型
  */

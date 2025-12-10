@@ -11,3 +11,21 @@ export { shellRunTool } from './shell-run';
 export { codeSearchTool } from './code-search';
 export { applyPatchTool } from './file-patch';
 export { replaceBetweenMarkersTool } from './file-replace-markers';
+
+// 扩展工具
+export { runTestsTool } from './run-tests';
+export { typeCheckTool } from './type-check';
+export { packageInfoTool } from './package-info';
+export { envGetTool } from './env-get';
+
+// 安全工具函数
+export {
+  DEFAULT_ENV_WHITELIST,
+  isEnvAllowed,
+  filterEnvRequests,
+  isDangerousScript,
+  DANGEROUS_SCRIPT_PATTERNS,
+  truncateWithNotice,
+  DEFAULT_MAX_OUTPUT,
+  detectPackageManager,
+} from './security';
