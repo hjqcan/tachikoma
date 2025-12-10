@@ -79,6 +79,11 @@ import {
   envGetTool,
 } from './core';
 
+export { knowledgeRetrievalTool } from './rag';
+export { knowledgeUpsertTool } from './rag/upsert';
+import { knowledgeRetrievalTool } from './rag';
+import { knowledgeUpsertTool } from './rag/upsert';
+
 /**
  * MVP 核心工具集
  */
@@ -95,6 +100,9 @@ export const coreTools: Tool[] = [
   typeCheckTool,
   packageInfoTool,
   envGetTool,
+  // RAG 工具
+  knowledgeRetrievalTool,
+  knowledgeUpsertTool,
 ];
 
 /**
