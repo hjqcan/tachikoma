@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import type { Tool, ExecutionContext } from '../../types';
 import type { RunTestsInput, RunTestsOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { truncateWithNotice, DEFAULT_MAX_OUTPUT } from './security';
 
@@ -20,7 +21,8 @@ async function executeTestCommand(
   command: string,
   args: string[],
   cwd: string,
-  timeout: number
+  timeout: number,
+  context: ExecutionContext
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -34,9 +36,11 @@ async function executeTestCommand(
       cwd,
       detached: true,
       env: {
-        ...process.env,
-        FORCE_COLOR: '0', // 禁用颜色输出以便解析
-        CI: 'true', // 告诉测试框架在 CI 模式运行
+        ...context.env, // 使用context.env而不是process.env
+        PATH: context.env.PATH || process.env.PATH, // 确保PATH存在
+        HOME: context.env.HOME || process.env.HOME, // 确保HOME存在
+        FORCE_COLOR: '0',
+        CI: 'true',
       },
     });
 
@@ -101,6 +105,7 @@ async function executeTestCommand(
  */
 export const runTestsTool: Tool = {
   name: 'run_tests',
+  title: 'Run Tests',
   description: `运行测试。
 - bun 模式：pattern 必填，作为文件过滤参数
 - npm 模式：pattern 可选（仅用于日志），实际筛选通过 extraArgs 传递（如 --testPathPattern）
@@ -153,6 +158,17 @@ export const runTestsTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.9,
+    idempotent: false,
+    estimatedDuration: 60000,
+  },
+
+  permissions: ['shell:exec', 'process:spawn'],
+  layer: ToolLayer.Sandbox,
+  category: ToolCategory.Shell,
 
   async execute(
     input: unknown,
@@ -207,7 +223,7 @@ export const runTestsTool: Tool = {
       }
 
       // 执行测试
-      const result = await executeTestCommand(command, args, workingDir, timeout);
+      const result = await executeTestCommand(command, args, workingDir, timeout, context);
 
       // 截断输出
       const { content: stdout, truncated: stdoutTruncated } = truncateWithNotice(

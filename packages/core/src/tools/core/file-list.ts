@@ -8,6 +8,7 @@ import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { FileListInput, FileListOutput, FileInfo, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 
 /**
@@ -72,6 +73,7 @@ async function readDirRecursive(
  */
 export const fileListTool: Tool = {
   name: 'file_list',
+  title: 'List Files',
   description: `列出指定目录的内容。
 - 支持递归列出子目录
 - 支持文件名模式过滤（* 和 ? 通配符）
@@ -120,6 +122,17 @@ export const fileListTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.7,
+    idempotent: true,
+    cacheable: true,
+  },
+
+  permissions: ['fs:read'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<FileListOutput>> {
     const { path: dirPath = '.', recursive = false, pattern } = (input || {}) as FileListInput;

@@ -6,6 +6,7 @@
 
 import type { Tool, ExecutionContext } from '../../types';
 import type { EnvGetInput, EnvGetOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { filterEnvRequests, DEFAULT_ENV_WHITELIST } from './security';
 
 /**
@@ -13,6 +14,7 @@ import { filterEnvRequests, DEFAULT_ENV_WHITELIST } from './security';
  */
 export const envGetTool: Tool = {
   name: 'env_get',
+  title: 'Get Environment Variables',
   description: `读取环境变量（仅限白名单变量）。
 - 只能读取预定义白名单中的变量（如 NODE_ENV, PATH, HOME 等）
 - 敏感变量（如 API_KEY）会被拒绝
@@ -55,6 +57,17 @@ export const envGetTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.5,
+    idempotent: true,
+    cacheable: true,
+  },
+
+  permissions: ['env:read'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(
     input: unknown,

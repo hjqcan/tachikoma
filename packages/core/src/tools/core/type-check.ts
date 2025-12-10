@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import type { Tool, ExecutionContext } from '../../types';
 import type { TypeCheckInput, TypeCheckOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { truncateWithNotice, DEFAULT_MAX_OUTPUT } from './security';
 
@@ -36,7 +37,8 @@ function parseErrorCount(output: string): number {
 async function executeTscCommand(
   args: string[],
   cwd: string,
-  timeout: number
+  timeout: number,
+  context: ExecutionContext
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -53,7 +55,9 @@ async function executeTscCommand(
       cwd,
       detached: true,
       env: {
-        ...process.env,
+        ...context.env, // 使用context.env而不是process.env
+        PATH: context.env.PATH || process.env.PATH,
+        HOME: context.env.HOME || process.env.HOME,
         FORCE_COLOR: '0',
       },
     });
@@ -121,6 +125,7 @@ async function executeTscCommand(
  */
 export const typeCheckTool: Tool = {
   name: 'type_check',
+  title: 'TypeScript Type Check',
   description: `运行 TypeScript 类型检查 (tsc --noEmit)。
 - 不生成输出文件，仅检查类型
 - 支持 --project 参数指定 tsconfig
@@ -161,6 +166,18 @@ export const typeCheckTool: Tool = {
     },
   },
 
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.9,
+    idempotent: true,
+    cacheable: true,
+    estimatedDuration: 120000,
+  },
+
+  permissions: ['shell:exec', 'process:spawn'],
+  layer: ToolLayer.Sandbox,
+  category: ToolCategory.Shell,
+
   async execute(
     input: unknown,
     context: ExecutionContext
@@ -191,7 +208,7 @@ export const typeCheckTool: Tool = {
       }
 
       // 执行类型检查
-      const result = await executeTscCommand(args, workingDir, timeout);
+      const result = await executeTscCommand(args, workingDir, timeout, context);
 
       // 合并输出
       const fullOutput = result.stdout + result.stderr;

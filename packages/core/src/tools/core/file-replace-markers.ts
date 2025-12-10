@@ -8,6 +8,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 
 /**
@@ -93,6 +94,7 @@ function findMarkerPairs(
  */
 export const replaceBetweenMarkersTool: Tool = {
   name: 'replace_between_markers',
+  title: 'Replace Between Markers',
   description: `替换文件中两个标记之间的内容。适用于有清晰边界的代码块修改。
 
 使用方法：
@@ -170,6 +172,16 @@ export const replaceBetweenMarkersTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.8,
+    idempotent: false,
+  },
+
+  permissions: ['fs:read', 'fs:write'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(
     input: unknown,

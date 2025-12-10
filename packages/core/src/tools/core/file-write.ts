@@ -8,6 +8,7 @@ import { writeFile, appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { FileWriteInput, FileWriteOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 
 /**
@@ -15,6 +16,7 @@ import { validatePath, ensureWorkDir } from './utils';
  */
 export const fileWriteTool: Tool = {
   name: 'file_write',
+  title: 'Write File',
   description: `写入内容到指定文件。
 - 如果文件不存在则创建
 - 父目录会自动创建
@@ -52,6 +54,16 @@ export const fileWriteTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.8,
+    idempotent: false,
+  },
+
+  permissions: ['fs:write'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<FileWriteOutput>> {
     // 检测格式错误的输入（LLM 生成的 JSON 解析失败时可能出现 raw 字段）
@@ -97,8 +109,18 @@ export const fileWriteTool: Tool = {
       const parentDir = dirname(absolutePath);
       await mkdir(parentDir, { recursive: true });
 
-      // 写入文件
+      // 应用资源限制检查
+      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024; // 50MB默认
       const buffer = Buffer.from(content, 'utf-8');
+      
+      if (buffer.length > maxFileSize) {
+        return {
+          success: false,
+          error: `Content size (${buffer.length} bytes) exceeds resource limit (${maxFileSize} bytes)`,
+        };
+      }
+
+      // 写入文件
 
       if (append) {
         await appendFile(absolutePath, buffer);

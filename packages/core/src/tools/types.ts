@@ -126,10 +126,17 @@ export enum ToolCategory {
 export interface ToolResult<T = unknown> {
   /** 是否成功 */
   success: boolean;
-  /** 结果数据 */
+  /** 成功时的数据 */
   data?: T;
-  /** 错误信息 */
+  /** 失败时的错误信息 */
   error?: string;
+  /** 元数据（执行指标等，不污染data） */
+  meta?: {
+    /** 执行时间（毫秒） */
+    executionTime?: number;
+    /** 其他元数据 */
+    [key: string]: unknown;
+  };
 }
 
 /**

@@ -8,6 +8,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 
 /**
@@ -113,6 +114,7 @@ function applyPatch(
  */
 export const applyPatchTool: Tool = {
   name: 'apply_patch',
+  title: 'Apply Patch',
   description: `对文件应用增量补丁。使用搜索/替换模式，无需输出完整文件内容。
 
 使用方法：
@@ -188,6 +190,16 @@ export const applyPatchTool: Tool = {
     },
   },
 
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.8,
+    idempotent: false,
+  },
+
+  permissions: ['fs:read', 'fs:write'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
+
   async execute(
     input: unknown,
     context: ExecutionContext
@@ -229,6 +241,15 @@ export const applyPatchTool: Tool = {
       if (backup) {
         const backupPath = absolutePath + '.bak';
         await writeFile(backupPath, originalContent);
+      }
+
+      // 应用资源限制检查
+      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024;
+      if (originalBytes > maxFileSize) {
+        return {
+          success: false,
+          error: `File size (${originalBytes} bytes) exceeds resource limit (${maxFileSize} bytes)`,
+        };
       }
 
       // 应用每个补丁

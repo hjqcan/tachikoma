@@ -7,6 +7,7 @@
 import { spawn } from 'node:child_process';
 import type { Tool, ExecutionContext } from '../../types';
 import type { ShellRunInput, ShellRunOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import {
   validatePath,
   ensureWorkDir,
@@ -48,12 +49,38 @@ function isDangerousCommand(command: string): boolean {
 }
 
 /**
+ * 合并环境变量
+ * 使用context.env覆盖process.env，实现多租户隔离
+ */
+function mergeEnv(context: ExecutionContext): Record<string, string> {
+  // 基础环境变量白名单
+  const envWhitelist = ['PATH', 'HOME', 'USER', 'SHELL', 'LANG'];
+  
+  const baseEnv: Record<string, string> = {};
+  for (const key of envWhitelist) {
+    const value = process.env[key];
+    if (value) {
+      baseEnv[key] = value;
+    }
+  }
+  
+  // context.env优先级更高，并添加安全限制
+  return {
+    ...baseEnv,
+    ...context.env,
+    FORCE_COLOR: '0',
+    TERM: 'dumb',
+  };
+}
+
+/**
  * 执行命令
  */
 async function executeCommand(
   command: string,
   cwd: string,
-  timeout: number
+  timeout: number,
+  context: ExecutionContext
 ): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut?: boolean }> {
   return new Promise((resolve) => {
     let timedOut = false;
@@ -62,13 +89,7 @@ async function executeCommand(
     const child = spawn('sh', ['-c', command], {
       cwd,
       detached: true, // 创建新进程组
-      env: {
-        ...process.env,
-        // 安全限制
-        PATH: process.env.PATH,
-        HOME: process.env.HOME,
-        TERM: 'dumb',
-      },
+      env: mergeEnv(context),
     });
 
     let stdout = '';
@@ -136,6 +157,7 @@ async function executeCommand(
  */
 export const shellRunTool: Tool = {
   name: 'shell_run',
+  title: 'Run Shell Command',
   description: `在工作目录执行 shell 命令。
 - 支持超时控制（默认 30 秒）
 - 危险命令会被拒绝执行
@@ -182,6 +204,17 @@ export const shellRunTool: Tool = {
     },
   },
 
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.6,
+    idempotent: false,
+    estimatedDuration: 30000,
+  },
+
+  permissions: ['shell:exec', 'process:spawn'],
+  layer: ToolLayer.Sandbox,
+  category: ToolCategory.Shell,
+
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<ExtendedShellRunOutput>> {
     const {
       command,
@@ -212,7 +245,7 @@ export const shellRunTool: Tool = {
       const workingDir = cwd ? validatePath(cwd, context.workDir) : context.workDir;
 
       // 执行命令
-      const result = await executeCommand(command, workingDir, timeout);
+      const result = await executeCommand(command, workingDir, timeout, context);
 
       // 截断输出
       const stdoutTruncated = result.stdout.length > maxOutput;

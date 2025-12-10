@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { PackageInfoInput, PackageInfoOutput, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { detectPackageManager } from './security';
 import { validatePath, ensureWorkDir } from './utils';
 
@@ -57,6 +58,7 @@ async function parseBunLock(
  */
 export const packageInfoTool: Tool = {
   name: 'package_info',
+  title: 'Get Package Info',
   description: `读取项目 package.json 信息。
 - 返回包名、版本、依赖列表
 - 自动检测包管理器 (bun/npm/yarn/pnpm)
@@ -110,6 +112,17 @@ export const packageInfoTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.7,
+    idempotent: true,
+    cacheable: true,
+  },
+
+  permissions: ['fs:read'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(
     input: unknown,

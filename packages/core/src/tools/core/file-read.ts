@@ -95,12 +95,24 @@ export const fileReadTool: Tool = {
 
       const absolutePath = validatePath(filePath, context.workDir);
 
+      // 应用资源限制（使用默认值如果未提供）
+      const maxFileSize = context.resourceLimits?.maxFileSize || 50 * 1024 * 1024; // 50MB
+      const maxOutputSize = context.resourceLimits?.maxOutputSize || maxOutput;
+
       // 获取文件信息
       const fileStat = await stat(absolutePath);
       if (fileStat.isDirectory()) {
         return {
           success: false,
           error: `Path is a directory: ${filePath}`,
+        };
+      }
+
+      // 检查文件大小限制（早期拒绝）
+      if (fileStat.size > maxFileSize) {
+        return {
+          success: false,
+          error: `File size (${fileStat.size} bytes) exceeds resource limit (${maxFileSize} bytes)`,
         };
       }
 
@@ -126,10 +138,10 @@ export const fileReadTool: Tool = {
         content = buffer.toString('utf-8');
       }
 
-      // 截断处理
-      const truncated = content.length > maxOutput;
+      // 使用资源限制的截断处理
+      const truncated = content.length > maxOutputSize;
       if (truncated) {
-        content = truncateOutput(content, maxOutput);
+        content = content.substring(0, maxOutputSize);
       }
 
       return {

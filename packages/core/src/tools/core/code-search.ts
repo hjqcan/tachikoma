@@ -8,6 +8,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { CodeSearchInput, CodeSearchOutput, SearchMatch, ToolResult } from '../types';
+import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 
 /** 搜索匹配内容最大长度 */
@@ -104,6 +105,7 @@ async function searchFile(
  */
 export const codeSearchTool: Tool = {
   name: 'code_search',
+  title: 'Code Search',
   description: `在代码文件中搜索指定模式。
 - 支持正则表达式和普通字符串匹配
 - 支持文件类型过滤
@@ -168,6 +170,17 @@ export const codeSearchTool: Tool = {
       error: { type: 'string' },
     },
   },
+
+  annotations: {
+    audience: ['assistant'],
+    priority: 0.8,
+    idempotent: true,
+    cacheable: true,
+  },
+
+  permissions: ['fs:read'],
+  layer: ToolLayer.Atomic,
+  category: ToolCategory.FileSystem,
 
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<CodeSearchOutput>> {
     const {
