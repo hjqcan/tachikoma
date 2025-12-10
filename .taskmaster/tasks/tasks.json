@@ -611,12 +611,13 @@
               6
             ],
             "details": "完成最终整合：\n1. 更新导出 (packages/core/src/index.ts):\n   - 导出所有类型: Tool, ToolAnnotations, ToolPermission, ToolLayer, ToolCategory, ToolResult\n   - 导出工具类: ToolRegistry, PermissionValidator, ProgressiveDisclosure, SandboxToolWrapper, ToolChain\n   - 导出所有工具实例: coreTools\n2. 编写文档:\n   - packages/core/README.md: 工具系统使用指南\n   - docs/tools-guide.md: 详细的工具开发指南\n   - JSDoc 内联文档\n3. 集成验证:\n   - 与 Worker 集成测试\n   - 端到端测试场景\n   - 性能基准测试: 工具注册<1ms, 权限校验<0.5ms, 执行开销<100ms, 渐进披露Level1~50tokens/tool",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "导出完整；文档清晰；Worker集成测试通过；性能达标；测试覆盖率>85%",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-10T08:59:46.502Z"
           }
         ],
-        "updatedAt": "2025-12-10T08:04:32.356Z"
+        "updatedAt": "2025-12-10T08:59:46.502Z"
       },
       {
         "id": "7",
@@ -1538,7 +1539,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-10T08:04:32.358Z",
+      "lastModified": "2025-12-10T08:59:46.504Z",
       "taskCount": 16,
       "completedCount": 5,
       "tags": [
