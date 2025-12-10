@@ -499,100 +499,114 @@
           {
             "id": 1,
             "title": "定义工具抽象与统一 Schema 规范",
-            "description": "设计 Tool 接口、输入输出 JSONSchema 规范与权限模型",
+            "description": "建立完全兼容MCP的工具类型系统",
             "dependencies": [],
-            "details": "在 packages/core/src/tools/types.ts 定义 Tool 接口（name/description/inputSchema/outputSchema/permissions/execute）、Permission 枚举（fs/network/shell）、ToolResult 类型；设计统一的 JSONSchema 格式规范，确保与 MCP 兼容",
+            "details": "在 packages/core/src/tools/types.ts 扩展工具类型定义，完全兼容 MCP 标准：\n- Tool 接口：name, title, description, inputSchema, outputSchema, annotations (MCP标准)\n- Tachikoma 扩展：permissions (细粒度权限), layer (分层标记), category (工具分类)\n- ToolAnnotations: audience, priority, idempotent, estimatedDuration, cacheable\n- ToolPermission 枚举: FileSystemRead/Write/Delete, NetworkRead/Write, ShellExec, ProcessSpawn, EnvRead\n- ToolLayer 枚举: Atomic (layer1), Sandbox (layer2), CodeExecution (layer3)\n- ToolCategory 枚举: FileSystem, Shell, Browser, Search, Communication, DataProcessing, Agent\n- 扩展 ExecutionContext: 添加 permissions 和 resourceLimits 字段",
             "status": "pending",
-            "testStrategy": "类型检查通过；Schema 格式符合 JSON Schema Draft 7",
+            "testStrategy": "类型检查通过；Tool接口完全兼容MCP规范；ExecutionContext支持权限和资源限制；与现有代码接口对齐",
             "parentId": "undefined"
           },
           {
             "id": 2,
-            "title": "实现文件系统工具集",
-            "description": "开发 read_file、write_file、glob_search、grep_search 工具",
+            "title": "构建权限校验与工具注册表",
+            "description": "实现统一的权限校验机制和高级工具注册表",
             "dependencies": [
               1
             ],
-            "details": "在 packages/core/src/tools/fs/ 目录实现四个工具：read_file（读取文件内容，支持行范围）、write_file（创建/覆盖/追加文件）、glob_search（模式匹配搜索）、grep_search（内容搜索）；每个工具定义 inputSchema/outputSchema，声明 fs 权限",
+            "details": "创建两个核心组件：\n1. PermissionValidator (packages/core/src/tools/permission-validator.ts):\n   - validate(): 检查工具权限是否符合上下文允许列表\n   - requiresSandbox(): 判断高风险工具是否强制沙盒\n   - 资源限制验证\n2. ToolRegistry (packages/core/src/tools/registry.ts):\n   - 工具注册/注销\n   - 多维度查询: getByName/Layer/Category/Permissions\n   - 渐进披露: getDefinitions() 支持按层级、Token限制返回\n   - execute(): 带权限检查的执行接口\n性能要求：查询<1ms，校验<0.5ms",
             "status": "pending",
-            "testStrategy": "单元测试：成功读写、文件不存在、权限不足路径",
+            "testStrategy": "单元测试：权限校验逻辑、多维度查询、权限拦截；性能测试达标；测试覆盖率>90%",
             "parentId": "undefined"
           },
           {
             "id": 3,
-            "title": "实现命令执行工具",
-            "description": "开发 execute_shell 工具，在沙盒中执行命令",
+            "title": "重构现有 Layer 1 工具",
+            "description": "为所有11个MVP工具添加权限声明和MCP字段",
             "dependencies": [
-              1
+              1,
+              2
             ],
-            "details": "在 packages/core/src/tools/shell/execute.ts 实现 execute_shell 工具；接收命令字符串和工作目录，通过沙盒 runCommand 执行；捕获 stdout/stderr/exitCode/duration；声明 shell 权限；支持超时控制",
+            "details": "对现有11个工具进行 Breaking Change 重构：\n1. file-read/write/list: 添加 FileSystemRead/Write 权限, idempotent, cacheable annotations\n2. shell-run: 添加 ShellExec+ProcessSpawn 权限, estimatedDuration annotation\n3. code-search: 添加 FileSystemRead 权限, cacheable annotation\n4. file-patch/replace-markers: 添加 FileSystemWrite 权限\n5. run-tests: 添加 ShellExec 权限, estimatedDuration annotation\n6. type-check: 添加 ShellExec 权限, cacheable annotation\n7. package-info: 添加 FileSystemRead 权限, cacheable annotation\n8. env-get: 添加 EnvRead 权限, idempotent annotation\n统一添加: title, layer (Atomic), category, 修复所有调用代码",
             "status": "pending",
-            "testStrategy": "单元测试：成功执行、非零退出码、超时终止、禁止命令",
+            "testStrategy": "所有工具符合新接口；权限声明准确；annotations合理；所有测试通过；性能无回归",
             "parentId": "undefined"
           },
           {
             "id": 4,
-            "title": "实现浏览器工具（可选）",
-            "description": "开发 browser_navigate 工具，支持网页交互",
+            "title": "实现 Layer 2 沙盒工具封装",
+            "description": "将Layer 1工具包装为沙盒内执行版本",
             "dependencies": [
-              1
+              1,
+              3
             ],
-            "details": "在 packages/core/src/tools/browser/ 实现 browser_navigate 工具；集成 Puppeteer/Playwright（可选依赖）；支持导航、截图、元素点击、表单填写；声明 network 权限；标记为可选功能，缺失依赖时优雅降级",
+            "details": "实现 SandboxToolWrapper (packages/core/src/tools/sandbox-wrapper.ts):\n- wrap(): 将工具包装为沙盒版本 (name前缀sandbox_, layer改为Sandbox)\n- generateExecutionScript(): 生成沙盒执行脚本\n- execute(): 序列化input → 沙盒执行 → 解析结果\n- 应用资源限制 (timeout, maxFileSize, maxOutputSize)\n- 捕获并包装 stdout/stderr/exitCode\n性能要求：沙盒开销<20%",
             "status": "pending",
-            "testStrategy": "集成测试：mock 浏览器验证操作序列；依赖缺失时返回 unsupported",
+            "testStrategy": "集成测试：沙盒隔离验证、资源限制生效、stdout/stderr捕获；错误处理完善；性能测试达标",
             "parentId": "undefined"
           },
           {
             "id": 5,
-            "title": "构建工具注册表与权限校验",
-            "description": "实现工具注册、查询与权限拦截",
+            "title": "实现工具链串联执行",
+            "description": "支持多工具顺序执行与输出传递",
             "dependencies": [
-              2,
-              3
+              2
             ],
-            "details": "在 packages/core/src/tools/registry.ts 实现 ToolRegistry 类；支持注册工具定义、按名称查询、列出所有工具；execute 前校验 ExecutionContext 中的权限与工具声明匹配；拒绝未授权调用并返回标准错误",
+            "details": "实现 ToolChain (packages/core/src/tools/chain.ts):\n- ToolChainStep 接口: toolName, input, inputMapping (支持从前一步输出映射)\n- execute(): 顺序执行工具链\n- applyInputMapping(): 应用输入映射逻辑\n- 失败处理: 返回部分完成结果\n- Metrics 收集: 每步执行时间、Token消耗\n- ToolChainResult: success, completedSteps, results, error",
             "status": "pending",
-            "testStrategy": "单元测试：注册/查询、重复注册、权限拒绝、成功执行",
+            "testStrategy": "单元测试：串联执行、输出映射、中间失败处理、Metrics收集；覆盖率>85%",
             "parentId": "undefined"
           },
           {
             "id": 6,
-            "title": "实现 Layer2 沙盒工具封装",
-            "description": "将原子工具包装为沙盒内执行版本",
+            "title": "实现工具渐进披露机制",
+            "description": "按需加载工具定义，减少Token消耗",
             "dependencies": [
-              3,
-              5
+              2
             ],
-            "details": "在 packages/core/src/tools/sandbox-wrapper.ts 实现 SandboxToolWrapper；将 Layer1 工具的执行委托给沙盒；确保工作目录隔离、环境变量注入、资源限制生效；包装 stdout/stderr 为标准 ToolResult",
+            "details": "实现 ProgressiveDisclosure (packages/core/src/tools/progressive-disclosure.ts):\n- getMetadata(): Level 1 仅元数据 (~50 tokens/tool): name, title, category, layer\n- getBasicDefinition(): Level 2 基础定义 (~200 tokens/tool): 添加 description, 简化的 inputSchema, permissions\n- getFullDefinition(): Level 3 完整定义\n- simplifySchema(): 移除 examples/default 等非必需字段\n- recommend(): 智能推荐相关工具 (基于关键词、类别匹配)\nToken消耗目标：相比直接加载减少80%+",
             "status": "pending",
-            "testStrategy": "集成测试：沙盒内执行命令、文件操作，验证隔离与资源限制",
+            "testStrategy": "Token消耗测试：Level1<Level2<Level3，验证80%减少目标；推荐算法准确率>80%；性能基准通过",
             "parentId": "undefined"
           },
           {
             "id": 7,
-            "title": "实现工具链串联执行",
-            "description": "支持多工具顺序执行与输出传递",
+            "title": "补充缺失的核心工具",
+            "description": "根据PRD补全Layer 1工具集",
             "dependencies": [
-              5,
-              6
+              1,
+              2
             ],
-            "details": "在 packages/core/src/tools/chain.ts 实现 ToolChain 类；接收工具调用序列，前一个工具输出作为下一个输入（通过 context 或参数映射）；收集每步 metrics；任一工具失败时中断并返回部分结果",
+            "details": "实现PRD中列出的新工具：\nP1工具（必须实现）：\n1. web_search: 网络搜索工具 (NetworkRead权限)\n2. spawn_subagent: 创建子智能体 (Agent权限，与Task4 Orchestrator集成)\n3. submit_result: 提交结果包装器\nP2工具（先实现stub占位，标记为紧接着要实现）：\n4. browser_navigate: 浏览器导航 (NetworkRead权限)\n5. browser_click: 元素点击 (NetworkRead权限)\n6. browser_input: 文本输入 (NetworkRead权限)\n7. browser_screenshot: 截图 (NetworkRead + FileSystemWrite权限)\n注意：浏览器工具需要 Puppeteer/Playwright 依赖，标记清楚后续必须实现",
             "status": "pending",
-            "testStrategy": "单元测试：串联执行、中间失败、输出传递",
+            "testStrategy": "P1工具全部实现并测试通过；P2工具实现stub且明确标注TODO；权限模型正确；测试coverage>80%",
             "parentId": "undefined"
           },
           {
             "id": 8,
-            "title": "完善导出与集成验证",
-            "description": "更新入口导出，编写文档与集成测试",
+            "title": "MCP Layer 3 集成基础",
+            "description": "为Task 7做准备，建立MCP集成架构",
             "dependencies": [
-              5,
-              6,
-              7
+              1,
+              2
             ],
-            "details": "更新 packages/core/src/index.ts 导出工具模块；与 Task 5 Worker 集成验证；编写 README 示例展示注册自定义工具与执行链；确保 bun test 通过",
+            "details": "创建MCP集成基础架构（为Task 7铺路）：\n1. MCPToolAdapter 接口 (packages/core/src/tools/mcp-tool-adapter.ts):\n   - adapt(): 将MCP工具转换为Tachikoma Tool\n   - execute(): 执行MCP工具\n2. ToolRouter (工具路由器):\n   - route(): 优先从MCP获取工具，fallback到本地注册表\n   - 支持动态MCP客户端注入\n3. 预留接口：MCPClient, MCPToolDefinition\n注意：不实现完整MCP集成，只做架构准备",
             "status": "pending",
-            "testStrategy": "集成测试：Worker 调用工具链端到端；安全拒绝路径验证",
+            "testStrategy": "接口设计评审通过；与Task 7架构对齐；预留扩展点完整；类型定义清晰",
+            "parentId": "undefined"
+          },
+          {
+            "id": 9,
+            "title": "完善导出、文档与集成验证",
+            "description": "确保工具系统可用性和可维护性",
+            "dependencies": [
+              3,
+              4,
+              5,
+              6
+            ],
+            "details": "完成最终整合：\n1. 更新导出 (packages/core/src/index.ts):\n   - 导出所有类型: Tool, ToolAnnotations, ToolPermission, ToolLayer, ToolCategory, ToolResult\n   - 导出工具类: ToolRegistry, PermissionValidator, ProgressiveDisclosure, SandboxToolWrapper, ToolChain\n   - 导出所有工具实例: coreTools\n2. 编写文档:\n   - packages/core/README.md: 工具系统使用指南\n   - docs/tools-guide.md: 详细的工具开发指南\n   - JSDoc 内联文档\n3. 集成验证:\n   - 与 Worker 集成测试\n   - 端到端测试场景\n   - 性能基准测试: 工具注册<1ms, 权限校验<0.5ms, 执行开销<100ms, 渐进披露Level1~50tokens/tool",
+            "status": "pending",
+            "testStrategy": "导出完整；文档清晰；Worker集成测试通过；性能达标；测试覆盖率>85%",
             "parentId": "undefined"
           }
         ]

@@ -8,7 +8,9 @@ import type { Tool } from '../types';
 
 // 类型导出
 export type {
+  // 工具结果类型
   ToolResult,
+  // 文件系统工具类型
   FileReadInput,
   FileReadOutput,
   FileWriteInput,
@@ -16,11 +18,14 @@ export type {
   FileListInput,
   FileListOutput,
   FileInfo,
+  // Shell工具类型
   ShellRunInput,
   ShellRunOutput,
+  // 代码搜索工具类型
   CodeSearchInput,
   CodeSearchOutput,
   SearchMatch,
+  // 补丁工具类型
   ApplyPatchInput,
   ApplyPatchOutput,
   ReplaceBetweenMarkersInput,
@@ -37,7 +42,26 @@ export type {
   EnvGetOutput,
   ScriptRunInput,
   ScriptRunOutput,
+  // MCP 标准类型
+  ToolAnnotations,
 } from './types';
+
+// 枚举导出
+export { ToolPermission, ToolLayer, ToolCategory } from './types';
+
+// 权限和注册表导出
+export {
+  PermissionValidator,
+  type PermissionValidationResult,
+} from './permission-validator';
+
+export {
+  ToolRegistry,
+  globalToolRegistry,
+  PermissionDeniedError,
+  ToolNotFoundError,
+  type ToolDefinition,
+} from './registry';
 
 // 核心工具导出
 export {

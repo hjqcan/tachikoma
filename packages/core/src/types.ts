@@ -5,6 +5,11 @@
  */
 
 // ============================================================================
+// 导入工具相关类型
+// ============================================================================
+import type { ToolAnnotations, ToolLayer, ToolCategory } from './tools/types';
+
+// ============================================================================
 // JSON Schema 辅助类型
 // ============================================================================
 
@@ -252,31 +257,146 @@ export interface ExecutionContext {
   workDir: string;
   /** 环境变量 */
   env: Record<string, string>;
+
+  /**
+   * 权限上下文（可选）
+   * 
+   * 控制工具可以执行的操作范围
+   * 
+   * **默认行为**（未提供时）:
+   * - allowed: [] (空白名单，会在校验时使用宽松策略)
+   * - denied: [] (无明确拒绝)
+   * - requireSandbox: false (不强制沙盒)
+   */
+  permissions?: {
+    /** 允许的权限列表 */
+    allowed: string[];
+    /** 明确拒绝的权限列表 */
+    denied: string[];
+    /** 是否强制要求沙盒执行 */
+    requireSandbox: boolean;
+  };
+
+  /**
+   * 资源限制（可选）
+   * 
+   * 防止工具消耗过多资源
+   * 
+   * **默认行为**（未提供时）:
+   * - maxFileSize: 10MB
+   * - maxOutputSize: 1MB
+   * - maxExecutionTime: 30000ms (30秒)
+   */
+  resourceLimits?: {
+    /** 最大文件大小（字节） */
+    maxFileSize: number;
+    /** 最大输出大小（字节） */
+    maxOutputSize: number;
+    /** 最大执行时间（毫秒） */
+    maxExecutionTime: number;
+  };
 }
 
 /**
  * 工具定义
+ * 
+ * 完全兼容 MCP (Model Context Protocol) 标准
+ * 同时扩展 Tachikoma 特有功能
  */
 export interface Tool {
-  /** 工具名称 */
+  // ========== MCP 标准字段 ==========
+  
+  /** 工具名称（唯一标识符） */
   name: string;
+  
+  /**
+   * 工具标题（可选）
+   * 
+   * 人类可读的工具名称，用于UI显示
+   * 如果未提供，默认使用 name
+   */
+  title?: string;
+  
   /** 工具描述 */
   description: string;
+  
   /** 输入 Schema */
   inputSchema: JSONSchema;
-  /** 输出 Schema */
-  outputSchema: JSONSchema;
+  
+  /**
+   * 输出 Schema（可选）
+   * 
+   * 定义工具返回结果的结构
+   * MCP 中为可选字段
+   */
+  outputSchema?: JSONSchema;
+  
+  /**
+   * 工具注解（可选）
+   * 
+   * MCP 标准元数据：audience, priority, idempotent 等
+   */
+  annotations?: ToolAnnotations;
+
+  // ========== Tachikoma 扩展字段 ==========
+  
+  /**
+   * 权限声明（可选，建议填写）
+   * 
+   * 工具需要的权限列表，执行前会进行校验
+   * 
+   * **默认行为**（未声明时）:
+   * - 视为"无特殊权限要求"
+   * - 允许执行，但建议明确声明所需权限
+   * - MVP工具迁移期间可以暂时不填，后续会强制要求
+   * 
+   * @example
+   * ```ts
+   * permissions: [ToolPermission.FileSystemRead, ToolPermission.FileSystemWrite]
+   * ```
+   */
+  permissions?: string[];
+  
+  /**
+   * 工具层级（可选，建议填写）
+   * 
+   * 指示工具所属的行为空间层级：
+   * - Atomic: Layer 1 原子函数
+   * - Sandbox: Layer 2 沙盒工具
+   * - CodeExecution: Layer 3 代码执行/MCP
+   * 
+   * **默认行为**（未声明时）:
+   * - 根据 isCommandBased 推断：true → Sandbox, false → Atomic
+   * - 建议明确声明以避免歧义
+   * 
+   * @example
+   * ```ts
+   * layer: ToolLayer.Atomic
+   * ```
+   */
+  layer?: ToolLayer;
+  
+  /**
+   * 工具分类（可选）
+   * 
+   * 用于工具组织、查询和推荐
+   */
+  category?: ToolCategory;
 
   /**
-   * 是否为命令型工具
+   * 是否为命令型工具（可选，向后兼容）
    *
    * 命令型工具通过 sandbox.runCommand() 执行，提供真正的进程隔离
    * 高风险工具（如 delete, exec）必须设置此标记为 true
    *
    * ⚠️ 非命令型工具的 execute() 会在宿主进程中直接执行，无隔离
+   * 
+   * @deprecated 使用 layer 字段替代，保留用于向后兼容
    */
   isCommandBased?: boolean;
 
+  // ========== 执行方法 ==========
+  
   /** 执行工具 */
   execute(input: unknown, context: ExecutionContext): Promise<unknown>;
 }

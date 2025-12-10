@@ -1,8 +1,124 @@
 /**
- * MVP 核心工具类型定义
+ * 工具类型定义
+ * 
+ * 完全兼容 MCP (Model Context Protocol) 标准
+ * 参考：https://modelcontextprotocol.io/docs/concepts/tools
  */
 
 import type { Tool } from '../types';
+
+// ============================================================================
+// MCP 标准类型
+// ============================================================================
+
+/**
+ * 工具注解 (MCP 标准)
+ * 
+ * 提供工具行为的元数据描述
+ */
+export interface ToolAnnotations {
+  /**
+   * 目标受众
+   * - 'user': 面向用户的工具（如显示结果）
+   * - 'assistant': 面向助手的工具（如内部操作）
+   */
+  audience?: ('user' | 'assistant')[];
+  
+  /**
+   * 优先级 (0-1)
+   * 用于工具选择和推荐，数值越高优先级越高
+   */
+  priority?: number;
+  
+  /**
+   * 是否幂等
+   * true 表示多次执行结果相同（如读取文件）
+   * false 表示有副作用（如写入文件）
+   */
+  idempotent?: boolean;
+  
+  /**
+   * 预估执行时间（毫秒）
+   * 用于超时控制和性能优化
+   */
+  estimatedDuration?: number;
+  
+  /**
+   * 结果是否可缓存
+   * true 表示结果可以缓存重用（如类型检查）
+   */
+  cacheable?: boolean;
+}
+
+// ============================================================================
+// Tachikoma 扩展类型
+// ============================================================================
+
+/**
+ * 工具权限枚举
+ * 
+ * 细粒度权限控制，每个工具必须声明所需权限
+ */
+export enum ToolPermission {
+  /** 文件系统读取权限 */
+  FileSystemRead = 'fs:read',
+  /** 文件系统写入权限 */
+  FileSystemWrite = 'fs:write',
+  /** 文件系统删除权限 */
+  FileSystemDelete = 'fs:delete',
+  
+  /** 网络读取权限（HTTP GET等） */
+  NetworkRead = 'network:read',
+  /** 网络写入权限（HTTP POST等） */
+  NetworkWrite = 'network:write',
+  
+  /** Shell命令执行权限 */
+  ShellExec = 'shell:exec',
+  /** 进程创建权限 */
+  ProcessSpawn = 'process:spawn',
+  
+  /** 环境变量读取权限 */
+  EnvRead = 'env:read',
+}
+
+/**
+ * 工具层级枚举（分层式行为空间）
+ * 
+ * 参考 PRD 3.4.1 分层式行为空间设计
+ * - Layer 1: 原子函数调用 (10-20个) - 约束解码，Schema安全
+ * - Layer 2: 沙盒工具 - 不占用函数调用上下文
+ * - Layer 3: 软件包/API (代码执行) - 处理大量数据和内存计算
+ */
+export enum ToolLayer {
+  /** Layer 1: 原子函数（固定数量10-20个） */
+  Atomic = 'layer1',
+  /** Layer 2: 沙盒工具（shell命令等） */
+  Sandbox = 'layer2',
+  /** Layer 3: 代码执行/MCP */
+  CodeExecution = 'layer3',
+}
+
+/**
+ * 工具分类枚举
+ * 
+ * 用于工具组织、查询和渐进披露
+ */
+export enum ToolCategory {
+  /** 文件系统操作 */
+  FileSystem = 'filesystem',
+  /** Shell命令 */
+  Shell = 'shell',
+  /** 浏览器操作 */
+  Browser = 'browser',
+  /** 搜索工具 */
+  Search = 'search',
+  /** 通信工具 */
+  Communication = 'communication',
+  /** 数据处理 */
+  DataProcessing = 'data',
+  /** 智能体操作 */
+  Agent = 'agent',
+}
 
 /**
  * 工具执行结果
