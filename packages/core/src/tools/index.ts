@@ -106,19 +106,59 @@ import {
   envGetTool,
 } from './core';
 
+// RAG工具
 export { knowledgeRetrievalTool } from './rag';
 export { knowledgeUpsertTool } from './rag/upsert';
 import { knowledgeRetrievalTool } from './rag';
 import { knowledgeUpsertTool } from './rag/upsert';
 
+// 6.7 新增工具
+export { webSearchTool } from './core/web-search';
+export { spawnSubagentTool } from './core/spawn-subagent';
+export { submitResultTool } from './core/submit-result';
+export {
+  browserNavigateTool,
+  browserClickTool,
+  browserInputTool,
+  browserScreenshotTool,
+  browserTools as browserToolsObj,
+} from './core/browser-tools';
+
+import { webSearchTool } from './core/web-search';
+import { spawnSubagentTool } from './core/spawn-subagent';
+import { submitResultTool } from './core/submit-result';
+import {
+  browserNavigateTool,
+  browserClickTool,
+  browserInputTool,
+  browserScreenshotTool,
+} from './core/browser-tools';
+
+// 6.8 MCP Layer 3
+export {
+  MCPToolAdapter,
+  ToolRouter,
+  type IMCPClient,
+  type MCPToolDefinition,
+  type MCPToolCallRequest,
+  type MCPToolCallResult,
+  type MCPServerInfo,
+  type MCPToolAdapterConfig,
+} from './mcp';
+
 /**
- * MVP 核心工具集
+ * 基础工具集（无外部依赖，离线可用）
+ *
+ * 这些工具只依赖本地文件系统和Shell，不需要网络或外部服务
  */
-export const coreTools: Tool[] = [
+export const baseTools: Tool[] = [
+  // 文件系统工具
   fileReadTool,
   fileWriteTool,
   fileListTool,
+  // Shell工具
   shellRunTool,
+  // 代码工具
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
@@ -127,10 +167,97 @@ export const coreTools: Tool[] = [
   typeCheckTool,
   packageInfoTool,
   envGetTool,
-  // RAG 工具
+  // RAG 工具（本地向量存储）
   knowledgeRetrievalTool,
   knowledgeUpsertTool,
 ];
+
+/**
+ * Agent 工具集（子任务/结果提交）
+ *
+ * 这些工具需要与 Orchestrator 配合使用
+ * - spawn_subagent: 创建子任务到 subtasks 目录
+ * - submit_result: 提交结果到 artifacts 目录
+ */
+export const agentTools: Tool[] = [
+  spawnSubagentTool,
+  submitResultTool,
+];
+
+/**
+ * 网络工具集（需要网络访问）
+ *
+ * ⚠️ 需要配置：
+ * - SEARCH_API_KEY: 搜索API密钥
+ * - SEARCH_PROVIDER: 提供商 (brave/serp/tavily)
+ *
+ * 无API Key时会fallback到DuckDuckGo（结果有限）
+ */
+export const networkTools: Tool[] = [
+  webSearchTool,
+];
+
+/**
+ * 浏览器工具集（需要 Playwright）
+ *
+ * ⚠️ 需要安装：
+ * bun add playwright && bunx playwright install chromium
+ */
+export const browserToolsArray: Tool[] = [
+  browserNavigateTool,
+  browserClickTool,
+  browserInputTool,
+  browserScreenshotTool,
+];
+
+/**
+ * MVP 核心工具集（默认导出）
+ *
+ * 只包含基础工具 + Agent工具，不包含网络/浏览器工具
+ * 避免在禁网/无依赖环境下调用失败
+ */
+export const coreTools: Tool[] = [
+  ...baseTools,
+  ...agentTools,
+];
+
+/**
+ * 完整工具集（包含所有工具）
+ *
+ * ⚠️ 使用前请确保：
+ * 1. 已安装 Playwright
+ * 2. 已配置 SEARCH_API_KEY（如需搜索）
+ * 3. 网络访问已启用
+ */
+export const allTools: Tool[] = [
+  ...baseTools,
+  ...agentTools,
+  ...networkTools,
+  ...browserToolsArray,
+];
+
+/**
+ * 按能力获取工具集
+ */
+export function getToolsByCapability(capabilities: {
+  network?: boolean;
+  browser?: boolean;
+  agent?: boolean;
+}): Tool[] {
+  const tools = [...baseTools];
+
+  if (capabilities.agent !== false) {
+    tools.push(...agentTools);
+  }
+  if (capabilities.network) {
+    tools.push(...networkTools);
+  }
+  if (capabilities.browser) {
+    tools.push(...browserToolsArray);
+  }
+
+  return tools;
+}
 
 /**
  * 按名称查找工具

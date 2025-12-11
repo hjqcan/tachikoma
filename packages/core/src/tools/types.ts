@@ -79,6 +79,9 @@ export enum ToolPermission {
   
   /** 环境变量读取权限 */
   EnvRead = 'env:read',
+  
+  /** Agent操作权限 */
+  Agent = 'agent:spawn',
 }
 
 /**
@@ -118,6 +121,10 @@ export enum ToolCategory {
   DataProcessing = 'data',
   /** 智能体操作 */
   Agent = 'agent',
+  /** 网络操作 */
+  Network = 'network',
+  /** MCP工具 */
+  MCP = 'mcp',
 }
 
 /**

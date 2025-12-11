@@ -494,7 +494,7 @@
         "testStrategy": "- 单元：每个工具的入参校验与成功/失败路径覆盖。\n- 集成：通过 worker 执行工具链，验证串联数据传递。\n- 安全：非法路径/命令被拒绝。",
         "priority": "medium",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -583,9 +583,10 @@
               2
             ],
             "details": "实现PRD中列出的新工具：\nP1工具（必须实现）：\n1. web_search: 网络搜索工具 (NetworkRead权限)\n2. spawn_subagent: 创建子智能体 (Agent权限，与Task4 Orchestrator集成)\n3. submit_result: 提交结果包装器\nP2工具（先实现stub占位，标记为紧接着要实现）：\n4. browser_navigate: 浏览器导航 (NetworkRead权限)\n5. browser_click: 元素点击 (NetworkRead权限)\n6. browser_input: 文本输入 (NetworkRead权限)\n7. browser_screenshot: 截图 (NetworkRead + FileSystemWrite权限)\n注意：浏览器工具需要 Puppeteer/Playwright 依赖，标记清楚后续必须实现",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "P1工具全部实现并测试通过；P2工具实现stub且明确标注TODO；权限模型正确；测试coverage>80%",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-11T01:32:22.430Z"
           },
           {
             "id": 8,
@@ -596,9 +597,10 @@
               2
             ],
             "details": "创建MCP集成基础架构（为Task 7铺路）：\n1. MCPToolAdapter 接口 (packages/core/src/tools/mcp-tool-adapter.ts):\n   - adapt(): 将MCP工具转换为Tachikoma Tool\n   - execute(): 执行MCP工具\n2. ToolRouter (工具路由器):\n   - route(): 优先从MCP获取工具，fallback到本地注册表\n   - 支持动态MCP客户端注入\n3. 预留接口：MCPClient, MCPToolDefinition\n注意：不实现完整MCP集成，只做架构准备",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "接口设计评审通过；与Task 7架构对齐；预留扩展点完整；类型定义清晰",
-            "parentId": "undefined"
+            "parentId": "undefined",
+            "updatedAt": "2025-12-11T01:32:30.354Z"
           },
           {
             "id": 9,
@@ -617,7 +619,7 @@
             "updatedAt": "2025-12-10T08:59:46.502Z"
           }
         ],
-        "updatedAt": "2025-12-10T08:59:46.502Z"
+        "updatedAt": "2025-12-11T01:32:30.354Z"
       },
       {
         "id": "7",
@@ -1539,9 +1541,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-10T08:59:46.504Z",
+      "lastModified": "2025-12-11T01:32:30.355Z",
       "taskCount": 16,
-      "completedCount": 5,
+      "completedCount": 6,
       "tags": [
         "master"
       ]
