@@ -95,7 +95,112 @@ export async function loadMCPConfig(
 }
 
 /**
+ * 标准 MCP 服务器配置格式（Claude Desktop / Cursor 等）
+ */
+interface StandardMCPServerConfig {
+  /** HTTP 服务器 URL */
+  url?: string;
+  /** HTTP 请求头 */
+  headers?: Record<string, string>;
+  /** STDIO 命令 */
+  command?: string;
+  /** STDIO 参数 */
+  args?: string[];
+  /** 环境变量 */
+  env?: Record<string, string>;
+  /** 显式类型声明 */
+  type?: 'stdio' | 'http';
+}
+
+/**
+ * 检测并转换标准 mcp.json 格式
+ *
+ * 支持的格式：
+ * 1. 标准格式：{ "mcpServers": { "name": { ... } } }
+ * 2. Tachikoma 格式：{ "servers": [...] }
+ *
+ * @param raw - 原始配置对象
+ * @returns 转换后的 Tachikoma 格式配置
+ */
+export function parseStandardMCPConfig(
+  raw: unknown
+): Partial<MCPConfig> | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  // 检测标准格式 (mcpServers 对象)
+  if ('mcpServers' in obj && typeof obj.mcpServers === 'object' && obj.mcpServers !== null) {
+    const mcpServers = obj.mcpServers as Record<string, StandardMCPServerConfig>;
+    const servers: MCPServerConfig[] = [];
+
+    for (const [name, config] of Object.entries(mcpServers)) {
+      // 跳过无效配置
+      if (!config || typeof config !== 'object') continue;
+
+      // 推断传输类型
+      let transport: 'stdio' | 'http' = 'stdio';
+      if (config.type) {
+        transport = config.type;
+      } else if (config.url) {
+        transport = 'http';
+      } else if (config.command) {
+        transport = 'stdio';
+      }
+
+      const serverConfig: MCPServerConfig = {
+        name,
+        transport,
+        enabled: true,
+      };
+
+      // HTTP 模式参数
+      if (config.url) {
+        serverConfig.url = config.url;
+      }
+      if (config.headers) {
+        serverConfig.headers = config.headers;
+      }
+
+      // STDIO 模式参数
+      if (config.command) {
+        serverConfig.command = config.command;
+      }
+      if (config.args) {
+        serverConfig.args = config.args;
+      }
+      if (config.env) {
+        serverConfig.env = config.env;
+      }
+
+      servers.push(serverConfig);
+    }
+
+    return { servers };
+  }
+
+  // 检测 Tachikoma 格式 (servers 数组)
+  if ('servers' in obj && Array.isArray(obj.servers)) {
+    return obj as Partial<MCPConfig>;
+  }
+
+  // 未知格式
+  return null;
+}
+
+/**
  * 从文件加载 MCP 配置
+ *
+ * 支持以下配置文件位置（优先级从高到低）：
+ * 1. .tachikoma/mcp.json（项目配置）
+ * 2. ~/.cursor/mcp.json（Cursor 配置）
+ * 3. ~/Library/Application Support/Claude/claude_desktop_config.json（Claude Desktop）
+ *
+ * 支持的格式：
+ * - 标准格式：{ "mcpServers": { "name": { "command": "...", "args": [...] } } }
+ * - Tachikoma 格式：{ "servers": [...] }
  *
  * @param workDir - 工作目录
  * @returns 配置对象，如果文件不存在返回 null
@@ -103,27 +208,37 @@ export async function loadMCPConfig(
 export async function loadMCPConfigFromFile(
   workDir: string
 ): Promise<Partial<MCPConfig> | null> {
-  const configPath = resolve(workDir, TACHIKOMA_CONFIG_DIR, MCP_CONFIG_FILENAME);
+  // 可能的配置文件路径
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const configPaths = [
+    // 项目配置
+    resolve(workDir, TACHIKOMA_CONFIG_DIR, MCP_CONFIG_FILENAME),
+    // Cursor 配置
+    resolve(homeDir, '.cursor', 'mcp.json'),
+    // Claude Desktop 配置 (macOS)
+    resolve(homeDir, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json'),
+  ];
 
-  if (!existsSync(configPath)) {
-    return null;
-  }
-
-  try {
-    const content = await readFile(configPath, 'utf-8');
-    const parsed = JSON.parse(content);
-
-    // 基础验证
-    if (typeof parsed !== 'object' || parsed === null) {
-      console.warn(`[MCP Config] Invalid config file format: ${configPath}`);
-      return null;
+  for (const configPath of configPaths) {
+    if (!existsSync(configPath)) {
+      continue;
     }
 
-    return parsed as Partial<MCPConfig>;
-  } catch (error) {
-    console.warn(`[MCP Config] Failed to load config from ${configPath}:`, error);
-    return null;
+    try {
+      const content = await readFile(configPath, 'utf-8');
+      const parsed = JSON.parse(content);
+
+      const config = parseStandardMCPConfig(parsed);
+      if (config) {
+        console.debug(`[MCP Config] Loaded config from ${configPath}`);
+        return config;
+      }
+    } catch (error) {
+      console.warn(`[MCP Config] Failed to load config from ${configPath}:`, error);
+    }
   }
+
+  return null;
 }
 
 /**

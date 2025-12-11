@@ -263,10 +263,17 @@ describe('MCP Config Loading', () => {
       const emptyDir = join(testDir, 'empty');
       await mkdir(emptyDir, { recursive: true });
 
-      const config = await loadMCPConfig(emptyDir);
+      // Mock HOME to prevent loading real user config (e.g., ~/.cursor/mcp.json)
+      const originalHome = process.env.HOME;
+      process.env.HOME = emptyDir;
 
-      expect(config.servers).toEqual([]);
-      expect(config.defaultMode).toBe('traditional');
+      try {
+        const config = await loadMCPConfig(emptyDir);
+        expect(config.servers).toEqual([]);
+        expect(config.defaultMode).toBe('traditional');
+      } finally {
+        process.env.HOME = originalHome;
+      }
     });
 
     it('should load config from file', async () => {

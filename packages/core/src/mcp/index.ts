@@ -77,6 +77,7 @@ export {
   loadMCPConfig,
   loadMCPConfigFromFile,
   loadMCPConfigFromEnv,
+  parseStandardMCPConfig,
   // 配置工具函数
   mergeConfigs,
   normalizeServerConfig,
@@ -155,3 +156,22 @@ export type {
   RouteDecision,
   IPCLineResult,
 } from './router';
+
+// ============================================================================
+// 工具发现导出
+// ============================================================================
+
+export {
+  ToolDiscovery,
+  createToolDiscovery,
+  discoverTools,
+  generateToolsBrief,
+} from './discovery';
+
+export type {
+  ServerDirectory,
+  ToolSummary,
+  DiscoveryOptions,
+  DiscoveryResult,
+  DiscoveryError,
+} from './discovery';
