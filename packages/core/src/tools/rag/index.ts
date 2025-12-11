@@ -15,14 +15,14 @@ interface KnowledgeRetrievalResult {
   content: string;
   score: number;
   sourceId: string;
-  sourcePath?: string;
-  chunkIndex?: number;
+  sourcePath?: string | undefined;
+  chunkIndex?: number | undefined;
 }
 
 interface KnowledgeRetrievalData {
   results: KnowledgeRetrievalResult[];
-  degraded?: boolean;
-  degradationReason?: string;
+  degraded?: boolean | undefined;
+  degradationReason?: string | undefined;
 }
 
 const outputSchema = z.object({
@@ -41,11 +41,22 @@ const outputSchema = z.object({
   error: z.string().optional(),
 });
 
+// zod v4 与 zod-to-json-schema@3.x 类型不完全兼容，使用 unknown 中间断言
+const inputJsonSchema = zodToJsonSchema(
+  knowledgeRetrievalSchema as unknown as Parameters<typeof zodToJsonSchema>[0],
+  { $refStrategy: 'none' }
+) as Record<string, unknown>;
+
+const outputJsonSchema = zodToJsonSchema(
+  outputSchema as unknown as Parameters<typeof zodToJsonSchema>[0],
+  { $refStrategy: 'none' }
+) as Record<string, unknown>;
+
 export const knowledgeRetrievalTool: Tool = {
   name: 'knowledge_retrieval',
   description: 'Search the knowledge base for relevant documentation and snippets.',
-  inputSchema: zodToJsonSchema(knowledgeRetrievalSchema, 'knowledgeRetrievalInput') as Record<string, unknown>,
-  outputSchema: zodToJsonSchema(outputSchema, 'knowledgeRetrievalOutput') as Record<string, unknown>,
+  inputSchema: inputJsonSchema,
+  outputSchema: outputJsonSchema,
   
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<KnowledgeRetrievalData>> {
     try {

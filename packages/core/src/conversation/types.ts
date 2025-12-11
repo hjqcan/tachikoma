@@ -166,10 +166,12 @@ export interface SessionState {
 
   // 当前执行状态
   /** 当前计划 */
-  currentPlan?: {
-    subtasks: SubTask[];
-    executionOrder: string[];
-  };
+  currentPlan?:
+    | {
+        subtasks: SubTask[];
+        executionOrder: string[];
+      }
+    | undefined;
   /** 已完成的子任务 ID */
   completedSubtasks: string[];
   /** 待执行的子任务 ID */
@@ -187,7 +189,7 @@ export interface SessionState {
   /** Agent 是否在等待用户输入 */
   waitingForUser: boolean;
   /** 待回答的问题 */
-  pendingQuestion?: string;
+  pendingQuestion?: string | undefined;
 }
 
 // =============================================================================

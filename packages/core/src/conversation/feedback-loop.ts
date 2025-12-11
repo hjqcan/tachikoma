@@ -63,7 +63,7 @@ const REPLAN_ERRORS = [
  */
 export class FeedbackLoop {
   private readonly maxRetries: number;
-  private retryCountMap: Map<string, number> = new Map();
+  private retryCountMap = new Map<string, number>();
 
   constructor(options: { maxRetries?: number } = {}) {
     this.maxRetries = options.maxRetries ?? 3;

@@ -18,8 +18,8 @@ import { chunkText, mockEmbed } from './utils';
 
 /** Embedding batch configuration */
 export interface EmbeddingBatchConfig {
-  batchSize?: number;  // Default: 50
-  batchDelayMs?: number;  // Default: 1000
+  batchSize?: number | undefined; // Default: 50
+  batchDelayMs?: number | undefined; // Default: 1000
 }
 
 export class KnowledgeBase {

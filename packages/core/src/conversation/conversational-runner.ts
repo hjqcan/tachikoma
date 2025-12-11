@@ -422,6 +422,13 @@ export class ConversationalRunner {
 
     while (session.pendingSubtasks.length > 0) {
       const subtaskId = session.pendingSubtasks[0];
+      
+      // noUncheckedIndexedAccess: 数组访问可能返回 undefined
+      if (!subtaskId) {
+        session.pendingSubtasks.shift();
+        continue;
+      }
+      
       const subtask = session.currentPlan?.subtasks.find((s) => s.id === subtaskId);
 
       if (!subtask) {

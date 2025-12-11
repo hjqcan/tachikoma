@@ -8,15 +8,15 @@ import { resolve } from 'path';
 const knowledgeUpsertSchema = z.object({
   sourceId: z.string().describe('Unique identifier for the document source'),
   content: z.string().describe('The document content to ingest'),
-  metadata: z.record(z.unknown()).optional().describe('Optional metadata for the document'),
+  metadata: z.record(z.string(), z.unknown()).optional().describe('Optional metadata for the document'),
   sourcePath: z.string().optional().describe('Optional file path for traceability'),
 });
 
 interface KnowledgeUpsertData {
   message: string;
   chunksCreated: number;
-  degraded?: boolean;
-  degradationReason?: string;
+  degraded?: boolean | undefined;
+  degradationReason?: string | undefined;
 }
 
 const outputSchema = z.object({
@@ -30,16 +30,23 @@ const outputSchema = z.object({
   error: z.string().optional(),
 });
 
+// zod v4 与 zod-to-json-schema@3.x 类型不完全兼容，使用 unknown 中间断言
+const inputJsonSchema = zodToJsonSchema(
+  knowledgeUpsertSchema as unknown as Parameters<typeof zodToJsonSchema>[0],
+  { $refStrategy: 'none' }
+) as Record<string, unknown>;
+
+const upsertOutputJsonSchema = zodToJsonSchema(
+  outputSchema as unknown as Parameters<typeof zodToJsonSchema>[0],
+  { $refStrategy: 'none' }
+) as Record<string, unknown>;
+
 export const knowledgeUpsertTool: Tool = {
   name: 'knowledge_upsert',
   description:
     'Ingest or update a document in the knowledge base. Use this to add project documentation, code files, or reference materials.',
-  inputSchema: zodToJsonSchema(knowledgeUpsertSchema, {
-    $refStrategy: 'none',
-  }) as Record<string, unknown>,
-  outputSchema: zodToJsonSchema(outputSchema, {
-    $refStrategy: 'none',
-  }) as Record<string, unknown>,
+  inputSchema: inputJsonSchema,
+  outputSchema: upsertOutputJsonSchema,
 
   async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<KnowledgeUpsertData>> {
     try {

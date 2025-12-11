@@ -14,7 +14,6 @@ import type { SessionState, Checkpoint, ConversationMessage } from './types';
 // =============================================================================
 
 const SESSION_FILE = 'session.json';
-const CHECKPOINTS_DIR = 'checkpoints';
 
 // =============================================================================
 // SessionStore 类
@@ -237,12 +236,5 @@ export class SessionStore {
    */
   private getSessionPath(sessionId: string): string {
     return join(this.baseDir, sessionId);
-  }
-
-  /**
-   * 获取检查点目录路径
-   */
-  private getCheckpointsPath(sessionId: string): string {
-    return join(this.getSessionPath(sessionId), CHECKPOINTS_DIR);
   }
 }

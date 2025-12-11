@@ -16,7 +16,7 @@ export interface DocumentChunk {
   /** 文本内容 */
   content: string;
   /** 元数据 */
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   /** 向量嵌入 */
   embedding?: Embedding;
 }

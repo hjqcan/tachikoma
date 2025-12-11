@@ -93,7 +93,6 @@ export interface SubtaskWatcherConfig {
  */
 export class SubtaskWatcher extends EventEmitter {
   private readonly watchPaths: string[];
-  private readonly workDir: string;
   private readonly config: Required<Omit<SubtaskWatcherConfig, 'additionalPaths' | 'sessionId' | 'workerId'>>;
   private readonly processedIdsFile: string;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -105,7 +104,6 @@ export class SubtaskWatcher extends EventEmitter {
 
   constructor(workDir: string, config: SubtaskWatcherConfig = {}) {
     super();
-    this.workDir = workDir;
     
     // 持久化文件路径
     this.processedIdsFile = join(workDir, '.tachikoma', '.subtask-watcher-state.json');

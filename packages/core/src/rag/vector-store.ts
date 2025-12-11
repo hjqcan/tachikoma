@@ -7,7 +7,7 @@
 
 import fs from 'fs/promises';
 import { dirname } from 'path';
-import type { IVectorStore, DocumentChunk, SearchResult, Embedding } from './types';
+import type { IVectorStore, DocumentChunk, SearchResult } from './types';
 import { cosineSimilarity } from './utils';
 import { fileExists, ensureDir } from '../orchestrator/session'; // 复用 session 中的工具函数
 
@@ -25,10 +25,17 @@ export class SimpleVectorStore implements IVectorStore {
   /**
    * 搜索最相似的文档
    */
-  search(queryEmbedding: number[], limit: number, minScore = 0.0): SearchResult[] {
+  async search(
+    queryEmbedding: number[],
+    limit?: number,
+    minScore?: number
+  ): Promise<SearchResult[]> {
     if (this.chunks.length === 0) {
       return [];
     }
+
+    const effectiveLimit = limit ?? 10;
+    const effectiveMinScore = minScore ?? 0.0;
 
     const results: SearchResult[] = this.chunks
       // Skip chunks without embeddings
@@ -38,9 +45,9 @@ export class SimpleVectorStore implements IVectorStore {
         score: cosineSimilarity(queryEmbedding, chunk.embedding!),
       }))
       // Filter by minScore and sort by score descending
-      .filter((r) => r.score >= minScore)
+      .filter((r) => r.score >= effectiveMinScore)
       .sort((a, b) => b.score - a.score)
-      .slice(0, limit);
+      .slice(0, effectiveLimit);
 
     return results;
   }

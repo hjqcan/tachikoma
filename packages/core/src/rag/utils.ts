@@ -39,9 +39,9 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * TODO: 未来可以使用更有语义感知的切片库 (如 langchain/text_splitter)
  */
 export function chunkText(
-  text: string, 
-  chunkSize: number = 1000, 
-  overlap: number = 200
+  text: string,
+  chunkSize = 1000,
+  overlap = 200
 ): string[] {
   if (text.length <= chunkSize) {
     return [text];
@@ -87,7 +87,7 @@ export function chunkText(
  * 生成 Mock Embedding (仅用于测试)
  * 使用 MD5 哈希生成确定性的 "伪向量"
  */
-export function mockEmbed(text: string, dim: number = 1536): number[] {
+export function mockEmbed(text: string, dim = 1536): number[] {
   const hash = createHash('md5').update(text).digest('hex');
   const vector: number[] = [];
   
