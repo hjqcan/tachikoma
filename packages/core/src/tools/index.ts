@@ -136,15 +136,15 @@ import {
 
 // 6.8 MCP Layer 3
 export {
-  MCPToolAdapter,
-  ToolRouter,
-  type IMCPClient,
+  MCPClientManager,
+  MCPToolRegistrar,
+  MCPModeRouter,
+  // Types
+  type MCPConfig,
   type MCPToolDefinition,
-  type MCPToolCallRequest,
-  type MCPToolCallResult,
-  type MCPServerInfo,
-  type MCPToolAdapterConfig,
-} from './mcp';
+  type MCPServerConfig,
+  type MCPConnectionStatus,
+} from '../mcp';
 
 /**
  * 基础工具集（无外部依赖，离线可用）
