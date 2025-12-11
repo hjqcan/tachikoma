@@ -98,3 +98,20 @@ export {
 } from './client';
 
 export type { MCPCallOptions } from './client';
+
+// ============================================================================
+// 代码生成器导出
+// ============================================================================
+
+export {
+  MCPCodeGenerator,
+  generateServerWrappers,
+  defaultGenerator,
+} from './generator';
+
+export type {
+  GeneratorOptions,
+  GeneratorResult,
+  GeneratedFile,
+  GeneratorError,
+} from './generator';

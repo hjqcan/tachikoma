@@ -680,9 +680,10 @@
               3
             ],
             "details": "在 packages/core/src/mcp/codegen.ts 实现 MCPCodeGenerator 类：\\n- generate(serverName): 连接服务器，获取工具列表，生成 servers/<serverName>/*.ts\\n- generateAll(): 遍历配置的所有服务器生成包装\\n\\n生成文件格式（getDocument.ts 示例）：\\n```typescript\\nimport { callMCPTool } from '../_client';\\n\\nexport interface GetDocumentInput {\\n  documentId: string;\\n}\\n\\nexport interface GetDocumentOutput {\\n  content: string;\\n  metadata?: Record<string, unknown>;\\n}\\n\\n/**\\n * Retrieves a document from Google Drive\\n */\\nexport async function getDocument(input: GetDocumentInput): Promise<GetDocumentOutput> {\\n  return callMCPTool<GetDocumentOutput>('google-drive', 'getDocument', input);\\n}\\n```\\n\\n- 从 JSON Schema 推断 TypeScript 类型\\n- 生成 JSDoc 注释（来自 description）\\n- 生成 index.ts 汇总导出\\n- 支持增量更新（只更新变化的工具）\\n\\n提供 CLI 入口：bun run mcp:generate [serverName]",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：连接 mock server，运行 codegen，验证生成的 .ts 文件 tsc 编译通过，类型正确；生成的函数可调用并返回预期结果。",
-            "parentId": "7"
+            "parentId": "7",
+            "updatedAt": "2025-12-11T07:55:53.512Z"
           },
           {
             "id": 5,
@@ -742,7 +743,7 @@
             "parentId": "7"
           }
         ],
-        "updatedAt": "2025-12-11T07:47:02.804Z"
+        "updatedAt": "2025-12-11T07:55:53.512Z"
       },
       {
         "id": "8",
@@ -1589,7 +1590,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T07:47:02.806Z",
+      "lastModified": "2025-12-11T07:55:53.514Z",
       "taskCount": 16,
       "completedCount": 6,
       "tags": [
