@@ -393,6 +393,12 @@ export interface ContextManagerConfig {
   offload: OffloadConfig;
   /** 缓存优化配置 */
   cacheOptimization: CacheOptimizationConfig;
+  /** 
+   * Token 估算器（可选）
+   * 
+   * 如果不提供，使用默认的简单估算器（length / 3）
+   */
+  tokenEstimator?: (content: string) => number;
 }
 
 /**
@@ -757,14 +763,16 @@ export function validateThresholds(thresholds: ContextThresholds): void {
 
 /**
  * 创建默认上下文管理器配置
+ * 
+ * 注意：返回新创建的配置对象副本，修改不会影响默认值
  */
 export function createDefaultContextConfig(
   workDir: string
 ): ContextManagerConfig {
   return {
-    thresholds: DEFAULT_THRESHOLDS,
-    compaction: DEFAULT_COMPACTION_CONFIG,
-    summarization: DEFAULT_SUMMARIZATION_CONFIG,
+    thresholds: { ...DEFAULT_THRESHOLDS },
+    compaction: { ...DEFAULT_COMPACTION_CONFIG },
+    summarization: { ...DEFAULT_SUMMARIZATION_CONFIG },
     offload: {
       workDir,
       tokenThreshold: 5000,

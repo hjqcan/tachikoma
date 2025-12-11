@@ -457,10 +457,14 @@ export class ContextManager implements IContextManager {
   /**
    * 估算 Token 数
    *
-   * 简单估算：每 4 个字符约 1 个 token
+   * 使用配置的 tokenEstimator 或默认的简单估算
    */
   estimateTokens(content: string): number {
-    // 简单估算：英文约 4 字符/token，中文约 2 字符/token
+    // 使用配置的估算器
+    if (this.config.tokenEstimator) {
+      return this.config.tokenEstimator(content);
+    }
+    // 默认简单估算：英文约 4 字符/token，中文约 2 字符/token
     // 使用平均值 3 字符/token
     return Math.ceil(content.length / 3);
   }

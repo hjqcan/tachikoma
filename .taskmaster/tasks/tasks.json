@@ -806,9 +806,10 @@
               3
             ],
             "details": "1. 在 GenericBackendConfig 中添加 contextManagerConfig 选项\n2. 在 GenericAgentBackend 构造函数中创建 ContextManager 实例（替代 SimpleContextManager）\n3. 修改 execute() 方法：\n   - 在每轮 LLM 调用前检查 needsReduction()\n   - 超过软限制时调用 autoReduce() 执行压缩/摘要\n   - 使用 getContext() 获取优化后的消息列表\n4. 集成笔记系统：\n   - 任务开始时创建 todo（task.objective）\n   - 工具执行成功后添加 finding\n   - 每轮结束时 injectStatusReminder()\n5. 日志记录上下文操作（压缩/摘要事件）\n6. 保持向后兼容：无 contextManagerConfig 时使用简化行为",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：模拟大量工具调用触发自动压缩/摘要；验证 getContext() 返回优化后的消息；笔记注入正确",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T15:14:51.662Z"
           },
           {
             "id": 5,
@@ -818,9 +819,10 @@
               1
             ],
             "details": "1. 定义 MemoryProvider 接口（在 context/types.ts）：\n   - retrieve(query: string, topK?: number): Promise<MemoryEntry[]>\n   - save(entry: MemoryEntry): Promise<void>\n   - search(context: ContextMessage[], topK?: number): Promise<MemoryEntry[]>\n2. 在 ContextManagerDependencies 中添加可选的 memoryProvider\n3. 在 ContextManager 中添加方法：\n   - injectRetrievedMemories(memories: MemoryEntry[]): void\n   - getRetrievalContext(): string（返回适合检索的上下文摘要）\n4. 预留 onNeedsRetrieval 钩子（当上下文需要外部信息时触发）\n5. 确保接口设计与 PRD 任务9 的记忆系统兼容\n6. 添加 MemoryEntry 类型定义（id/content/embedding/metadata/scope）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "类型检查通过；接口与任务9 PRD 对齐；stub MemoryProvider 可正常注入和调用",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T15:14:59.703Z"
           },
           {
             "id": 6,
@@ -836,7 +838,7 @@
             "parentId": "8"
           }
         ],
-        "updatedAt": "2025-12-11T11:33:26.049Z"
+        "updatedAt": "2025-12-11T15:14:59.703Z"
       },
       {
         "id": "9",
@@ -1613,7 +1615,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T11:33:26.051Z",
+      "lastModified": "2025-12-11T15:14:59.704Z",
       "taskCount": 16,
       "completedCount": 7,
       "tags": [

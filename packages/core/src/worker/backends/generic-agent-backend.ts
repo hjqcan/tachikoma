@@ -637,6 +637,13 @@ export class GenericAgentBackend implements IWorkerBackend {
     const recordTokenUsage = (input: number, output: number) => { totalTokensUsed += input + output; };
     const isOverBudget = () => totalTokensUsed >= maxTotalTokens;
     
+    // 日志记录 context 配置
+    console.debug('[GenericAgentBackend] Context initialized', {
+      softLimit: contextConfig.thresholds.softLimit,
+      hardLimit: contextConfig.thresholds.hardLimit,
+      hasCustomEstimator: !!contextConfig.tokenEstimator,
+    });
+    
     // 添加任务目标到 todo
     context.addTodo(task.objective);
 
