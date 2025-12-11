@@ -623,76 +623,93 @@
       },
       {
         "id": "7",
-        "title": "MCP 客户端与代码生成集成",
-        "description": "实现 MCP 动态发现/加载，支持代码生成与工具调用的 Token 高效路径。",
-        "details": "- MCP 客户端：读取 ./servers/* 目录，加载工具定义；支持热插拔新增服务器。\n- 代码生成模块：根据工具 schema 生成 TS 调用包装（示例 gdrive.getDocument/salesforce.updateRecord）。\n- 与 Worker 集成：选择 MCP 工具优先，fallback 原子工具；记录调用开销以评估 Token 节省。",
-        "testStrategy": "- 单元：加载 mock MCP server，验证工具列表解析与调用参数。\n- 集成：示例 server 执行读取->写入流水线，检查代码生成输出可编译执行。\n- 回归：新增 server 后无需重启即可被发现。",
-        "priority": "medium",
-        "dependencies": [],
+        "title": "MCP 客户端与代码执行集成（双模式架构）",
+        "description": "实现 MCP 双模式架构：传统工具调用模式（快速接入）+ 代码执行模式（低 Token、可组合），支持 @anthropic-ai/mcp-client SDK，与沙盒、日志体系深度集成。",
+        "details": "- 双模式架构：传统 MCP 工具调用（callMCPTool）满足快速接入现有服务器；代码执行模式（import servers/*.ts）满足低 token、可组合、可测试的长远需求。\\n- 使用 @anthropic-ai/mcp-client SDK 实现标准 MCP 协议，支持 STDIO 和 HTTP 双传输模式。\\n- servers/ 目录为轻量包装层，部分预置模板 + 部分由代码生成器生成/更新。\\n- 代码执行模式下，Agent 生成的代码在沙盒（LocalSandbox/DockerSandbox）内执行，保证安全隔离。\\n- 与 Task 5/6 深度集成：actions.jsonl 记录所有工具调用，thinking.jsonl 记录推理过程，关键决策审批机制复用。\\n- Progressive Disclosure：沿用 Task 6 机制，补充文件系统探索模式（ls ./servers && cat）作为辅助发现通道。",
+        "testStrategy": "- 单元测试：mock MCP server 验证连接、工具列表解析、调用参数映射、重试与错误处理。\\n- 集成测试：示例 server 执行读取->写入流水线，验证代码生成输出可编译执行。\\n- 端到端测试：验证热插拔、双模式切换、沙盒执行、日志记录。\\n- Token 节省验证：对比传统 tool_use 与代码执行模式的 token 消耗，目标节省 80%+。",
+        "priority": "high",
+        "dependencies": ["5", "6"],
         "status": "pending",
         "subtasks": [
           {
             "id": 1,
-            "title": "实现 MCP 服务器发现与元数据装载",
-            "description": "在 core 包内完成 servers 目录下 MCP 工具的动态发现与解析。",
+            "title": "MCP 配置层与类型定义",
+            "description": "设计 MCP 服务器配置结构、连接参数类型、调用模式枚举。",
             "dependencies": [],
-            "details": "新增 packages/core/src/mcp/loader.ts，扫描 ./servers/* 读取 manifest/tool schema，构建 Tool 描述与注册表，使用 fs.watch 监听新增/变更/删除实现热插拔并输出加载错误。",
+            "details": "在 packages/core/src/mcp/types.ts 定义：\\n- MCPServerConfig: name, transport(stdio/http), command/url, env, args, enabled, mode(traditional/code-execution)\\n- MCPConnectionParams: StdioParams(command, args, env) / HttpParams(url, headers)\\n- MCPCallMode 枚举: Traditional (callMCPTool) / CodeExecution (import wrapper)\\n- MCPToolInfo: 扩展 Tool 接口，增加 serverName, originalName, generatedWrapperPath\\n\\n在 packages/core/src/mcp/config.ts 实现配置加载：\\n- loadMCPConfig(): 从 .tachikoma/mcp.json 或环境变量读取服务器列表\\n- 支持 per-server 的 mode 配置，默认 traditional\\n- 导出 DEFAULT_MCP_CONFIG 常量",
             "status": "pending",
-            "testStrategy": "单元：mock servers 目录触发加载/卸载事件，校验工具列表与错误处理。",
-            "parentId": "undefined"
+            "testStrategy": "类型检查通过；配置加载单元测试覆盖默认值、环境覆盖、per-server mode 配置。",
+            "parentId": "7"
           },
           {
             "id": 2,
-            "title": "建立 MCP 客户端连接与工具调用适配器",
-            "description": "实现与已发现的 MCP server 建立会话并封装工具调用接口。",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/mcp/client.ts 提供连接管理、工具调用函数和缓存，复用 Tool 输入/输出 schema，支持并发请求、超时/重试、故障摘除，并记录每次调用的 token/时延统计。",
+            "title": "MCP SDK 客户端封装（STDIO/HTTP 双模式）",
+            "description": "基于 @anthropic-ai/mcp-client SDK 实现标准 MCP 客户端，支持 STDIO 和 HTTP 传输。",
+            "dependencies": [1],
+            "details": "安装 @anthropic-ai/mcp-client 依赖。\\n\\n在 packages/core/src/mcp/client.ts 实现 MCPClientManager 类：\\n- connect(config: MCPServerConfig): 根据 transport 类型建立连接\\n  - STDIO: 使用 SDK 的 StdioClientTransport 启动子进程（npx/node/uvx）\\n  - HTTP: 使用 SDK 的 StreamableHttpClientTransport 连接远程服务器\\n- listTools(serverName): 调用 tools/list 获取工具定义\\n- callTool(serverName, toolName, args): 调用 tools/call 执行工具\\n- disconnect(serverName): 优雅关闭连接\\n- getClient(serverName): 获取已连接的 Client 实例\\n\\n实现连接池/缓存机制，支持并发请求、超时重试（3次，指数退避）、故障摘除（连续失败3次标记不可用）。\\n记录每次调用的 latency、tokenEstimate 写入 metrics。",
             "status": "pending",
-            "testStrategy": "单元：mock server 响应，验证调用参数映射、重试与指标记录；超时/错误路径被正确处理。",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：mock SDK Client 验证连接建立、工具列表获取、调用参数映射、重试逻辑、故障摘除；集成测试：连接真实 @modelcontextprotocol/server-filesystem 验证 STDIO 模式。",
+            "parentId": "7"
           },
           {
             "id": 3,
-            "title": "代码生成模块产出 TS 工具包装",
-            "description": "根据 MCP 工具 schema 自动生成类型安全的调用包装并生成示例。",
-            "dependencies": [
-              1,
-              2
-            ],
-            "details": "新增 packages/core/src/mcp/codegen.ts 与脚本入口，读取注册表 schema 生成 packages/core/src/mcp/generated/*.ts 调用包装（含 gdrive.getDocument、salesforce.updateRecord 示例），支持增量更新与导出索引供消费。",
+            "title": "servers/ 目录结构与 callMCPTool 基础设施",
+            "description": "设计 servers/ 目录规范，实现 callMCPTool() 核心函数。",
+            "dependencies": [2],
+            "details": "设计 servers/ 目录结构规范：\\n```\\nservers/\\n├── _client.ts              # callMCPTool() 核心实现\\n├── _types.ts               # 通用类型\\n├── google-drive/\\n│   ├── getDocument.ts      # 单个工具包装\\n│   ├── searchFiles.ts\\n│   └── index.ts            # 汇总导出\\n├── filesystem/\\n│   ├── readFile.ts\\n│   ├── writeFile.ts\\n│   └── index.ts\\n└── ...\\n```\\n\\n实现 servers/_client.ts：\\n- callMCPTool<T>(serverName, toolName, input): Promise<T>\\n  - 内部调用 MCPClientManager.callTool()\\n  - 支持类型推断\\n  - 错误包装为统一格式\\n- getMCPClient(): 获取全局 MCPClientManager 实例\\n\\n提供预置模板文件，供代码生成器参考格式。",
             "status": "pending",
-            "testStrategy": "集成：运行 codegen 后执行 tsc 编译通过，示例包装可调用 mock client 成功返回。",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：callMCPTool 调用链路、错误处理；类型检查：生成的包装器类型正确。",
+            "parentId": "7"
           },
           {
             "id": 4,
-            "title": "Worker 路由集成优先使用 MCP 工具",
-            "description": "在执行路径中优先选择 MCP 工具，缺失时回退到原子工具并记录成本。",
-            "dependencies": [
-              2,
-              3
-            ],
-            "details": "在 packages/core/src/worker/runner.ts（或现有执行器）增加工具路由层，优先调用 MCP registry/包装，若不可用则调用本地 Tool；记录 token/时延写入 TaskMetrics 以便评估节省，并暴露开关配置。",
+            "title": "代码生成器（TS 工具包装生成）",
+            "description": "根据 MCP 工具 schema 自动生成类型安全的 TypeScript 调用包装。",
+            "dependencies": [2, 3],
+            "details": "在 packages/core/src/mcp/codegen.ts 实现 MCPCodeGenerator 类：\\n- generate(serverName): 连接服务器，获取工具列表，生成 servers/<serverName>/*.ts\\n- generateAll(): 遍历配置的所有服务器生成包装\\n\\n生成文件格式（getDocument.ts 示例）：\\n```typescript\\nimport { callMCPTool } from '../_client';\\n\\nexport interface GetDocumentInput {\\n  documentId: string;\\n}\\n\\nexport interface GetDocumentOutput {\\n  content: string;\\n  metadata?: Record<string, unknown>;\\n}\\n\\n/**\\n * Retrieves a document from Google Drive\\n */\\nexport async function getDocument(input: GetDocumentInput): Promise<GetDocumentOutput> {\\n  return callMCPTool<GetDocumentOutput>('google-drive', 'getDocument', input);\\n}\\n```\\n\\n- 从 JSON Schema 推断 TypeScript 类型\\n- 生成 JSDoc 注释（来自 description）\\n- 生成 index.ts 汇总导出\\n- 支持增量更新（只更新变化的工具）\\n\\n提供 CLI 入口：bun run mcp:generate [serverName]",
             "status": "pending",
-            "testStrategy": "集成：模拟任务执行验证 MCP 优先、回退逻辑及指标累积；错误时不会阻塞任务。",
-            "parentId": "undefined"
+            "testStrategy": "集成测试：连接 mock server，运行 codegen，验证生成的 .ts 文件 tsc 编译通过，类型正确；生成的函数可调用并返回预期结果。",
+            "parentId": "7"
           },
           {
             "id": 5,
-            "title": "添加示例服务器与端到端验证",
-            "description": "提供可运行的示例 MCP server 与完整测试确保热插拔与生成链路可用。",
-            "dependencies": [
-              1,
-              2,
-              3,
-              4
-            ],
-            "details": "在 servers/mock-* 下新增示例 server（含 manifest+schema+简单处理），编写 bun test 覆盖 loader/watch、client 调用与 worker 路由；补充 README/CLI 使用指南说明如何生成包装与热插拔验证。",
+            "title": "沙盒代码执行集成",
+            "description": "使 Worker 能在沙盒中执行 import 了 servers/*.ts 的 Agent 生成代码。",
+            "dependencies": [3, 4],
+            "details": "扩展 packages/core/src/sandbox/ 支持代码执行模式：\\n\\n1. SandboxCodeExecutor 类：\\n   - execute(code: string, options): 在沙盒内执行 TypeScript/JavaScript 代码\\n   - 支持 import servers/* 的模块解析\\n   - 捕获 console.log/error 作为输出返回\\n   - 支持 timeout、资源限制\\n\\n2. 文件挂载策略：\\n   - 将 servers/ 目录挂载到沙盒内 /workspace/servers/\\n   - 将 _client.ts 配置为使用沙盒内的 MCP 客户端代理\\n\\n3. MCP 客户端代理（沙盒内）：\\n   - 沙盒内的 callMCPTool 通过 IPC/HTTP 调用宿主的 MCPClientManager\\n   - 或：沙盒内建立独立的 MCP 连接（需要网络权限）\\n\\n4. 安全策略：\\n   - 代码执行限制：禁止直接 I/O（除 console），禁止 process.exit\\n   - 网络限制：仅允许访问配置的 MCP 服务器\\n\\n与 WorkerExecutor 集成：识别 mode=code-execution 时走此路径。",
             "status": "pending",
-            "testStrategy": "端到端：启动示例 server，观察热插拔检测、生成功能、包装调用链路，确保测试全通过。",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：沙盒执行简单代码、import servers/* 代码、console 输出捕获；集成测试：完整的 Agent 代码执行链路，验证隔离性。",
+            "parentId": "7"
+          },
+          {
+            "id": 6,
+            "title": "Worker 双模式路由与日志集成",
+            "description": "实现 Worker 执行器的双模式路由，与 actions.jsonl 日志深度集成。",
+            "dependencies": [2, 5],
+            "details": "扩展 packages/core/src/worker/worker-executor.ts：\\n\\n1. 工具路由层：\\n   - 识别工具调用请求的目标：本地工具 / MCP 工具\\n   - 根据 per-tool 或 per-server 配置决定模式：Traditional / CodeExecution\\n   - Traditional: 调用 MCPClientManager.callTool()\\n   - CodeExecution: 调用 SandboxCodeExecutor.execute()\\n\\n2. 模式选择策略：\\n   - 配置优先级：tool.mode > server.mode > global.mode\\n   - 默认 Traditional（MVP 稳定性）\\n   - 可通过环境变量 MCP_DEFAULT_MODE 覆盖\\n\\n3. 日志集成：\\n   - actions.jsonl 记录所有 MCP 调用（包括 Traditional 和 CodeExecution）\\n   - 记录字段：tool, server, mode, input(truncated), output(truncated), latency, tokenEstimate\\n   - 代码执行模式额外记录：generatedCode, consoleOutput\\n\\n4. 指标收集：\\n   - 累积 tokensSavedByCodeExecution（对比 Traditional 模式估算）\\n   - latency 分布统计\\n\\n5. 回退机制：\\n   - MCP 调用失败时回退到本地工具（如有同名）\\n   - 记录回退事件",
+            "status": "pending",
+            "testStrategy": "单元测试：模式选择逻辑、回退机制；集成测试：双模式切换执行、日志正确记录；验证指标收集。",
+            "parentId": "7"
+          },
+          {
+            "id": 7,
+            "title": "Progressive Disclosure 增强（文件系统探索）",
+            "description": "扩展 Progressive Disclosure 机制，增加文件系统探索模式。",
+            "dependencies": [3, 4],
+            "details": "扩展 packages/core/src/tools/progressive-disclosure.ts：\\n\\n1. 新增发现通道 - 文件系统探索：\\n   - discoverByFilesystem(): 列出 servers/ 目录结构\\n   - 返回格式：服务器列表 + 每个服务器的工具文件列表\\n\\n2. 工具详情获取：\\n   - getToolDefinitionFromFile(path): 读取 servers/<server>/<tool>.ts\\n   - 解析 JSDoc 和类型签名，提取接口定义\\n   - 返回 Level 1/2/3 不同详细程度\\n\\n3. 与 search_tools 工具集成：\\n   - search_tools 新增 source 参数：'registry' | 'filesystem' | 'all'\\n   - 默认 'all'，优先返回 registry 结果，补充 filesystem 发现\\n\\n4. 提示词增强：\\n   - 系统提示中说明 Agent 可以通过 file_list + file_read 探索 servers/ 目录\\n   - 代码执行模式下推荐此方式减少 token\\n\\nToken 优化目标：\\n- Level 1 (元数据): ~50 tokens/tool\\n- Level 2 (基础定义): ~150 tokens/tool\\n- Level 3 (完整定义 + 示例): ~500 tokens/tool",
+            "status": "pending",
+            "testStrategy": "单元测试：文件系统发现逻辑、定义解析；集成测试：search_tools 双通道返回；Token 消耗测试达标。",
+            "parentId": "7"
+          },
+          {
+            "id": 8,
+            "title": "示例服务器与端到端验证",
+            "description": "提供示例 MCP 服务器，验证完整链路，测量 Token 节省。",
+            "dependencies": [1, 2, 3, 4, 5, 6, 7],
+            "details": "1. 示例服务器：\\n   - servers/mock-calculator/: 简单计算器（add/subtract/multiply）\\n   - 使用 FastMCP (Python) 或 @modelcontextprotocol/sdk (Node) 实现\\n   - 提供 STDIO 和 HTTP 双模式启动脚本\\n\\n2. 集成测试套件：\\n   - test/mcp/client.test.ts: SDK 客户端连接、工具列表、调用\\n   - test/mcp/codegen.test.ts: 代码生成、类型正确性\\n   - test/mcp/sandbox.test.ts: 沙盒代码执行\\n   - test/mcp/routing.test.ts: 双模式路由\\n   - test/mcp/e2e.test.ts: 完整 Agent 任务执行\\n\\n3. Token 节省验证：\\n   - 设计对比测试场景：读取文档 -> 处理 -> 写入\\n   - Traditional 模式：测量 tool_use 消耗的 token\\n   - CodeExecution 模式：测量代码生成 + console 输出的 token\\n   - 断言节省率 >= 70%（考虑实现开销，目标 80%+）\\n\\n4. 文档：\\n   - packages/core/src/mcp/README.md: MCP 集成使用指南\\n   - 包含：配置示例、双模式说明、代码生成 CLI、最佳实践\\n   - servers/README.md: 更新目录结构说明\\n\\n5. 外部服务器集成测试（可选/手动）：\\n   - @modelcontextprotocol/server-filesystem\\n   - @modelcontextprotocol/server-git\\n   - 提供测试脚本和说明",
+            "status": "pending",
+            "testStrategy": "bun test test/mcp/ 全量通过；Token 节省测试：对比场景验证节省率 >= 70%；文档完整且可执行。",
+            "parentId": "7"
           }
         ]
       },
