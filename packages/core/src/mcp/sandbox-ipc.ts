@@ -253,17 +253,47 @@ export function createMCPIPCHandler(mcpClient: {
       // 准备 rawContent（如果需要）
       let rawContent: MCPIPCContentItem[] | undefined;
       if (opts.includeRawContent) {
-        rawContent = result.content;
         // 检查是否需要截断
-        const contentStr = JSON.stringify(rawContent);
+        const contentStr = JSON.stringify(result.content);
         if (contentStr.length > maxLen) {
-          // 截断：只保留 type 和 text 的前 N 字符
+          // 对所有类型进行截断处理
           rawContent = result.content.map((item) => {
+            // 文本类型：截断 text 字段
             if (item.type === 'text' && item.text && item.text.length > 10000) {
               return { type: 'text' as const, text: item.text.slice(0, 10000) + '...[truncated]' };
             }
+            // 图片类型：截断 data/blob 字段
+            if (item.type === 'image') {
+              const imgItem = item as { type: 'image'; data?: string; mimeType?: string };
+              if (imgItem.data && imgItem.data.length > 10000) {
+                return {
+                  type: 'image' as const,
+                  mimeType: imgItem.mimeType ?? 'image/unknown',
+                  data: '[base64 data truncated, length: ' + imgItem.data.length + ']',
+                };
+              }
+            }
+            // 资源类型：截断 text 字段
+            if (item.type === 'resource') {
+              const resItem = item as { type: 'resource'; text?: string; uri?: string; mimeType?: string };
+              if (resItem.text && resItem.text.length > 10000) {
+                const result: MCPIPCContentItem = {
+                  type: 'resource' as const,
+                  text: resItem.text.slice(0, 10000) + '...[truncated]',
+                };
+                if (resItem.uri) {
+                  (result as { uri?: string }).uri = resItem.uri;
+                }
+                if (resItem.mimeType) {
+                  (result as { mimeType?: string }).mimeType = resItem.mimeType;
+                }
+                return result;
+              }
+            }
             return item;
           });
+        } else {
+          rawContent = result.content;
         }
       }
 

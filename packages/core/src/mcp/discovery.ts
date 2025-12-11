@@ -9,7 +9,7 @@
  * @module mcp/discovery
  */
 
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, readFile } from 'fs/promises';
 import { join, basename } from 'path';
 import { DEFAULT_SERVERS_DIR } from './types';
 
@@ -210,7 +210,8 @@ export class ToolDiscovery {
     const lines: string[] = [];
 
     if (serverName) {
-      const tools = await this.listServerTools(serverName);
+      // 使用带描述的工具列表
+      const tools = await this.listServerToolsWithDescriptions(serverName);
       lines.push(`## ${serverName}`);
       for (const tool of tools) {
         lines.push(`- ${tool.toolName}: ${tool.description ?? 'No description'}`);
@@ -218,7 +219,8 @@ export class ToolDiscovery {
     } else {
       const servers = await this.listServers();
       for (const server of servers) {
-        const tools = await this.listServerTools(server);
+        // eslint-disable-next-line no-await-in-loop -- Sequential is intentional for server iteration
+        const tools = await this.listServerToolsWithDescriptions(server);
         lines.push(`## ${server} (${tools.length} tools)`);
         for (const tool of tools) {
           lines.push(`- ${tool.toolName}: ${tool.description ?? 'No description'}`);
@@ -264,7 +266,13 @@ export class ToolDiscovery {
           hasIndex = true;
         } else if (entry === 'metadata.json' || entry === 'manifest.json') {
           metadataFile = entry;
-        } else if (entry.endsWith('.ts') && !entry.startsWith('_')) {
+        } else if (
+          (entry.endsWith('.ts') || entry.endsWith('.js')) &&
+          !entry.startsWith('_') &&
+          !entry.endsWith('.d.ts') &&
+          !entry.endsWith('.test.ts') &&
+          !entry.endsWith('.spec.ts')
+        ) {
           toolFiles.push(entry);
         }
       }
@@ -289,13 +297,105 @@ export class ToolDiscovery {
    */
   private extractToolSummaries(server: ServerDirectory): ToolSummary[] {
     return server.toolFiles.map((file) => {
-      const toolName = basename(file, '.ts');
+      // 移除扩展名 (.ts 或 .js)
+      const toolName = basename(file).replace(/\.(ts|js)$/, '');
       return {
         serverName: server.name,
         toolName,
         filePath: join(server.path, file),
       };
     });
+  }
+
+  /**
+   * 从 metadata.json 加载工具描述
+   *
+   * @param serverName - 服务器名称
+   * @returns 工具名 -> 描述的映射
+   */
+  async loadMetadata(serverName: string): Promise<Record<string, string>> {
+    const serverInfo = await this.getServerInfo(serverName);
+    if (!serverInfo || !serverInfo.metadataFile) {
+      return {};
+    }
+
+    const metadataPath = join(serverInfo.path, serverInfo.metadataFile);
+
+    try {
+      const content = await readFile(metadataPath, 'utf-8');
+      const metadata = JSON.parse(content) as {
+        tools?: { name: string; description?: string }[];
+      };
+
+      if (!metadata.tools || !Array.isArray(metadata.tools)) {
+        return {};
+      }
+
+      const descriptions: Record<string, string> = {};
+      for (const tool of metadata.tools) {
+        if (tool.name && tool.description) {
+          descriptions[tool.name] = tool.description;
+        }
+      }
+      return descriptions;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * 获取带描述的工具摘要列表
+   *
+   * @param serverName - 服务器名称
+   * @returns 包含描述的工具摘要
+   */
+  async listServerToolsWithDescriptions(serverName: string): Promise<ToolSummary[]> {
+    const tools = await this.listServerTools(serverName);
+    const descriptions = await this.loadMetadata(serverName);
+
+    return tools.map((tool) => {
+      const result: ToolSummary = {
+        serverName: tool.serverName,
+        toolName: tool.toolName,
+        filePath: tool.filePath,
+      };
+      const desc = descriptions[tool.toolName];
+      if (desc) {
+        result.description = desc;
+      }
+      return result;
+    });
+  }
+
+  /**
+   * 生成工具简介（增强版，带描述）
+   *
+   * @param serverName - 可选，指定服务器
+   * @returns Markdown 格式的工具简介
+   */
+  async generateToolBriefEnhanced(serverName?: string): Promise<string> {
+    const lines: string[] = [];
+
+    if (serverName) {
+      const tools = await this.listServerToolsWithDescriptions(serverName);
+      lines.push(`## ${serverName}`);
+      for (const tool of tools) {
+        lines.push(`- ${tool.toolName}: ${tool.description ?? 'No description'}`);
+      }
+    } else {
+      const servers = await this.listServers();
+      for (const server of servers) {
+        // eslint-disable-next-line no-await-in-loop -- Sequential is intentional for server iteration
+        const tools = await this.listServerToolsWithDescriptions(server);
+        lines.push(`## ${server} (${tools.length} tools)`);
+        for (const tool of tools) {
+          lines.push(`- ${tool.toolName}: ${tool.description ?? 'No description'}`);
+        }
+        lines.push('');
+      }
+    }
+
+    return lines.join('\n');
   }
 }
 

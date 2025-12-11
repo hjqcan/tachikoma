@@ -126,6 +126,17 @@ export class MCPModeRouter {
 
   /**
    * 调用 MCP 工具（自动选择模式）
+   *
+   * 模式分流说明：
+   * - `traditional`: 通过 MCPClientManager 直接调用 MCP 服务器
+   * - `code-execution`: 理论上应在沙盒中执行生成的代码包装器
+   *   （当前实现：回退到 traditional 模式，因为沙盒执行需要 Worker 集成）
+   *
+   * @param serverName - 服务器名称
+   * @param toolName - 工具名称
+   * @param args - 调用参数
+   * @param options - 调用选项
+   * @returns 调用结果
    */
   async callTool(
     serverName: string,
@@ -141,7 +152,22 @@ export class MCPModeRouter {
       );
     }
 
-    // 使用 MCPClientManager 调用（它会根据连接状态处理）
+    // 模式分流
+    if (decision.mode === 'code-execution') {
+      // code-execution 模式当前回退到 traditional
+      // 真正的代码执行需要在沙盒环境中进行，通过 IPC 桥接
+      // 这里先记录日志并回退，避免误导用户
+      if (this.config.enableLogging) {
+        console.debug(
+          `[MCPModeRouter] Note: code-execution mode falling back to traditional ` +
+            `(sandbox integration pending via IPC bridge)`
+        );
+      }
+      // 回退到 traditional 调用
+      return this.client.callTool(serverName, toolName, args, options);
+    }
+
+    // traditional 模式：直接通过 MCP 客户端调用
     return this.client.callTool(serverName, toolName, args, options);
   }
 
