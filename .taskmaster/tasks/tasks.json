@@ -632,7 +632,7 @@
           "5",
           "6"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -722,9 +722,10 @@
               4
             ],
             "details": "扩展 packages/core/src/tools/progressive-disclosure.ts：\\n\\n1. 新增发现通道 - 文件系统探索：\\n   - discoverByFilesystem(): 列出 servers/ 目录结构\\n   - 返回格式：服务器列表 + 每个服务器的工具文件列表\\n\\n2. 工具详情获取：\\n   - getToolDefinitionFromFile(path): 读取 servers/<server>/<tool>.ts\\n   - 解析 JSDoc 和类型签名，提取接口定义\\n   - 返回 Level 1/2/3 不同详细程度\\n\\n3. 与 search_tools 工具集成：\\n   - search_tools 新增 source 参数：'registry' | 'filesystem' | 'all'\\n   - 默认 'all'，优先返回 registry 结果，补充 filesystem 发现\\n\\n4. 提示词增强：\\n   - 系统提示中说明 Agent 可以通过 file_list + file_read 探索 servers/ 目录\\n   - 代码执行模式下推荐此方式减少 token\\n\\nToken 优化目标：\\n- Level 1 (元数据): ~50 tokens/tool\\n- Level 2 (基础定义): ~150 tokens/tool\\n- Level 3 (完整定义 + 示例): ~500 tokens/tool",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：文件系统发现逻辑、定义解析；集成测试：search_tools 双通道返回；Token 消耗测试达标。",
-            "parentId": "7"
+            "parentId": "7",
+            "updatedAt": "2025-12-11T09:00:14.929Z"
           },
           {
             "id": 8,
@@ -740,12 +741,13 @@
               7
             ],
             "details": "1. 示例服务器：\\n   - servers/mock-calculator/: 简单计算器（add/subtract/multiply）\\n   - 使用 FastMCP (Python) 或 @modelcontextprotocol/sdk (Node) 实现\\n   - 提供 STDIO 和 HTTP 双模式启动脚本\\n\\n2. 集成测试套件：\\n   - test/mcp/client.test.ts: SDK 客户端连接、工具列表、调用\\n   - test/mcp/codegen.test.ts: 代码生成、类型正确性\\n   - test/mcp/sandbox.test.ts: 沙盒代码执行\\n   - test/mcp/routing.test.ts: 双模式路由\\n   - test/mcp/e2e.test.ts: 完整 Agent 任务执行\\n\\n3. Token 节省验证：\\n   - 设计对比测试场景：读取文档 -> 处理 -> 写入\\n   - Traditional 模式：测量 tool_use 消耗的 token\\n   - CodeExecution 模式：测量代码生成 + console 输出的 token\\n   - 断言节省率 >= 70%（考虑实现开销，目标 80%+）\\n\\n4. 文档：\\n   - packages/core/src/mcp/README.md: MCP 集成使用指南\\n   - 包含：配置示例、双模式说明、代码生成 CLI、最佳实践\\n   - servers/README.md: 更新目录结构说明\\n\\n5. 外部服务器集成测试（可选/手动）：\\n   - @modelcontextprotocol/server-filesystem\\n   - @modelcontextprotocol/server-git\\n   - 提供测试脚本和说明",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "bun test test/mcp/ 全量通过；Token 节省测试：对比场景验证节省率 >= 70%；文档完整且可执行。",
-            "parentId": "7"
+            "parentId": "7",
+            "updatedAt": "2025-12-11T09:00:34.731Z"
           }
         ],
-        "updatedAt": "2025-12-11T08:15:45.447Z"
+        "updatedAt": "2025-12-11T09:00:34.731Z"
       },
       {
         "id": "8",
@@ -1592,9 +1594,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T08:15:45.449Z",
+      "lastModified": "2025-12-11T09:00:34.733Z",
       "taskCount": 16,
-      "completedCount": 6,
+      "completedCount": 7,
       "tags": [
         "master"
       ]

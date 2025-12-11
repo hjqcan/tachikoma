@@ -175,3 +175,15 @@ export type {
   DiscoveryResult,
   DiscoveryError,
 } from './discovery';
+
+// ============================================================================
+// 工具注册器导出
+// ============================================================================
+
+export { MCPToolRegistrar, createMCPToolRegistrar } from './registrar';
+
+export type {
+  MCPToolRegistrarConfig,
+  RegisterResult,
+} from './registrar';
+

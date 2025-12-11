@@ -294,7 +294,7 @@ describe('MCP Config Loading', () => {
       const config = await loadMCPConfig(testDir);
 
       expect(config.servers.length).toBe(1);
-      expect(config.servers[0].name).toBe('test-server');
+      expect(config.servers[0]?.name).toBe('test-server');
       expect(config.defaultMode).toBe('code-execution');
     });
 
@@ -319,7 +319,7 @@ describe('MCP Config Loading', () => {
       const config = loadMCPConfigFromEnv();
 
       expect(config.servers?.length).toBe(1);
-      expect(config.servers?.[0].name).toBe('env-server');
+      expect(config.servers?.[0]?.name).toBe('env-server');
     });
 
     it('should parse MCP_DEFAULT_MODE', () => {
@@ -375,7 +375,7 @@ describe('MCP Config Loading', () => {
       const merged = mergeConfigs(base, override);
 
       expect(merged.servers.length).toBe(1);
-      expect(merged.servers[0].name).toBe('new');
+      expect(merged.servers[0]?.name).toBe('new');
     });
   });
 
@@ -446,7 +446,7 @@ describe('MCP Config Validation', () => {
       const errors = validateMCPConfig(config);
 
       expect(errors.length).toBeGreaterThan(0);
-      expect(errors[0].path).toContain('name');
+      expect(errors[0]?.path).toContain('name');
     });
 
     it('should detect duplicate names', () => {
@@ -645,8 +645,8 @@ describe('MCP Utility Functions', () => {
       const example = createExampleMCPConfig();
 
       expect(example.servers.length).toBe(2);
-      expect(example.servers[0].name).toBe('filesystem');
-      expect(example.servers[1].name).toBe('calculator');
+      expect(example.servers[0]?.name).toBe('filesystem');
+      expect(example.servers[1]?.name).toBe('calculator');
 
       // Validate the example config
       const errors = validateMCPConfig(example);

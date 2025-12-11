@@ -19,6 +19,9 @@ import type {
 import { createWorkerBackend } from './backend-factory';
 import type { Logger, Tracer, MetricsCollector, Span } from '../observability';
 import { noopLogger, createTracer, noopMetrics, WORKER_METRICS } from '../observability';
+import type { MCPClientManager } from '../mcp';
+import { MCPToolRegistrar } from '../mcp';
+import { globalToolRegistry } from '../tools/registry';
 
 // ============================================================================
 // 类型定义
@@ -42,6 +45,10 @@ export interface WorkerExecutorConfig {
   tracer?: Tracer | undefined;
   /** Metrics 收集器（可选） */
   metrics?: MetricsCollector | undefined;
+  /** MCP 客户端管理器（可选，用于 MCP 工具集成） */
+  mcpClient?: MCPClientManager | undefined;
+  /** 是否自动注册 MCP 工具到 ToolRegistry（默认 true） */
+  autoRegisterMCPTools?: boolean | undefined;
 }
 
 /**
@@ -97,6 +104,7 @@ export class WorkerExecutor {
   private readonly logger: Logger;
   private readonly tracer: Tracer;
   private readonly metrics: MetricsCollector;
+  private mcpRegistrar: MCPToolRegistrar | null = null;
 
   constructor(config: WorkerExecutorConfig) {
     this.config = config;
@@ -114,6 +122,21 @@ export class WorkerExecutor {
     if (this.isInitialized) return;
 
     this.backend = await createWorkerBackend(this.config.backendConfig);
+
+    // MCP 工具自动注册
+    if (this.config.mcpClient && this.config.autoRegisterMCPTools !== false) {
+      this.mcpRegistrar = new MCPToolRegistrar(
+        this.config.mcpClient,
+        globalToolRegistry
+      );
+      const result = await this.mcpRegistrar.registerAll();
+      this.logger.info('MCP tools registered', {
+        registered: result.registered,
+        skipped: result.skipped,
+        failed: result.failed.size,
+      });
+    }
+
     this.isInitialized = true;
   }
 
@@ -533,6 +556,12 @@ export class WorkerExecutor {
    * 释放资源
    */
   async dispose(): Promise<void> {
+    // 注销 MCP 工具
+    if (this.mcpRegistrar) {
+      this.mcpRegistrar.unregisterAll();
+      this.mcpRegistrar = null;
+    }
+
     if (this.backend) {
       await this.backend.dispose();
       this.backend = null;

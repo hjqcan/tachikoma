@@ -251,6 +251,17 @@ export class MCPClientManager {
   }
 
   /**
+   * 获取所有已连接的服务器名称
+   *
+   * @returns 已连接的服务器名称列表
+   */
+  getConnectedServers(): string[] {
+    return Array.from(this.clients.entries())
+      .filter(([, instance]) => instance.state.status === 'connected')
+      .map(([name]) => name);
+  }
+
+  /**
    * 获取客户端状态
    *
    * @param serverName - 服务器名称
