@@ -86,3 +86,15 @@ export {
 } from './config';
 
 export type { MCPConfigError } from './config';
+
+// ============================================================================
+// 客户端导出
+// ============================================================================
+
+export {
+  MCPClientManager,
+  getMCPClientManager,
+  resetMCPClientManager,
+} from './client';
+
+export type { MCPCallOptions } from './client';
