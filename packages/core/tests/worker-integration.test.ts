@@ -129,7 +129,7 @@ function createTestTools(): Tool[] {
     {
       name: 'echo',
       description: 'Echo a message',
-      parameters: {
+      inputSchema: {
         type: 'object',
         properties: {
           message: { type: 'string', description: 'Message to echo' },
@@ -194,42 +194,50 @@ describe('WorkerExecutor 集成测试', () => {
     });
 
     it('应处理执行错误并更新状态为 error', async () => {
-      // 创建会抛错的 LLM client
-      const errorLLMClient = {
-        isAvailable: () => true,
-        complete: mock(async () => {
-          throw new Error('LLM API Error');
-        }),
-      };
+      // Mock console.error
+      const originalConsoleError = console.error;
+      console.error = () => {};
 
-      const backend = new GenericAgentBackend({
-        provider: 'openai',
-        model: 'gpt-4',
-        llmClient: errorLLMClient as never,
-      });
+      try {
+        // 创建会抛错的 LLM client
+        const errorLLMClient = {
+          isAvailable: () => true,
+          complete: mock(async () => {
+            throw new Error('LLM API Error');
+          }),
+        };
 
-      const executor = new WorkerExecutor({
-        backendConfig: { provider: 'openai', model: 'gpt-4' },
-        sessionManager,
-        workerId: 'worker-002',
-      });
+        const backend = new GenericAgentBackend({
+          provider: 'openai',
+          model: 'gpt-4',
+          llmClient: errorLLMClient as never,
+        });
 
-      (executor as unknown as { backend: typeof backend }).backend = backend;
-      (executor as unknown as { isInitialized: boolean }).isInitialized = true;
+        const executor = new WorkerExecutor({
+          backendConfig: { provider: 'openai', model: 'gpt-4' },
+          sessionManager,
+          workerId: 'worker-002',
+        });
 
-      const subtask = createTestSubTask();
-      const tools = createTestTools();
+        (executor as unknown as { backend: typeof backend }).backend = backend;
+        (executor as unknown as { isInitialized: boolean }).isInitialized = true;
 
-      // 使用 executeAndCollect 返回错误结果
-      const result = await executor.executeAndCollect(subtask, tools);
-      
-      // 验证执行失败
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('LLM API Error');
+        const subtask = createTestSubTask();
+        const tools = createTestTools();
 
-      // 注意：executeAndCollect 内部捕获异常，所以不一定有 error 状态
-      // 但消息中应该包含错误
-      expect(result.messages.some(m => m.type === 'error') || result.error).toBeTruthy();
+        // 使用 executeAndCollect 返回错误结果
+        const result = await executor.executeAndCollect(subtask, tools);
+        
+        // 验证执行失败
+        expect(result.success).toBe(false);
+        expect(result.error).toContain('LLM API Error');
+
+        // 注意：executeAndCollect 内部捕获异常，所以不一定有 error 状态
+        // 但消息中应该包含错误
+        expect(result.messages.some(m => m.type === 'error') || result.error).toBeTruthy();
+      } finally {
+        console.error = originalConsoleError;
+      }
     });
   });
 
@@ -399,7 +407,7 @@ describe('GenericAgentBackend 资源限制集成', () => {
       {
         name: 'echo',
         description: 'Echo',
-        parameters: { type: 'object', properties: {}, required: [] },
+        inputSchema: { type: 'object', properties: {}, required: [] },
         execute: async () => ({ result: 'ok' }),
       },
     ];

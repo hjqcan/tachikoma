@@ -57,7 +57,7 @@ function createMockTool(name: string, handler: (input: unknown) => unknown): Too
   return {
     name,
     description: `Mock tool: ${name}`,
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: { properties: {}, type: 'object' },
     execute: async (input) => handler(input),
   };
 }
@@ -256,6 +256,7 @@ describe('GenericAgentBackend', () => {
         id: 'test-task-1',
         type: 'atomic',
         objective: 'Say hello',
+        // @ts-expect-error status field legacy
         status: 'pending',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -303,6 +304,7 @@ describe('GenericAgentBackend', () => {
         id: 'test-task-2',
         type: 'atomic',
         objective: 'Use a tool',
+        // @ts-expect-error status field legacy
         status: 'pending',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -344,6 +346,7 @@ describe('GenericAgentBackend', () => {
         id: 'test-task-3',
         type: 'atomic',
         objective: 'Long task',
+        // @ts-expect-error status field legacy
         status: 'pending',
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -370,43 +373,52 @@ describe('GenericAgentBackend', () => {
 
   describe('错误处理', () => {
     it('应处理 LLM 错误', async () => {
-      const errorClient: LLMClient = {
-        provider: 'mock',
-        complete: async () => {
-          throw new Error('Rate limit exceeded');
-        },
-        isAvailable: () => true,
-      };
+      // Mock console.error
+      const originalConsoleError = console.error;
+      console.error = () => {};
 
-      backend = new GenericAgentBackend({
-        provider: 'mock',
-        model: 'mock-model',
-        llmClient: errorClient,
-      });
+      try {
+        const errorClient: LLMClient = {
+          provider: 'mock',
+          complete: async () => {
+            throw new Error('Rate limit exceeded');
+          },
+          isAvailable: () => true,
+        };
 
-      const task: WorkerTask = {
-        id: 'test-task-4',
-        type: 'atomic',
-        objective: 'Fail task',
+        backend = new GenericAgentBackend({
+          provider: 'mock',
+          model: 'mock-model',
+          llmClient: errorClient,
+        });
+
+        const task: WorkerTask = {
+          id: 'test-task-4',
+          type: 'atomic',
+          objective: 'Fail task',
+          // @ts-expect-error status field legacy
         status: 'pending',
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
 
-      const messages: WorkerMessage[] = [];
-      for await (const msg of backend.execute(task, [], {})) {
-        messages.push(msg);
+        const messages: WorkerMessage[] = [];
+        for await (const msg of backend.execute(task, [], {})) {
+          messages.push(msg);
+        }
+
+        // 验证错误消息
+        const errorMessages = messages.filter((m) => m.type === 'error');
+        expect(errorMessages.length).toBeGreaterThan(0);
+        expect(errorMessages[0]?.type === 'error' && errorMessages[0].error).toContain('Rate limit');
+        expect(errorMessages[0]?.type === 'error' && errorMessages[0].retryable).toBe(true);
+
+        // 验证最终状态为失败
+        const statusMessages = messages.filter((m) => m.type === 'status');
+        expect(statusMessages.some((m) => m.type === 'status' && m.status === 'failed')).toBe(true);
+      } finally {
+        console.error = originalConsoleError;
       }
-
-      // 验证错误消息
-      const errorMessages = messages.filter((m) => m.type === 'error');
-      expect(errorMessages.length).toBeGreaterThan(0);
-      expect(errorMessages[0]?.type === 'error' && errorMessages[0].error).toContain('Rate limit');
-      expect(errorMessages[0]?.type === 'error' && errorMessages[0].retryable).toBe(true);
-
-      // 验证最终状态为失败
-      const statusMessages = messages.filter((m) => m.type === 'status');
-      expect(statusMessages.some((m) => m.type === 'status' && m.status === 'failed')).toBe(true);
     });
   });
 });
