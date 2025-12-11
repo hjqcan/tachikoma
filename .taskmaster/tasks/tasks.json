@@ -757,7 +757,7 @@
         "testStrategy": "- 集成测试：验证 GenericAgentBackend 执行时自动触发压缩/摘要\n- 性能测试：大上下文（>100K tokens）处理时间 < 1s\n- 回归测试：确保现有600个测试继续通过\n- Token 估算精度测试：与真实 tokenizer 对比误差 < 20%",
         "priority": "medium",
         "dependencies": [],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -833,12 +833,13 @@
               5
             ],
             "details": "1. 集成测试（packages/core/tests/context-integration.test.ts）：\n   - GenericAgentBackend + ContextManager 端到端测试\n   - 模拟超阈值场景验证自动缩减\n   - 笔记系统注入验证\n2. 性能基准测试（packages/core/tests/context-perf.test.ts）：\n   - 100K tokens 上下文压缩时间 < 500ms\n   - 摘要生成时间（不含 LLM 调用）< 100ms\n   - Token 估算 1000 条消息 < 50ms\n3. 更新文档：\n   - packages/core/src/context/README.md：使用指南、配置说明、最佳实践\n   - docs/上下文工程模块实现总结.md：更新集成说明\n4. 确保现有 600 个测试继续通过\n5. 添加 JSDoc 注释到所有公开 API",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "bun test 全量通过（600+ 测试）；性能基准达标；文档完整且示例可运行",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T16:30:43.872Z"
           }
         ],
-        "updatedAt": "2025-12-11T15:14:59.703Z"
+        "updatedAt": "2025-12-11T16:30:43.872Z"
       },
       {
         "id": "9",
@@ -1615,9 +1616,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T15:14:59.704Z",
+      "lastModified": "2025-12-11T16:30:43.874Z",
       "taskCount": 16,
-      "completedCount": 7,
+      "completedCount": 8,
       "tags": [
         "master"
       ]

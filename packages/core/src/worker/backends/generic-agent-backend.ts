@@ -674,6 +674,9 @@ When the task is complete, provide a final summary of what was accomplished.`));
       
       // 创建进度追踪器
       const progressTracker = new ProgressTracker();
+      
+      // 追踪最后一轮未执行的工具调用（用于 grace round）
+      let pendingToolCalls: ParsedToolCall[] = [];
 
       while (!done && round < limits.maxThinkingRounds) {
         round++;
@@ -798,9 +801,15 @@ When the task is complete, provide a final summary of what was accomplished.`));
         const toolCalls = hasToolCallMarker ? parseToolCalls(response.content) : [];
         const toolCallsParseFailed = hasToolCallMarker && toolCalls.length === 0;
         let toolCallsSucceeded = 0;
+        
+        // 更新待执行工具调用（用于检测 loop 提前终止时是否有未执行的调用）
+        pendingToolCalls = toolCalls;
 
         // 检查是否有工具调用
         if (hasToolCallMarker && toolCalls.length > 0) {
+          
+          // 清空待执行队列（即将执行）
+          pendingToolCalls = [];
 
           for (const call of toolCalls) {
             // 发出工具调用消息
@@ -984,6 +993,199 @@ When the task is complete, provide a final summary of what was accomplished.`));
 
       console.debug(`[GenericAgentBackend] Loop finished. done=${done}, round=${round}, maxRounds=${limits.maxThinkingRounds}`);
 
+      // =========================================================================
+      // Grace Round: 执行最后一批未完成的工具调用
+      // =========================================================================
+      // 当 loop 因 maxThinkingRounds 终止但最后一轮 LLM 响应包含工具调用时，
+      // 这些调用会被记录到 thinking.jsonl 但不会执行（因为循环已经退出）。
+      // 这里添加一个 "grace round"，确保最后一批工具调用被执行。
+      //
+      // 安全策略：
+      // - 保留关键决策审批流程（不绕过审批）
+      // - 检查 token 预算和 maxToolCalls 限制
+      // - 追踪成功/失败状态
+      
+      if (pendingToolCalls.length > 0 && !done) {
+        // 检查 token 预算是否已超出
+        if (isOverBudget()) {
+          console.warn(
+            `[GenericAgentBackend] Grace round skipped: token budget exceeded ` +
+            `(${totalTokensUsed}/${maxTotalTokens}). ${pendingToolCalls.length} tool calls not executed.`
+          );
+          yield {
+            type: 'error',
+            error: `Grace round skipped: token budget exceeded. ${pendingToolCalls.length} pending tool calls not executed.`,
+            code: 'GRACE_ROUND_BUDGET_EXCEEDED',
+            retryable: false,
+            timestamp: Date.now(),
+          };
+        } else {
+          console.warn(
+            `[GenericAgentBackend] Grace round: executing ${pendingToolCalls.length} pending tool calls ` +
+            `that were parsed but not executed due to loop termination.`
+          );
+          
+          yield {
+            type: 'thinking',
+            content: `[Grace Round] Executing ${pendingToolCalls.length} pending tool call(s) before completing...`,
+            timestamp: Date.now(),
+          };
+          
+          let graceRoundSucceeded = 0;
+          let graceRoundFailed = 0;
+          
+          for (const call of pendingToolCalls) {
+            // 检查 maxToolCalls 限制
+            if (totalToolCalls >= limits.maxToolCalls) {
+              console.warn(
+                `[GenericAgentBackend] Grace round: max tool calls (${limits.maxToolCalls}) reached. ` +
+                `Remaining ${pendingToolCalls.length - graceRoundSucceeded - graceRoundFailed} calls skipped.`
+              );
+              yield {
+                type: 'error',
+                error: `Grace round: max tool calls limit reached. Some pending calls were not executed.`,
+                code: 'GRACE_ROUND_MAX_TOOLS_EXCEEDED',
+                retryable: false,
+                timestamp: Date.now(),
+              };
+              break;
+            }
+            
+            // 发出工具调用消息
+            yield {
+              type: 'tool_call',
+              tool: call.name,
+              input: call.input,
+              callId: call.callId,
+              timestamp: Date.now(),
+            };
+
+            // 发出执行状态
+            yield {
+              type: 'status',
+              status: 'acting',
+              timestamp: Date.now(),
+            };
+
+            // 查找工具定义（用于元数据检查）
+            const tool = tools.find((t) => t.name === call.name);
+            
+            // 保留关键决策审批流程（不绕过安全策略）
+            const keyDecisionResult = isKeyDecision(
+              call.name,
+              call.input,
+              tool,
+              options.keyDecisionPolicy,
+              options.riskPolicy,
+              options.unknownToolPolicy
+            );
+
+            if (keyDecisionResult.isKeyDecision) {
+              const approvalRequest: WorkerApprovalRequestMessage = {
+                type: 'approval_request',
+                requestId: `approval-grace-${call.callId}`,
+                action: call.name,
+                description: `[Grace Round] ${keyDecisionResult.reason}: ${call.name}`,
+                details: { 
+                  tool: call.name, 
+                  input: call.input,
+                  category: keyDecisionResult.category,
+                  riskLevel: keyDecisionResult.riskLevel,
+                  graceRound: true,
+                },
+                timestamp: Date.now(),
+                category: keyDecisionResult.category,
+                defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision,
+                timeout: options.keyDecisionPolicy?.approvalTimeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout,
+              };
+
+              yield approvalRequest;
+
+              // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
+              const approved = await this.waitForApproval(approvalRequest, options, task.id);
+              if (!approved) {
+                const rejectedResult = `[Grace Round] Tool call ${call.name} was rejected by approval process.`;
+                context.addMessage(createToolMessage(call.callId, rejectedResult));
+                graceRoundFailed++;
+
+                yield {
+                  type: 'tool_result',
+                  tool: call.name,
+                  callId: call.callId,
+                  result: rejectedResult,
+                  success: false,
+                  duration: 0,
+                  timestamp: Date.now(),
+                };
+
+                continue;
+              }
+            }
+
+            // 执行工具
+            const startTime = Date.now();
+            // eslint-disable-next-line no-await-in-loop -- Grace round tool execution is intentionally sequential
+            const result = await this.executeTool(call, tools, options);
+            const duration = Date.now() - startTime;
+            totalToolCalls++;
+            
+            if (result.success) {
+              graceRoundSucceeded++;
+            } else {
+              graceRoundFailed++;
+            }
+
+            // 添加结果到上下文
+            context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
+
+            // 发出工具结果消息
+            yield {
+              type: 'tool_result',
+              tool: call.name,
+              callId: call.callId,
+              result: result.output,
+              success: result.success,
+              duration,
+              timestamp: Date.now(),
+            };
+          }
+          
+          // 清空待执行队列
+          pendingToolCalls = [];
+          
+          // 根据执行结果决定最终状态
+          // 只有所有工具调用都成功时才标记为完成
+          if (graceRoundFailed === 0 && graceRoundSucceeded > 0) {
+            done = true;
+            console.debug(`[GenericAgentBackend] Grace round completed successfully. ${graceRoundSucceeded} tools executed.`);
+          } else if (graceRoundSucceeded > 0) {
+            // 部分成功：仍标记为完成，但发出警告
+            done = true;
+            console.warn(
+              `[GenericAgentBackend] Grace round partially succeeded. ` +
+              `${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`
+            );
+            yield {
+              type: 'error',
+              error: `Grace round partially succeeded: ${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`,
+              code: 'GRACE_ROUND_PARTIAL_SUCCESS',
+              retryable: false,
+              timestamp: Date.now(),
+            };
+          } else {
+            // 全部失败
+            console.error(`[GenericAgentBackend] Grace round failed. All ${graceRoundFailed} tool calls failed.`);
+            yield {
+              type: 'error',
+              error: `Grace round failed: all ${graceRoundFailed} tool calls failed.`,
+              code: 'GRACE_ROUND_FAILED',
+              retryable: false,
+              timestamp: Date.now(),
+            };
+          }
+        }
+      }
+
       // 发出完成状态
       yield {
         type: 'status',
@@ -992,8 +1194,8 @@ When the task is complete, provide a final summary of what was accomplished.`));
         tokensUsed: totalTokensUsed,
       };
 
-      // 如果达到最大轮次，发出警告
-      if (round >= limits.maxThinkingRounds) {
+      // 如果达到最大轮次，发出警告（但如果 grace round 成功执行了，不算失败）
+      if (round >= limits.maxThinkingRounds && !done) {
         yield {
           type: 'error',
           error: `Max thinking rounds (${limits.maxThinkingRounds}) exceeded`,
