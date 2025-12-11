@@ -262,7 +262,7 @@ const result = await executor.executeAndCollect(subtask, tools, {
   resourceLimits: {
     maxThinkingRounds: 30, // 最大思考轮数
     maxToolCalls: 100, // 最大工具调用次数
-    maxTotalTokens: 500_000, // Token 预算
+    maxTotalTokens: 990_000, // Token 预算
     maxMessageWindow: 50, // 上下文消息窗口
   },
   riskPolicy: {

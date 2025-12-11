@@ -334,7 +334,7 @@ export interface ResourceLimits {
  * 默认资源限制
  */
 export const DEFAULT_RESOURCE_LIMITS: Required<ResourceLimits> = {
-  maxTotalTokens: 500_000,     // 50万 Token 总预算
+  maxTotalTokens: 990_000,     // 99万 Token 总预算
   maxTokensPerCall: 8_192,     // 单次最大 8K
   maxMessageWindow: 50,        // 保留最近 50 条消息
   maxThinkingRounds: 50,       // 最大 50 轮
