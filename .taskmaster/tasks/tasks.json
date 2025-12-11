@@ -694,9 +694,10 @@
               4
             ],
             "details": "扩展 packages/core/src/sandbox/ 支持代码执行模式：\\n\\n1. SandboxCodeExecutor 类：\\n   - execute(code: string, options): 在沙盒内执行 TypeScript/JavaScript 代码\\n   - 支持 import servers/* 的模块解析\\n   - 捕获 console.log/error 作为输出返回\\n   - 支持 timeout、资源限制\\n\\n2. 文件挂载策略：\\n   - 将 servers/ 目录挂载到沙盒内 /workspace/servers/\\n   - 将 _client.ts 配置为使用沙盒内的 MCP 客户端代理\\n\\n3. MCP 客户端代理（沙盒内）：\\n   - 沙盒内的 callMCPTool 通过 IPC/HTTP 调用宿主的 MCPClientManager\\n   - 或：沙盒内建立独立的 MCP 连接（需要网络权限）\\n\\n4. 安全策略：\\n   - 代码执行限制：禁止直接 I/O（除 console），禁止 process.exit\\n   - 网络限制：仅允许访问配置的 MCP 服务器\\n\\n与 WorkerExecutor 集成：识别 mode=code-execution 时走此路径。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：沙盒执行简单代码、import servers/* 代码、console 输出捕获；集成测试：完整的 Agent 代码执行链路，验证隔离性。",
-            "parentId": "7"
+            "parentId": "7",
+            "updatedAt": "2025-12-11T08:15:36.570Z"
           },
           {
             "id": 6,
@@ -707,9 +708,10 @@
               5
             ],
             "details": "扩展 packages/core/src/worker/worker-executor.ts：\\n\\n1. 工具路由层：\\n   - 识别工具调用请求的目标：本地工具 / MCP 工具\\n   - 根据 per-tool 或 per-server 配置决定模式：Traditional / CodeExecution\\n   - Traditional: 调用 MCPClientManager.callTool()\\n   - CodeExecution: 调用 SandboxCodeExecutor.execute()\\n\\n2. 模式选择策略：\\n   - 配置优先级：tool.mode > server.mode > global.mode\\n   - 默认 Traditional（MVP 稳定性）\\n   - 可通过环境变量 MCP_DEFAULT_MODE 覆盖\\n\\n3. 日志集成：\\n   - actions.jsonl 记录所有 MCP 调用（包括 Traditional 和 CodeExecution）\\n   - 记录字段：tool, server, mode, input(truncated), output(truncated), latency, tokenEstimate\\n   - 代码执行模式额外记录：generatedCode, consoleOutput\\n\\n4. 指标收集：\\n   - 累积 tokensSavedByCodeExecution（对比 Traditional 模式估算）\\n   - latency 分布统计\\n\\n5. 回退机制：\\n   - MCP 调用失败时回退到本地工具（如有同名）\\n   - 记录回退事件",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：模式选择逻辑、回退机制；集成测试：双模式切换执行、日志正确记录；验证指标收集。",
-            "parentId": "7"
+            "parentId": "7",
+            "updatedAt": "2025-12-11T08:15:45.447Z"
           },
           {
             "id": 7,
@@ -743,7 +745,7 @@
             "parentId": "7"
           }
         ],
-        "updatedAt": "2025-12-11T07:55:53.512Z"
+        "updatedAt": "2025-12-11T08:15:45.447Z"
       },
       {
         "id": "8",
@@ -1590,7 +1592,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T07:55:53.514Z",
+      "lastModified": "2025-12-11T08:15:45.449Z",
       "taskCount": 16,
       "completedCount": 6,
       "tags": [

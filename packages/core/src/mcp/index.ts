@@ -115,3 +115,43 @@ export type {
   GeneratedFile,
   GeneratorError,
 } from './generator';
+
+// ============================================================================
+// Sandbox IPC 导出
+// ============================================================================
+
+export {
+  MCP_IPC_PREFIX,
+  decodeMCPIPCMessage,
+  encodeMCPIPCMessage,
+  generateRequestId,
+  sendMCPIPCRequest,
+  handleMCPIPCResponse,
+  createMCPIPCHandler,
+  processMCPIPCLine,
+} from './sandbox-ipc';
+
+export type {
+  MCPIPCRequest,
+  MCPIPCResponse,
+  MCPIPCContentItem,
+  MCPIPCMessage,
+  MCPIPCRequestHandler,
+} from './sandbox-ipc';
+
+// ============================================================================
+// 路由器导出
+// ============================================================================
+
+export {
+  MCPModeRouter,
+  createMCPModeRouter,
+  isMCPIPCLine,
+  filterMCPIPCLines,
+} from './router';
+
+export type {
+  MCPRouterConfig,
+  RouteDecision,
+  IPCLineResult,
+} from './router';

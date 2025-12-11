@@ -203,20 +203,83 @@ async function callViaClient<T>(
 /**
  * 通过 IPC 调用（沙盒环境）
  *
- * TODO: 在 7.5 沙盒代码执行集成时实现
+ * 在沙盒进程中运行时，通过 stdout 发送请求，等待宿主进程处理后通过 stdin 返回结果
  */
 async function callViaSandboxIPC<T>(
   serverName: string,
   toolName: string,
   args: Record<string, unknown>,
-  _options: ToolCallOptions
+  options: ToolCallOptions
 ): Promise<MCPToolResult<T>> {
-  // 沙盒 IPC 实现将在 7.5 中添加
-  // 当前返回错误提示
-  return errorResult<T>(
-    `Sandbox IPC not yet implemented. ` +
-      `Attempted to call ${serverName}.${toolName} with args: ${JSON.stringify(args)}`
-  );
+  try {
+    // 动态导入 IPC 模块（避免在非沙盒环境加载）
+    // 在实际沙盒中，这个模块会被捆绑进去
+    const { sendMCPIPCRequest } = await import(
+      '@tachikoma/core/mcp/sandbox-ipc'
+    ).catch(() => {
+      // 如果模块不可用（开发模式），返回模拟实现
+      return {
+        sendMCPIPCRequest: async () => {
+          throw new Error('Sandbox IPC module not available');
+        },
+      };
+    });
+
+    // 构建请求对象
+    const request: {
+      type: 'mcp_call';
+      serverName: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      options?: { timeout?: number; skipCircuitBreaker?: boolean };
+    } = {
+      type: 'mcp_call',
+      serverName,
+      toolName,
+      args,
+    };
+
+    // 只在有值时添加 options
+    if (options.timeout !== undefined || options.skipCircuitBreaker !== undefined) {
+      const ipcOptions: { timeout?: number; skipCircuitBreaker?: boolean } = {};
+      if (options.timeout !== undefined) {
+        ipcOptions.timeout = options.timeout;
+      }
+      if (options.skipCircuitBreaker !== undefined) {
+        ipcOptions.skipCircuitBreaker = options.skipCircuitBreaker;
+      }
+      request.options = ipcOptions;
+    }
+
+    const response = await sendMCPIPCRequest(request, options.timeout ?? 60000);
+
+    if (!response.success) {
+      return errorResult<T>(response.error ?? 'Unknown IPC error');
+    }
+
+    // 检查是否有非文本内容
+    const hasNonTextContent =
+      response.rawContent?.some((item) => item.type !== 'text') ?? false;
+
+    if (options.includeRawContent && hasNonTextContent && response.rawContent) {
+      return successResult(
+        response.rawContent as unknown as T,
+        response.rawContent as MCPContentItem[]
+      );
+    }
+
+    if (options.includeRawContent && response.rawContent) {
+      return successResult(
+        response.data as T,
+        response.rawContent as MCPContentItem[]
+      );
+    }
+
+    return successResult(response.data as T);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return errorResult<T>(`Sandbox IPC error: ${message}`);
+  }
 }
 
 // ============================================================================
