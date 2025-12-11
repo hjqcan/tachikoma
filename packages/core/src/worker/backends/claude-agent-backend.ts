@@ -15,6 +15,8 @@ import type {
   ClaudeAgentSDKBackendConfig,
 } from '../types';
 import type { Tool } from '../../types';
+import { ToolToMCPBridge } from '../../mcp/tool-bridge';
+import type { ToolBridgeConfig } from '../../mcp/tool-bridge';
 
 // ============================================================================
 // Claude Agent SDK 类型（延迟导入）
@@ -61,9 +63,14 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
   private readonly config: ClaudeAgentSDKBackendConfig;
   private abortController: AbortController | null = null;
   private isExecuting = false;
+  private readonly toolBridge: ToolToMCPBridge;
 
   constructor(config: ClaudeAgentSDKBackendConfig) {
     this.config = config;
+    this.toolBridge = new ToolToMCPBridge({
+      serverName: 'tachikoma-tools',
+      workDir: process.cwd(),
+    });
     // 预检查 SDK 是否可用
     this.checkSDKAvailability();
   }
@@ -123,7 +130,7 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
 
     try {
       // 构建 SDK 配置
-      const sdkOptions = this.buildSDKOptions(tools, options);
+      const sdkOptions = await this.buildSDKOptions(tools, options);
 
       // 调用 Claude Agent SDK
       const result = query({
@@ -190,10 +197,10 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
       'shell-commands',
     ];
 
-    // TODO: 以下能力需要 SDK 完整集成后启用
-    // 'web-search',
-    // 'browser-automation',
-    // 'mcp-tools',
+    // MCP 工具桥接已实现
+    if (this.sdkAvailable === true) {
+      implemented.push('mcp-tools');
+    }
 
     return implemented;
   }
@@ -234,8 +241,23 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
   /**
    * 构建 SDK 配置选项
    */
-  private buildSDKOptions(tools: Tool[], options: WorkerExecutionOptions): Record<string, unknown> {
+  private async buildSDKOptions(
+    tools: Tool[],
+    options: WorkerExecutionOptions
+  ): Promise<Record<string, unknown>> {
     const sdkConfig = this.config.sdkOptions || {};
+
+    // 构造 overrides 对象（过滤 undefined 以满足 exactOptionalPropertyTypes）
+    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env'>> = {};
+    if (options.workDir !== undefined) {
+      overrides.workDir = options.workDir;
+    }
+    if (options.env !== undefined) {
+      overrides.env = options.env;
+    }
+
+    // 将 Tachikoma 工具转换为 MCP Server（同步等待，保证首轮可用）
+    const mcpServers = await this.toolBridge.convertToMCPServers(tools, overrides);
 
     return {
       // 工作目录
@@ -251,34 +273,8 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
       // AbortController
       abortController: this.abortController,
       // MCP 服务器配置（将工具转换为 MCP 格式）
-      mcpServers: this.convertToolsToMCPServers(tools),
+      mcpServers,
     };
-  }
-
-  /**
-   * 将 Tachikoma 工具转换为 MCP 服务器格式
-   *
-   * ⚠️ 当前实现为占位 - MCP 工具桥接尚未完成
-   * TODO: 实现真正的 MCP Server 桥接，可选方案：
-   *   1. 使用 createSdkMcpServer() 创建内联 MCP Server
-   *   2. 将 Tachikoma Tools 封装为独立的 stdio MCP Server
-   */
-  private convertToolsToMCPServers(tools: Tool[]): Record<string, unknown>[] {
-    // 如果没有工具，返回空数组
-    if (!tools || tools.length === 0) {
-      return [];
-    }
-
-    // ⚠️ 占位实现 - 工具元数据记录，实际不可用
-    // Claude Agent SDK 将使用其原生工具，Tachikoma 工具暂不注入
-    console.warn(
-      '[ClaudeAgentSDKBackend] MCP tool bridge not implemented. ' +
-      `${tools.length} Tachikoma tools will NOT be available. ` +
-      'Using Claude Agent SDK native tools only.'
-    );
-
-    // 返回空数组，不注入损坏的配置
-    return [];
   }
 
   /**

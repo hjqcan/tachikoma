@@ -187,3 +187,14 @@ export type {
   RegisterResult,
 } from './registrar';
 
+// ============================================================================
+// MCP Tool Bridge 导出
+// ============================================================================
+
+export { ToolToMCPBridge, createToolBridge, bridgeToolsToMCP } from './tool-bridge';
+
+export type {
+  MCPToolDefinition as SdkMcpToolDefinition,
+  MCPServerDefinition,
+  ToolBridgeConfig,
+} from './tool-bridge';
