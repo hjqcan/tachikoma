@@ -449,7 +449,7 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
   /**
    * 上下文管理器配置
    *
-   * 如果提供，将使用完整的 ContextManager 替代内置的 SimpleContextManager，
+   * 如果提供，将配置 ContextManager 的阈值、压缩策略等
    * 支持自动压缩/摘要、KV 缓存优化和笔记系统
    */
   contextManagerConfig?: ContextManagerConfig;

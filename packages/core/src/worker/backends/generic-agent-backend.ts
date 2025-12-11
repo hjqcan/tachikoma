@@ -27,6 +27,12 @@ import {
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
 import { isKeyDecision } from '../key-decision';
+// Context Engineering 模块（Task 8）
+import {
+  createContextManager,
+  createDefaultContextConfig,
+  type ContextMessage,
+} from '../../context';
 
 // ============================================================================
 // 常量
@@ -105,122 +111,87 @@ export class GenericBackendError extends Error {
 }
 
 // ============================================================================
-// 简单上下文管理器
+// 上下文辅助函数（Task 8）
 // ============================================================================
 
-/**
- * 消息角色
- */
-type MessageRole = 'user' | 'assistant' | 'tool';
+let messageIdCounter = 0;
 
 /**
- * 上下文消息
+ * 创建用户消息
  */
-interface ContextMessage {
-  role: MessageRole;
-  content: string;
-  toolCallId?: string;
+function createUserMessage(content: string): ContextMessage {
+  return {
+    id: `user-${++messageIdCounter}`,
+    role: 'user',
+    content,
+    timestamp: Date.now(),
+    format: 'full',
+  };
 }
 
 /**
- * 简单上下文管理器
- *
- * 管理对话历史，支持可配置的上下文限制和 token 追踪
+ * 创建助手消息
  */
-class SimpleContextManager {
-  private messages: ContextMessage[] = [];
-  private readonly maxMessages: number;
-  private totalTokensUsed = 0;
-  private readonly maxTotalTokens: number;
+function createAssistantMessage(content: string): ContextMessage {
+  return {
+    id: `assistant-${++messageIdCounter}`,
+    role: 'assistant',
+    content,
+    timestamp: Date.now(),
+    format: 'full',
+  };
+}
 
-  constructor(maxMessageWindow = 100, maxTotalTokens = 500_000) {
-    this.maxMessages = maxMessageWindow;
-    this.maxTotalTokens = maxTotalTokens;
-  }
+/**
+ * 创建工具结果消息
+ */
+function createToolMessage(toolCallId: string, result: string): ContextMessage {
+  return {
+    id: `tool-${++messageIdCounter}`,
+    role: 'tool',
+    content: result,
+    timestamp: Date.now(),
+    format: 'full',
+    toolResult: {
+      callId: toolCallId,
+      output: result,
+      success: true,
+    },
+  };
+}
 
-  addUserMessage(content: string): void {
-    this.addMessage({ role: 'user', content });
-  }
+/**
+ * 将上下文消息转换为 LLM 可接受的格式
+ * 
+ * 注意：system 消息（如摘要、状态提醒）转换为 user 消息注入，
+ * 以保留压缩后的上下文信息
+ */
+function contextToLLMMessages(
+  context: ContextMessage[]
+): { role: 'user' | 'assistant'; content: string }[] {
+  const result: { role: 'user' | 'assistant'; content: string }[] = [];
 
-  addAssistantMessage(content: string): void {
-    this.addMessage({ role: 'assistant', content });
-  }
-
-  addToolResult(toolCallId: string, result: string): void {
-    this.addMessage({
-      role: 'tool',
-      content: result,
-      toolCallId,
-    });
-  }
-
-  /**
-   * 记录 token 使用量
-   */
-  recordTokenUsage(inputTokens: number, outputTokens: number): void {
-    this.totalTokensUsed += inputTokens + outputTokens;
-  }
-
-  /**
-   * 获取已使用的 token 总量
-   */
-  getTotalTokensUsed(): number {
-    return this.totalTokensUsed;
-  }
-
-  /**
-   * 检查是否超过 token 预算
-   */
-  isOverBudget(): boolean {
-    return this.totalTokensUsed >= this.maxTotalTokens;
-  }
-
-  /**
-   * 获取剩余 token 预算
-   */
-  getRemainingBudget(): number {
-    return Math.max(0, this.maxTotalTokens - this.totalTokensUsed);
-  }
-
-  getMessages(): { role: 'user' | 'assistant'; content: string }[] {
-    // 转换为 LLM 可接受的格式
-    // Tool 消息合并到上一条或转换为 user 消息
-    const result: { role: 'user' | 'assistant'; content: string }[] = [];
-
-    for (const msg of this.messages) {
-      if (msg.role === 'tool') {
-        // 工具结果作为 user 消息
-        result.push({
-          role: 'user',
-          content: `Tool result: ${msg.content}`,
-        });
-      } else {
-        result.push({
-          role: msg.role,
-          content: msg.content,
-        });
-      }
-    }
-
-    return result;
-  }
-
-  clear(): void {
-    this.messages = [];
-    this.totalTokensUsed = 0;
-  }
-
-  private addMessage(message: ContextMessage): void {
-    this.messages.push(message);
-    // 保持消息数量在限制内
-    if (this.messages.length > this.maxMessages) {
-      // 保留第一条（用户初始请求）和最近的消息
-      const firstMessage = this.messages[0];
-      if (firstMessage) {
-        this.messages = [firstMessage, ...this.messages.slice(-this.maxMessages + 1)];
-      }
+  for (const msg of context) {
+    if (msg.role === 'tool') {
+      result.push({
+        role: 'user',
+        content: `Tool result: ${msg.content}`,
+      });
+    } else if (msg.role === 'system') {
+      // System 消息（摘要、状态提醒等）转换为 user 消息注入
+      result.push({
+        role: 'user',
+        content: `[System Context]\n${msg.content}`,
+      });
+    } else if (msg.role === 'user' || msg.role === 'assistant') {
+      result.push({
+        role: msg.role,
+        content: msg.content,
+      });
     }
   }
+
+  return result;
 }
 
 // ============================================================================
@@ -640,16 +611,40 @@ export class GenericAgentBackend implements IWorkerBackend {
     };
 
     // 创建上下文管理器（使用资源限制）
-    const context = new SimpleContextManager(
-      limits.maxMessageWindow,
-      limits.maxTotalTokens
-    );
+    // Task 8: 直接使用 ContextManager，将 maxMessageWindow 映射到阈值
+    let contextConfig = this.config.contextManagerConfig 
+      ?? createDefaultContextConfig(this.config.workDir ?? '/tmp');
+    
+    // 如果没有显式配置，根据 maxMessageWindow 估算阈值
+    // 假设平均每条消息 ~2000 tokens
+    if (!this.config.contextManagerConfig && limits.maxMessageWindow) {
+      const estimatedSoftLimit = limits.maxMessageWindow * 2000;
+      contextConfig = {
+        ...contextConfig,
+        thresholds: {
+          ...contextConfig.thresholds,
+          softLimit: Math.min(estimatedSoftLimit, contextConfig.thresholds.softLimit),
+          hardLimit: Math.min(estimatedSoftLimit * 1.2, contextConfig.thresholds.hardLimit),
+        },
+      };
+    }
+    
+    const context = createContextManager(contextConfig);
+    
+    // Token 使用追踪（独立于 ContextManager）
+    let totalTokensUsed = 0;
+    const maxTotalTokens = limits.maxTotalTokens;
+    const recordTokenUsage = (input: number, output: number) => { totalTokensUsed += input + output; };
+    const isOverBudget = () => totalTokensUsed >= maxTotalTokens;
+    
+    // 添加任务目标到 todo
+    context.addTodo(task.objective);
 
     // 构建工具描述
     const toolDescriptions = this.buildToolDescriptions(tools);
 
     // 初始用户消息
-    context.addUserMessage(`Task: ${task.objective}
+    context.addMessage(createUserMessage(`Task: ${task.objective}
 
 Constraints:
 ${task.constraints?.map((c) => `- ${c}`).join('\n') || 'None'}
@@ -663,7 +658,7 @@ Please accomplish this task step by step. When you need to use a tool, output it
 <input>{"param": "value"}</input>
 </tool_use>
 
-When the task is complete, provide a final summary of what was accomplished.`);
+When the task is complete, provide a final summary of what was accomplished.`));
 
     try {
       let round = 0;
@@ -711,10 +706,46 @@ When the task is complete, provide a final summary of what was accomplished.`);
           timestamp: Date.now(),
         };
 
+        // Task 8: 在 LLM 调用前检查并执行上下文压缩
+        if (context.needsReduction()) {
+          console.debug('[GenericAgentBackend] Context needs reduction, running autoReduce');
+          // eslint-disable-next-line no-await-in-loop -- Auto-reduce is intentionally sequential
+          await context.autoReduce();
+          
+          // 如果 autoReduce 后仍然需要压缩（可能 deps 不完整导致失败）
+          // 强制执行压缩操作以避免超出模型上下文窗口
+          if (context.needsReduction()) {
+            console.warn('[GenericAgentBackend] Context still over limit after autoReduce, forcing compact');
+            // 尝试最多 3 轮压缩
+            for (let i = 0; i < 3 && context.needsReduction(); i++) {
+              // eslint-disable-next-line no-await-in-loop -- Sequential compaction attempts
+              await context.compact();
+            }
+          }
+          
+          // 硬限制兜底：如果仍然超过限制，需要处理
+          if (context.needsSummarization()) {
+            // 超过硬限制，中止本轮执行并报告错误
+            console.error('[GenericAgentBackend] Context exceeds hard limit after all reduction attempts');
+            yield {
+              type: 'error',
+              error: `Context size exceeds hard limit after reduction. Token count: ${context.getState().totalTokens}`,
+              code: 'CONTEXT_OVERFLOW',
+              retryable: false,
+              timestamp: Date.now(),
+            };
+            done = true;
+            break;
+          }
+          
+          // 压缩成功后注入状态提醒帮助 agent 理解上下文变化
+          context.injectStatusReminder();
+        }
+
         // 调用 LLM
         const request: LLMRequest = {
           systemPrompt: DEFAULT_SYSTEM_PROMPT,
-          messages: context.getMessages(),
+          messages: contextToLLMMessages(context.getContext()),
           maxTokens: Math.min(
             this.config.maxTokens ?? 4096,
             limits.maxTokensPerCall
@@ -727,16 +758,16 @@ When the task is complete, provide a final summary of what was accomplished.`);
         const response = await this.llmClient.complete(request);
 
         // 记录 token 使用量
-        context.recordTokenUsage(
+        recordTokenUsage(
           response.usage.inputTokens,
           response.usage.outputTokens
         );
 
         // 检查 token 预算
-        if (context.isOverBudget()) {
+        if (isOverBudget()) {
           yield {
             type: 'error',
-            error: `Token budget exceeded: ${context.getTotalTokensUsed()} tokens used (limit: ${limits.maxTotalTokens})`,
+            error: `Token budget exceeded: ${totalTokensUsed} tokens used (limit: ${limits.maxTotalTokens})`,
             code: 'TOKEN_BUDGET_EXCEEDED',
             retryable: false,
             timestamp: Date.now(),
@@ -753,7 +784,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
         };
 
         // 添加到上下文
-        context.addAssistantMessage(response.content);
+        context.addMessage(createAssistantMessage(response.content));
 
         // 追踪本轮进度
         const hasToolCallMarker = containsToolCall(response.content);
@@ -819,7 +850,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
               const approved = await this.waitForApproval(approvalRequest, options, task.id);
               if (!approved) {
                 const rejectedResult = `Tool call ${call.name} was rejected by approval process (${keyDecisionResult.reason}).`;
-                context.addToolResult(call.callId, rejectedResult);
+                context.addMessage(createToolMessage(call.callId, rejectedResult));
 
                 yield {
                   type: 'tool_result',
@@ -861,7 +892,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
             }
 
             // 添加结果到上下文
-            context.addToolResult(call.callId, JSON.stringify(result.output));
+            context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
 
             // 发出工具结果消息
             yield {
@@ -927,7 +958,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
           
           // Level 1-2: 注入降级提示
           if (degradationMessage) {
-            context.addUserMessage(degradationMessage);
+            context.addMessage(createUserMessage(degradationMessage));
           }
         }
 
@@ -951,7 +982,7 @@ When the task is complete, provide a final summary of what was accomplished.`);
         type: 'status',
         status: done ? 'completed' : 'failed',
         timestamp: Date.now(),
-        tokensUsed: context.getTotalTokensUsed(),
+        tokensUsed: totalTokensUsed,
       };
 
       // 如果达到最大轮次，发出警告
