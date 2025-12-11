@@ -149,14 +149,20 @@ export const spawnSubagentTool: Tool = {
 - 需要独立上下文的任务
 
 ⚠️ 路径约定：
-子任务文件保存到: {workDir}/.tachikoma/subtasks/{subtaskId}.json
-Orchestrator 应监控此目录发现新任务，按 createdAt + priority 排序执行。
+- 默认模式：{workDir}/.tachikoma/subtasks/
+- Session 模式（context.env.SESSION_ID 存在）：
+  - 只有 SESSION_ID：.../sessions/{sessionId}/orchestrator/subtasks/
+  - 有 SESSION_ID + WORKER_ID：.../sessions/{sessionId}/workers/{workerId}/subtasks/
 
-⚠️ 集成说明：
-此工具只创建子任务定义文件，不直接执行。需要 Orchestrator 实现：
-1. 轮询 subtasks/ 目录发现新任务
-2. 读取任务定义并调度执行
-3. 将结果写回 subtask 文件或 artifacts/ 目录`,
+⚠️ Orchestrator 集成：
+使用 SubtaskWatcher 监控子任务目录：
+\`\`\`typescript
+const watcher = new SubtaskWatcher(workDir, {
+  sessionId: context.env.SESSION_ID,
+  workerId: context.env.WORKER_ID,  // 可选
+});
+watcher.on('subtask', (subtask) => orchestrator.scheduleSubtask(subtask));
+\`\`\``,
 
   layer: ToolLayer.Atomic,
   category: ToolCategory.Agent,
@@ -259,7 +265,27 @@ Orchestrator 应监控此目录发现新任务，按 createdAt + priority 排序
     const subtaskId = `subtask-${createdAt}-${Math.random().toString(36).slice(2, 8)}`;
 
     // 构建 subtasks 目录路径
-    const subtasksDir = join(context.workDir, '.tachikoma', 'subtasks');
+    // 优先使用 session 路径（如果 SESSION_ID 存在）
+    const sessionId = context.env?.SESSION_ID as string | undefined;
+    const workerId = context.env?.WORKER_ID as string | undefined;
+    
+    let subtasksDir: string;
+    if (sessionId && workerId) {
+      // Session 模式：写入 session 目录结构
+      // {workDir}/.tachikoma/sessions/{sessionId}/workers/{workerId}/subtasks/
+      subtasksDir = join(
+        context.workDir, '.tachikoma', 'sessions', sessionId, 'workers', workerId, 'subtasks'
+      );
+    } else if (sessionId) {
+      // 只有 sessionId，写入 orchestrator 级别
+      // {workDir}/.tachikoma/sessions/{sessionId}/orchestrator/subtasks/
+      subtasksDir = join(
+        context.workDir, '.tachikoma', 'sessions', sessionId, 'orchestrator', 'subtasks'
+      );
+    } else {
+      // 默认模式：写入全局 subtasks 目录
+      subtasksDir = join(context.workDir, '.tachikoma', 'subtasks');
+    }
 
     try {
       await mkdir(subtasksDir, { recursive: true });

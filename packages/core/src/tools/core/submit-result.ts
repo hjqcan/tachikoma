@@ -33,6 +33,8 @@ interface SubmitResultOutput {
   isFinal: boolean;
   /** 摘要 */
   summary?: string | undefined;
+  /** 覆盖警告（如果发生重命名） */
+  warning?: string | undefined;
 }
 
 /**
@@ -189,8 +191,25 @@ export const submitResultTool: Tool = {
     const submissionId = `submission-${timestamp}-${Math.random().toString(36).slice(2, 8)}`;
 
     // 构建 artifacts 目录路径
-    // 使用 workDir/.tachikoma/artifacts/ 作为标准路径
-    const artifactsDir = join(context.workDir, '.tachikoma', 'artifacts');
+    // 优先使用 session 路径（如果 SESSION_ID 存在）
+    const sessionId = context.env?.SESSION_ID as string | undefined;
+    const workerId = context.env?.WORKER_ID as string | undefined;
+    
+    let artifactsDir: string;
+    if (sessionId && workerId) {
+      // Session 模式：写入 worker artifacts 目录
+      artifactsDir = join(
+        context.workDir, '.tachikoma', 'sessions', sessionId, 'workers', workerId, 'artifacts'
+      );
+    } else if (sessionId) {
+      // 只有 sessionId，写入 orchestrator artifacts
+      artifactsDir = join(
+        context.workDir, '.tachikoma', 'sessions', sessionId, 'orchestrator', 'artifacts'
+      );
+    } else {
+      // 默认模式：全局 artifacts 目录
+      artifactsDir = join(context.workDir, '.tachikoma', 'artifacts');
+    }
 
     try {
       // 确保目录存在
@@ -228,8 +247,30 @@ export const submitResultTool: Tool = {
       timestamp,
     };
 
-    // 写入结果文件（非最终结果使用时间戳后缀避免覆盖）
-    const resultFilename = isFinal ? `${filename}.json` : `${filename}-${timestamp}.json`;
+    // 构建文件名
+    // isFinal=true 时检查文件是否已存在，避免误覆盖
+    let resultFilename: string;
+    let wasRenamed = false;
+    
+    if (isFinal) {
+      const finalPath = join(artifactsDir, `${filename}.json`);
+      try {
+        const existingStat = await stat(finalPath);
+        if (existingStat.isFile()) {
+          // 已存在最终结果，添加时间戳避免覆盖
+          resultFilename = `${filename}-final-${timestamp}.json`;
+          wasRenamed = true;
+        } else {
+          resultFilename = `${filename}.json`;
+        }
+      } catch {
+        // 文件不存在，使用默认名称
+        resultFilename = `${filename}.json`;
+      }
+    } else {
+      resultFilename = `${filename}-${timestamp}.json`;
+    }
+    
     const resultPath = join(artifactsDir, resultFilename);
 
     try {
@@ -253,6 +294,9 @@ export const submitResultTool: Tool = {
         status,
         isFinal,
         summary,
+        ...(wasRenamed && { 
+          warning: `已存在同名最终结果文件，本次使用时间戳后缀保存: ${resultFilename}` 
+        }),
       },
     };
   },

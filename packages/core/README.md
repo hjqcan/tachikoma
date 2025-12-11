@@ -427,6 +427,49 @@ main().catch(console.error);
             └── messages.jsonl               # 消息日志
 ```
 
+### Session 模式路径
+
+工具 `spawn_subagent` 和 `submit_result` 会根据执行环境自动选择路径：
+
+| 环境变量                   | 路径                                                           |
+| -------------------------- | -------------------------------------------------------------- |
+| 无                         | `.tachikoma/subtasks/` 和 `.tachikoma/artifacts/`              |
+| `SESSION_ID`               | `.tachikoma/sessions/{sessionId}/orchestrator/subtasks/`       |
+| `SESSION_ID` + `WORKER_ID` | `.tachikoma/sessions/{sessionId}/workers/{workerId}/subtasks/` |
+
+**WorkerExecutor 自动注入**：当通过 `WorkerExecutor` 执行工具时，`SESSION_ID` 和 `WORKER_ID`
+会自动注入到 `context.env`，无需手动配置。
+
+### SubtaskWatcher 配置
+
+使用 `SubtaskWatcher` 监控子任务目录：
+
+```typescript
+import { SubtaskWatcher } from '@tachikoma/core/orchestrator';
+
+const watcher = new SubtaskWatcher('/project', {
+  sessionId: 'session-123', // 监控 session/orchestrator 路径
+  workerId: 'worker-1', // 同时监控 session/worker 路径
+  pollInterval: 1000, // 轮询间隔
+  processExisting: true, // 处理已存在的任务
+});
+
+// 监听新子任务
+watcher.on('subtask', (subtask, filePath) => {
+  console.log(`发现新子任务: ${subtask.id}`);
+  // orchestrator.scheduleSubtask(subtask);
+});
+
+watcher.on('error', (error) => {
+  console.error('Watcher error:', error);
+});
+
+await watcher.start();
+
+// 后续停止
+// watcher.stop();
+```
+
 ### 文件格式说明
 
 #### plan.json (任务计划)
@@ -1132,8 +1175,7 @@ console.log('Metrics:', obs.metrics.getMetrics());
 
 ## 许可证
 
-MIT
----
+## MIT
 
 ## 工具系统 (Tools)
 

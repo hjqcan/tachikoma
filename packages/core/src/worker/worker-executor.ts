@@ -162,9 +162,22 @@ export class WorkerExecutor {
     };
 
     // 构建执行选项
+    // 自动注入 SESSION_ID 和 WORKER_ID 到 env，供工具使用
+    const sessionId = sessionManager?.sessionId ?? options.env?.SESSION_ID;
+    const injectedEnv: Record<string, string> = {
+      ...options.env,
+    };
+    if (sessionId) {
+      injectedEnv.SESSION_ID = String(sessionId);
+    }
+    if (workerId) {
+      injectedEnv.WORKER_ID = String(workerId);
+    }
+
     const execOptions: WorkerExecutionOptions = {
       workDir: this.config.workDir || process.cwd(),
       ...options,
+      env: injectedEnv,
     };
 
     // 注入 intervention 检查回调

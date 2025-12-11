@@ -194,8 +194,13 @@ export {
 } from './orchestrator';
 
 // ============================================================================
-// TODO: 后续导出实现模块
+// SubtaskWatcher 导出
 // ============================================================================
 
-// export { CheckpointManager } from './checkpoint';
-// export { CommunicationDelegation } from './delegation/communication';
+export {
+  SubtaskWatcher,
+  type SubtaskDefinition,
+  type SubtaskWatcherConfig,
+  type SubtaskWatcherEvents,
+} from './subtask-watcher';
+
