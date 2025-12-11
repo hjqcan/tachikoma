@@ -76,7 +76,15 @@ IMPORTANT: When modifying existing files, prefer incremental edits over full rew
 
 **When creating new files:**
 - For large files (>50 lines), consider creating a skeleton first, then using apply_patch to fill in details
-- This helps avoid output truncation issues`;
+- This helps avoid output truncation issues
+
+## Directory Listing Guidelines
+
+⚠️ When using file_list tool:
+- The tool automatically EXCLUDES node_modules, .git, dist, build, and other large directories when recursive=true
+- Results are limited to 500 files by default to prevent context overflow
+- If you need to see excluded directories, explicitly set excludes: [] to override defaults
+- For large projects, prefer non-recursive listing first, then drill down into specific directories`;
 
 // ============================================================================
 // 错误类型

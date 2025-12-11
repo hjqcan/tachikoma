@@ -50,3 +50,65 @@ export const SHELL_SAFETY = {
   /** 终端类型 */
   termType: 'dumb',
 } as const;
+
+/**
+ * file_list 默认排除目录
+ * 
+ * 递归列表时自动排除这些大目录，防止 token 爆炸
+ * 参考 Codex/Claude Code/Gemini CLI 等工具的常见排除列表
+ */
+export const FILE_LIST_DEFAULT_EXCLUDES = [
+  // 包管理器
+  'node_modules',
+  '.npm',
+  '.pnpm',
+  '.yarn',
+  'vendor',        // PHP/Go
+  
+  // VCS
+  '.git',
+  '.hg',
+  '.svn',
+  
+  // 构建产物
+  'dist',
+  'build',
+  'out',
+  'target',        // Java/Scala/Rust
+  
+  // 缓存目录
+  '.cache',
+  '.parcel-cache',
+  '.turbo',
+  '.gradle',
+  
+  // 框架特定
+  '.next',
+  '.nuxt',
+  
+  // Python
+  '__pycache__',
+  '.venv',
+  '.tox',
+  
+  // 测试/覆盖率
+  'coverage',
+  
+  // IDE
+  '.idea',
+  '.vscode',
+  
+  // 基础设施
+  '.terraform',
+  
+  // 系统/项目
+  '.tachikoma',
+  '.DS_Store',
+] as const;
+
+/**
+ * file_list 最大返回结果数
+ * 
+ * 超过此数量时截断并提示
+ */
+export const FILE_LIST_MAX_RESULTS = 500;
