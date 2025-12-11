@@ -751,71 +751,86 @@
       },
       {
         "id": "8",
-        "title": "上下文工程与阈值管理",
-        "description": "实现上下文压缩/摘要/卸载流水线，遵循 rot/compaction/summarization 阈值。",
-        "details": "- ContextManager：维护消息/工具调用记录，计算 token 数；阈值：rot=200k, compaction=128k, summarization=150k, hardLimit=1M。\n- 压缩：生成可逆 compact 结构 (input/output full+compact)；摘要：ConversationSummary schema。\n- 卸载：超大输出写入文件并引用路径；最近工具调用保留 5 条。",
-        "testStrategy": "- 单元：构造超阈值历史，断言触发压缩/摘要/卸载，数据可恢复。\n- 性能：大记录列表处理时间在可接受范围内。\n- 回归：compact->restore 与 summary 结构符合定义。",
+        "title": "上下文工程与阈值管理（增强与集成）",
+        "description": "基于现有 context 模块进行增强：启用导出、优化阈值配置（参考 Manus 实践）、改进 Token 估算、与 Worker 执行循环深度集成、预留 Memory 系统接口。",
+        "details": "- 现有 context 模块已实现核心功能（压缩/摘要/卸载/KV缓存/笔记），约2300行代码，600测试通过\n- 需要启用 index.ts 中被注释的 context 导出\n- 参考 Manus 实践优化阈值：rot=128K-200K（模型性能下降点）、hardLimit=模型上下文窗口的80%\n- 改进 Token 估算精度，支持模型感知\n- **核心任务**：将 context 模块集成到 GenericAgentBackend 执行循环，替换现有 SimpleContextManager\n- 预留任务9（Memory 系统）的接口，确保检索增强可无缝集成",
+        "testStrategy": "- 集成测试：验证 GenericAgentBackend 执行时自动触发压缩/摘要\n- 性能测试：大上下文（>100K tokens）处理时间 < 1s\n- 回归测试：确保现有600个测试继续通过\n- Token 估算精度测试：与真实 tokenizer 对比误差 < 20%",
         "priority": "medium",
         "dependencies": [],
         "status": "pending",
         "subtasks": [
           {
             "id": 1,
-            "title": "建立 ContextManager 实现骨架与阈值配置",
-            "description": "在 core 包新增上下文管理实现，初始化消息、工具调用、阈值默认值与状态存储。",
+            "title": "启用 Context 模块导出与 API 规范化",
+            "description": "取消 index.ts 中 context 模块导出的注释，审查并规范化公开 API。",
             "dependencies": [],
-            "details": "在 packages/core 下创建 context 模块，提供类实现现有 ContextManager 接口；接受 ContextThresholds 配置，设定 rot=200k、compaction=128k、summarization=150k、hardLimit=1M、保留最近5条工具调用；准备消息/工具调用列表与摘要占位。",
+            "details": "1. 编辑 packages/core/src/index.ts，取消第316行 `// export * from './context';` 的注释\n2. 审查 context/index.ts 的导出列表，确保类型和函数导出完整且命名规范\n3. 检查与现有 abstracts/BaseContextManager 的关系，避免命名冲突\n4. 更新 packages/core/package.json 的 exports 字段（如需要）\n5. 运行 bun typecheck 确保无类型错误",
             "status": "pending",
-            "testStrategy": "类型层面初始化测试，确保默认阈值与空上下文符合接口定义。",
-            "parentId": "undefined"
+            "testStrategy": "bun typecheck 通过；从 @tachikoma/core 成功导入 ContextManager 和相关类型",
+            "parentId": "8"
           },
           {
             "id": 2,
-            "title": "实现 Token 计算与硬上限守卫",
-            "description": "为消息与工具调用新增 token 计数更新逻辑，并在添加时进行阈值检测。",
+            "title": "阈值配置优化与模型感知",
+            "description": "参考 Manus 实践调整默认阈值，实现模型感知的动态阈值配置。",
             "dependencies": [
               1
             ],
-            "details": "提供 getTokenCount/内部累加方法，按消息和工具输入输出内容估算 token（可采用长度/4 近似），每次 addMessage/记录工具调用后更新总数；若超过 hardLimit=1M 触发防护逻辑（如拒收或标记需要卸载）；到达 rot 阈值为后续压缩/摘要提供信号。",
+            "details": "1. 更新 DEFAULT_THRESHOLDS 为 Manus 推荐值：\n   - rotThreshold: 128_000 (128K，模型性能开始下降)\n   - softLimit: 150_000 (150K，触发压缩)\n   - hardLimit: 根据模型动态计算（模型上下文窗口 * 0.8）\n2. 新增 ModelContextLimits 配置映射：\n   - claude-3-opus: 200K 窗口 → hardLimit 160K\n   - claude-3-sonnet: 200K 窗口 → hardLimit 160K\n   - gpt-4o: 128K 窗口 → hardLimit 102K\n   - gemini-pro: 1M 窗口 → hardLimit 800K\n3. 新增 createModelAwareConfig(modelId) 工厂函数\n4. 添加配置验证：softLimit < hardLimit, rotThreshold < softLimit\n5. 保持向后兼容：无模型参数时使用保守默认值",
             "status": "pending",
-            "testStrategy": "构造多条消息累积超阈值，断言 token 计算正确且触发硬上限守卫分支。",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：验证各模型的阈值计算正确；验证配置校验拒绝非法配置；快照测试默认配置",
+            "parentId": "8"
           },
           {
             "id": 3,
-            "title": "实现压缩流水线与可逆 compact 结构",
-            "description": "在 compactionTrigger=128k 时压缩上下文，生成可逆 compact 版本并保留最近工具调用。",
+            "title": "Token 估算精度改进",
+            "description": "改进 token 估算精度，支持可选的精确 tokenizer 和模型感知估算。",
             "dependencies": [
               2
             ],
-            "details": "实现 compact(strategy) 方法，遍历消息与工具调用，生成 full+compact 结构（工具调用 input/output 都包含），丢弃超出保留数量的旧工具调用但保留最近5条；记录用于还原的映射或引用，确保 rot 后上下文体积减少且可恢复。",
+            "details": "1. 重构 estimateTokens(content: string) 为可插拔设计：\n   - TokenEstimator 接口：{ estimate(content: string): number }\n   - SimpleTokenEstimator：当前 length/3 实现（保持作为默认）\n   - CharacterBasedEstimator：针对中英文混合优化（中文 length/1.5，英文 length/4）\n2. 预留 TiktokenAdapter（可选依赖）：\n   - 定义接口但不强制依赖 tiktoken\n   - 提供 createTiktokenEstimator(encoding) 工厂函数\n   - 用户可选安装 tiktoken 后启用精确估算\n3. 在 ContextManagerConfig 中添加 tokenEstimator 选项\n4. 添加 estimateTokens 精度测试（与已知 token 数对比）\n5. 缓存估算结果避免重复计算（message.tokenEstimate 字段）",
             "status": "pending",
-            "testStrategy": "使用超阈值上下文触发压缩，验证工具调用保留数量、compact 字段生成、恢复逻辑可重建原始数据。",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：SimpleEstimator 与 CharacterBasedEstimator 输出合理；精度测试：与 Claude tokenizer 对比误差 < 20%",
+            "parentId": "8"
           },
           {
             "id": 4,
-            "title": "实现摘要流水线与 ConversationSummary 生成",
-            "description": "在 summarizationTrigger=150k 时生成对话摘要并更新上下文。",
+            "title": "与 GenericAgentBackend 执行循环集成",
+            "description": "将完整的 ContextManager 集成到 GenericAgentBackend，替换现有 SimpleContextManager。",
             "dependencies": [
+              1,
+              2,
               3
             ],
-            "details": "新增 summarize(schema) 方法，根据 SummarySchema 抽取修改文件、用户目标、关键决策、未解决问题和下一步计划，写入 ConversationSummary；可与压缩结果协同减少历史负载，摘要后继续维护 token/summary 状态。",
+            "details": "1. 在 GenericBackendConfig 中添加 contextManagerConfig 选项\n2. 在 GenericAgentBackend 构造函数中创建 ContextManager 实例（替代 SimpleContextManager）\n3. 修改 execute() 方法：\n   - 在每轮 LLM 调用前检查 needsReduction()\n   - 超过软限制时调用 autoReduce() 执行压缩/摘要\n   - 使用 getContext() 获取优化后的消息列表\n4. 集成笔记系统：\n   - 任务开始时创建 todo（task.objective）\n   - 工具执行成功后添加 finding\n   - 每轮结束时 injectStatusReminder()\n5. 日志记录上下文操作（压缩/摘要事件）\n6. 保持向后兼容：无 contextManagerConfig 时使用简化行为",
             "status": "pending",
-            "testStrategy": "构造摘要触发场景，断言 summary 对象字段齐全且符合 schema，摘要生成后上下文标记正确。",
-            "parentId": "undefined"
+            "testStrategy": "集成测试：模拟大量工具调用触发自动压缩/摘要；验证 getContext() 返回优化后的消息；笔记注入正确",
+            "parentId": "8"
           },
           {
             "id": 5,
-            "title": "实现卸载机制与端到端测试",
-            "description": "为超大输出执行卸载到文件并引用路径，补充覆盖压缩/摘要/卸载全流程的测试。",
+            "title": "预留 Memory 系统接口（任务9准备）",
+            "description": "在 ContextManager 中预留检索增强接口，为任务9（Memory 系统）的无缝集成做准备。",
             "dependencies": [
-              4
+              1
             ],
-            "details": "在工具输出或消息过大时将内容写入文件并用占位路径引用，确保与硬上限策略协同；设计 Vitest 单元测试覆盖 rot->压缩->摘要->卸载链路、compact->restore、保留最近5条工具调用、性能基线（大列表处理时间）。",
+            "details": "1. 定义 MemoryProvider 接口（在 context/types.ts）：\n   - retrieve(query: string, topK?: number): Promise<MemoryEntry[]>\n   - save(entry: MemoryEntry): Promise<void>\n   - search(context: ContextMessage[], topK?: number): Promise<MemoryEntry[]>\n2. 在 ContextManagerDependencies 中添加可选的 memoryProvider\n3. 在 ContextManager 中添加方法：\n   - injectRetrievedMemories(memories: MemoryEntry[]): void\n   - getRetrievalContext(): string（返回适合检索的上下文摘要）\n4. 预留 onNeedsRetrieval 钩子（当上下文需要外部信息时触发）\n5. 确保接口设计与 PRD 任务9 的记忆系统兼容\n6. 添加 MemoryEntry 类型定义（id/content/embedding/metadata/scope）",
             "status": "pending",
-            "testStrategy": "Vitest 端到端用例模拟超大历史与输出，验证卸载文件引用正确、各阈值触发与回退逻辑按预期工作。",
-            "parentId": "undefined"
+            "testStrategy": "类型检查通过；接口与任务9 PRD 对齐；stub MemoryProvider 可正常注入和调用",
+            "parentId": "8"
+          },
+          {
+            "id": 6,
+            "title": "增强测试覆盖与文档更新",
+            "description": "补充集成测试、性能基准测试，更新模块文档。",
+            "dependencies": [
+              4,
+              5
+            ],
+            "details": "1. 集成测试（packages/core/tests/context-integration.test.ts）：\n   - GenericAgentBackend + ContextManager 端到端测试\n   - 模拟超阈值场景验证自动缩减\n   - 笔记系统注入验证\n2. 性能基准测试（packages/core/tests/context-perf.test.ts）：\n   - 100K tokens 上下文压缩时间 < 500ms\n   - 摘要生成时间（不含 LLM 调用）< 100ms\n   - Token 估算 1000 条消息 < 50ms\n3. 更新文档：\n   - packages/core/src/context/README.md：使用指南、配置说明、最佳实践\n   - docs/上下文工程模块实现总结.md：更新集成说明\n4. 确保现有 600 个测试继续通过\n5. 添加 JSDoc 注释到所有公开 API",
+            "status": "pending",
+            "testStrategy": "bun test 全量通过（600+ 测试）；性能基准达标；文档完整且示例可运行",
+            "parentId": "8"
           }
         ]
       },
