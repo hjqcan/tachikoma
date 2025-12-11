@@ -52,6 +52,12 @@ export type {
   // 管理器类型
   ContextManagerConfig,
   IContextManager,
+
+  // Memory 系统类型（任务9预留）
+  MemoryScope,
+  MemoryEntry,
+  MemoryRetrievalResult,
+  MemoryProvider,
 } from './types';
 
 // ============================================================================

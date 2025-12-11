@@ -486,6 +486,121 @@ export interface IContextManager {
 }
 
 // ============================================================================
+// Memory 系统接口（任务9预留）
+// ============================================================================
+
+/**
+ * 记忆范围
+ *
+ * 定义记忆的作用域和生命周期：
+ * - session: 会话级别，会话结束后清除
+ * - declarative: 声明式记忆（事实、知识），长期持久化
+ * - procedural: 过程式记忆（如何做），长期持久化
+ * - collective: 集体记忆（跨 Agent 共享），需要向量检索
+ */
+export type MemoryScope = 'session' | 'declarative' | 'procedural' | 'collective';
+
+/**
+ * 记忆条目
+ *
+ * 存储在记忆系统中的单条记忆
+ */
+export interface MemoryEntry {
+  /** 记忆 ID */
+  id: string;
+  /** 记忆内容 */
+  content: string;
+  /** 向量嵌入（用于语义检索） */
+  embedding?: number[];
+  /** 元数据 */
+  metadata?: Record<string, unknown>;
+  /** 记忆范围 */
+  scope: MemoryScope;
+  /** 创建时间 */
+  createdAt: number;
+  /** 最后访问时间（用于 LRU） */
+  lastAccessedAt?: number;
+  /** 相关性分数（检索时填充） */
+  relevanceScore?: number;
+}
+
+/**
+ * 记忆检索结果
+ */
+export interface MemoryRetrievalResult {
+  /** 检索到的记忆列表 */
+  memories: MemoryEntry[];
+  /** 检索耗时（毫秒） */
+  latencyMs: number;
+  /** 是否来自缓存 */
+  fromCache: boolean;
+}
+
+/**
+ * 记忆提供者接口
+ *
+ * 抽象记忆存储和检索的实现细节，支持多种后端：
+ * - Redis（会话级缓存）
+ * - LevelDB（本地持久化）
+ * - Qdrant/Chroma（向量检索）
+ *
+ * 此接口在任务8中定义，任务9中实现
+ */
+export interface MemoryProvider {
+  /**
+   * 根据查询检索相关记忆
+   *
+   * @param query - 检索查询（自然语言）
+   * @param topK - 返回的最大记忆数量
+   * @param scope - 可选的范围过滤
+   * @returns 检索结果
+   */
+  retrieve(
+    query: string,
+    topK?: number,
+    scope?: MemoryScope
+  ): Promise<MemoryRetrievalResult>;
+
+  /**
+   * 保存记忆
+   *
+   * @param entry - 记忆条目（不含 id 和 createdAt，会自动生成）
+   * @returns 保存后的记忆 ID
+   */
+  save(
+    entry: Omit<MemoryEntry, 'id' | 'createdAt'>
+  ): Promise<string>;
+
+  /**
+   * 基于上下文消息检索相关记忆
+   *
+   * 自动从对话上下文中提取检索线索
+   *
+   * @param context - 当前上下文消息
+   * @param topK - 返回的最大记忆数量
+   * @returns 检索结果
+   */
+  search(
+    context: ContextMessage[],
+    topK?: number
+  ): Promise<MemoryRetrievalResult>;
+
+  /**
+   * 删除记忆
+   *
+   * @param id - 记忆 ID
+   */
+  delete(id: string): Promise<void>;
+
+  /**
+   * 清空指定范围的记忆
+   *
+   * @param scope - 要清空的范围
+   */
+  clear(scope?: MemoryScope): Promise<void>;
+}
+
+// ============================================================================
 
 /**
  * 默认阈值配置（Manus 推荐值）

@@ -16,6 +16,8 @@ import type {
   OffloadResult,
   StructuredSummary,
   AgentNotes,
+  MemoryProvider,
+  MemoryEntry,
 } from './types';
 
 import { CompactionStrategy } from './strategies/compaction';
@@ -39,6 +41,20 @@ export interface ContextManagerDependencies {
   llmClient?: SummarizationLLMClient;
   /** 文件管理器（用于卸载） */
   fileManager?: OffloadFileManager;
+  /**
+   * 记忆提供者（任务9预留）
+   *
+   * 如果提供，ContextManager 将支持：
+   * - 自动记忆检索
+   * - 记忆注入到上下文
+   */
+  memoryProvider?: MemoryProvider;
+  /**
+   * 需要记忆检索时的回调钩子
+   *
+   * 当上下文需要记忆增强时触发
+   */
+  onNeedsRetrieval?: (context: ContextMessage[]) => void;
 }
 
 /**
@@ -494,6 +510,113 @@ export class ContextManager implements IContextManager {
       errors: ['摘要失败：LLM 客户端不可用'],
       lastStopPoint: '',
     };
+  }
+
+  // ========================================
+  // Memory 系统方法（任务9预留）
+  // ========================================
+
+  /**
+   * 注入检索到的记忆到上下文
+   *
+   * 将记忆作为系统消息注入到上下文开头（用户消息之前）
+   *
+   * @param memories - 从 MemoryProvider 检索到的记忆列表
+   */
+  injectRetrievedMemories(memories: MemoryEntry[]): void {
+    if (memories.length === 0) {
+      return;
+    }
+
+    // 格式化记忆为系统消息
+    const memoryContent = memories
+      .map((m, i) => `[Memory ${i + 1}] (${m.scope}): ${m.content}`)
+      .join('\n\n');
+
+    const memoryMessage: ContextMessage = {
+      id: `memory-${Date.now()}`,
+      role: 'system',
+      content: `## Retrieved Memories\n\nThe following relevant memories have been retrieved:\n\n${memoryContent}`,
+      timestamp: Date.now(),
+      format: 'full',
+    };
+
+    // 插入到消息列表开头（在其他 system 消息之后）
+    const insertIndex = this.messages.findIndex(m => m.role !== 'system');
+    if (insertIndex === -1) {
+      this.messages.push(memoryMessage);
+    } else {
+      this.messages.splice(insertIndex, 0, memoryMessage);
+    }
+  }
+
+  /**
+   * 获取用于记忆检索的上下文摘要
+   *
+   * 生成一个简短的上下文描述，用于向量检索查询
+   *
+   * @returns 用于检索的上下文字符串
+   */
+  getRetrievalContext(): string {
+    // 提取最近的用户消息和助手消息
+    const recentMessages = this.messages.slice(-5);
+    const userMessages = recentMessages
+      .filter(m => m.role === 'user')
+      .map(m => m.content)
+      .slice(-2);
+
+    // 结合笔记系统的 todo 和 findings
+    const todoContext = this.currentNotes.todos
+      .filter(t => t.status !== 'completed')
+      .map(t => t.description)
+      .slice(0, 3)
+      .join('; ');
+
+    const findingsContext = this.currentNotes.findings.slice(-3).join('; ');
+
+    // 组合检索上下文
+    const parts: string[] = [];
+
+    if (userMessages.length > 0) {
+      parts.push(`Recent user input: ${userMessages.join(' | ')}`);
+    }
+
+    if (todoContext) {
+      parts.push(`Current todos: ${todoContext}`);
+    }
+
+    if (findingsContext) {
+      parts.push(`Recent findings: ${findingsContext}`);
+    }
+
+    return parts.join('\n');
+  }
+
+  /**
+   * 检查是否需要记忆检索
+   *
+   * 基于上下文状态判断是否应该触发记忆检索
+   */
+  shouldRetrieveMemories(): boolean {
+    // 如果没有配置 memoryProvider，不需要检索
+    if (!this.deps.memoryProvider) {
+      return false;
+    }
+
+    // 如果消息数量较少，可能需要记忆增强
+    if (this.messages.length <= 3) {
+      return true;
+    }
+
+    // 如果有未完成的 todo 且最近没有进展，可能需要记忆
+    const incompleteTodos = this.currentNotes.todos.filter(
+      t => t.status !== 'completed'
+    );
+    if (incompleteTodos.length > 0 && this.currentNotes.findings.length === 0) {
+      return true;
+    }
+
+    return false;
   }
 }
 
