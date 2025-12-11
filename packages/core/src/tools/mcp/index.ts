@@ -7,6 +7,7 @@
 import type { Tool, ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
 import { ToolLayer, ToolPermission, ToolCategory } from '../types';
+import { ToolExecutor } from '../tool-executor';
 
 // ============================================================================
 // MCP 类型定义
@@ -250,13 +251,34 @@ export class MCPToolAdapter {
 // ============================================================================
 
 /**
+ * ToolRouter 配置
+ */
+export interface ToolRouterConfig {
+  /** 是否启用权限校验（默认true） */
+  enablePermissionCheck?: boolean;
+  /** 权限校验失败时抛异常还是返回错误（默认false） */
+  throwOnPermissionDenied?: boolean;
+}
+
+/**
  * 工具路由器
  *
  * 统一管理本地工具和MCP工具的路由
+ * 使用 ToolExecutor 进行权限校验和执行
  */
 export class ToolRouter {
   private localTools: Map<string, Tool> = new Map();
   private mcpAdapters: Map<string, MCPToolAdapter> = new Map();
+  private executor: ToolExecutor;
+  private config: Required<ToolRouterConfig>;
+
+  constructor(config: ToolRouterConfig = {}) {
+    this.executor = new ToolExecutor();
+    this.config = {
+      enablePermissionCheck: config.enablePermissionCheck ?? true,
+      throwOnPermissionDenied: config.throwOnPermissionDenied ?? false,
+    };
+  }
 
   /**
    * 注册本地工具
@@ -303,7 +325,7 @@ export class ToolRouter {
   }
 
   /**
-   * 执行工具
+   * 执行工具（使用 ToolExecutor 进行权限校验）
    */
   async execute(
     toolName: string,
@@ -319,7 +341,11 @@ export class ToolRouter {
       };
     }
 
-    return tool.execute(input, context) as Promise<ToolResult>;
+    // 使用 ToolExecutor 执行，自动进行权限校验
+    return this.executor.execute(tool, input, context, {
+      skipPermissionCheck: !this.config.enablePermissionCheck,
+      throwOnError: this.config.throwOnPermissionDenied,
+    });
   }
 
   /**
@@ -332,3 +358,4 @@ export class ToolRouter {
     this.mcpAdapters.clear();
   }
 }
+
