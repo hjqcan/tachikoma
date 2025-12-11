@@ -310,8 +310,50 @@ export {
 } from './mcp';
 
 // ============================================================================
-// TODO: 后续添加以下模块导出
+// 上下文工程模块 (Task 8)
 // ============================================================================
 
-// export * from './context';     // 上下文管理实现 (Task 8)
+export * as context from './context';
+
+// 常用 Context 类型顶层导出
+export type {
+  ContextMessage,
+  ContextState,
+  ContextThresholds,
+  ContextManagerConfig,
+  IContextManager,
+  CompactionResult,
+  SummarizationResult,
+  StructuredSummary,
+  AgentNotes,
+} from './context';
+
+export {
+  // 为避免与 conversation.ContextManager 冲突，将 context 模块的 ContextManager 重命名为 ContextEngineer
+  ContextManager as ContextEngineer,
+  createContextManager as createContextEngineer,
+  createDefaultContextConfig,
+  createModelAwareConfig,
+  DEFAULT_THRESHOLDS,
+  DEFAULT_COMPACTION_CONFIG,
+  DEFAULT_SUMMARIZATION_CONFIG,
+  MODEL_CONTEXT_LIMITS,
+  getModelContextLimit,
+  computeModelAwareThresholds,
+  validateThresholds,
+  NoteManager,
+  createNoteManager,
+  PrefixOptimizer,
+  createPrefixOptimizer,
+  // Token 估算
+  SimpleTokenEstimator,
+  CharacterBasedEstimator,
+  CachedTokenEstimator,
+  createTokenEstimator,
+  defaultTokenEstimator,
+  estimateTokens,
+} from './context';
+
+// Token 估算类型导出
+export type { TokenEstimator, TokenEstimatorType } from './context';
 

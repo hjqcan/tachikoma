@@ -757,7 +757,7 @@
         "testStrategy": "- 集成测试：验证 GenericAgentBackend 执行时自动触发压缩/摘要\n- 性能测试：大上下文（>100K tokens）处理时间 < 1s\n- 回归测试：确保现有600个测试继续通过\n- Token 估算精度测试：与真实 tokenizer 对比误差 < 20%",
         "priority": "medium",
         "dependencies": [],
-        "status": "pending",
+        "status": "in-progress",
         "subtasks": [
           {
             "id": 1,
@@ -765,9 +765,10 @@
             "description": "取消 index.ts 中 context 模块导出的注释，审查并规范化公开 API。",
             "dependencies": [],
             "details": "1. 编辑 packages/core/src/index.ts，取消第316行 `// export * from './context';` 的注释\n2. 审查 context/index.ts 的导出列表，确保类型和函数导出完整且命名规范\n3. 检查与现有 abstracts/BaseContextManager 的关系，避免命名冲突\n4. 更新 packages/core/package.json 的 exports 字段（如需要）\n5. 运行 bun typecheck 确保无类型错误",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "bun typecheck 通过；从 @tachikoma/core 成功导入 ContextManager 和相关类型",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T11:33:09.095Z"
           },
           {
             "id": 2,
@@ -777,9 +778,10 @@
               1
             ],
             "details": "1. 更新 DEFAULT_THRESHOLDS 为 Manus 推荐值：\n   - rotThreshold: 128_000 (128K，模型性能开始下降)\n   - softLimit: 150_000 (150K，触发压缩)\n   - hardLimit: 根据模型动态计算（模型上下文窗口 * 0.8）\n2. 新增 ModelContextLimits 配置映射：\n   - claude-3-opus: 200K 窗口 → hardLimit 160K\n   - claude-3-sonnet: 200K 窗口 → hardLimit 160K\n   - gpt-4o: 128K 窗口 → hardLimit 102K\n   - gemini-pro: 1M 窗口 → hardLimit 800K\n3. 新增 createModelAwareConfig(modelId) 工厂函数\n4. 添加配置验证：softLimit < hardLimit, rotThreshold < softLimit\n5. 保持向后兼容：无模型参数时使用保守默认值",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：验证各模型的阈值计算正确；验证配置校验拒绝非法配置；快照测试默认配置",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T11:33:18.229Z"
           },
           {
             "id": 3,
@@ -789,9 +791,10 @@
               2
             ],
             "details": "1. 重构 estimateTokens(content: string) 为可插拔设计：\n   - TokenEstimator 接口：{ estimate(content: string): number }\n   - SimpleTokenEstimator：当前 length/3 实现（保持作为默认）\n   - CharacterBasedEstimator：针对中英文混合优化（中文 length/1.5，英文 length/4）\n2. 预留 TiktokenAdapter（可选依赖）：\n   - 定义接口但不强制依赖 tiktoken\n   - 提供 createTiktokenEstimator(encoding) 工厂函数\n   - 用户可选安装 tiktoken 后启用精确估算\n3. 在 ContextManagerConfig 中添加 tokenEstimator 选项\n4. 添加 estimateTokens 精度测试（与已知 token 数对比）\n5. 缓存估算结果避免重复计算（message.tokenEstimate 字段）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：SimpleEstimator 与 CharacterBasedEstimator 输出合理；精度测试：与 Claude tokenizer 对比误差 < 20%",
-            "parentId": "8"
+            "parentId": "8",
+            "updatedAt": "2025-12-11T11:33:26.049Z"
           },
           {
             "id": 4,
@@ -832,7 +835,8 @@
             "testStrategy": "bun test 全量通过（600+ 测试）；性能基准达标；文档完整且示例可运行",
             "parentId": "8"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-11T11:33:26.049Z"
       },
       {
         "id": "9",
@@ -1609,7 +1613,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-11T09:00:34.733Z",
+      "lastModified": "2025-12-11T11:33:26.051Z",
       "taskCount": 16,
       "completedCount": 7,
       "tags": [

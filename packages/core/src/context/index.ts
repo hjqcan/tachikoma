@@ -62,7 +62,12 @@ export {
   DEFAULT_THRESHOLDS,
   DEFAULT_COMPACTION_CONFIG,
   DEFAULT_SUMMARIZATION_CONFIG,
+  MODEL_CONTEXT_LIMITS,
   createDefaultContextConfig,
+  createModelAwareConfig,
+  getModelContextLimit,
+  computeModelAwareThresholds,
+  validateThresholds,
 } from './types';
 
 // ============================================================================
@@ -108,3 +113,18 @@ export {
 // ============================================================================
 
 export { NoteManager, createNoteManager } from './memory';
+
+// ============================================================================
+// Token 估算器
+// ============================================================================
+
+export {
+  type TokenEstimator,
+  type TokenEstimatorType,
+  SimpleTokenEstimator,
+  CharacterBasedEstimator,
+  CachedTokenEstimator,
+  createTokenEstimator,
+  defaultTokenEstimator,
+  estimateTokens,
+} from './token-estimator';

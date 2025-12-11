@@ -486,16 +486,51 @@ export interface IContextManager {
 }
 
 // ============================================================================
-// 默认配置
-// ============================================================================
 
 /**
- * 默认阈值配置
+ * 默认阈值配置（Manus 推荐值）
+ * 
+ * - softLimit: 150K - 触发压缩的阈值
+ * - hardLimit: 160K - 触发摘要的阈值（默认值，模型感知时会动态计算）
+ * - rotThreshold: 128K - 上下文腐烂阈值（模型性能开始下降）
  */
 export const DEFAULT_THRESHOLDS: ContextThresholds = {
-  softLimit: 100_000, // 100K tokens
-  hardLimit: 180_000, // 180K tokens
-  rotThreshold: 128_000, // 128K tokens (Manus 经验值)
+  softLimit: 150_000, // 150K tokens - 触发压缩
+  hardLimit: 160_000, // 160K tokens - 默认值（动态计算会覆盖）
+  rotThreshold: 128_000, // 128K tokens - Manus 经验值
+};
+
+/**
+ * 模型上下文窗口大小映射
+ * 
+ * 用于动态计算 hardLimit（模型窗口 × 0.8）
+ */
+export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  // Claude 3 系列
+  'claude-3-opus': 200_000,
+  'claude-3-opus-20240229': 200_000,
+  'claude-3-sonnet': 200_000,
+  'claude-3-sonnet-20240229': 200_000,
+  'claude-3-haiku': 200_000,
+  'claude-3-haiku-20240307': 200_000,
+  // Claude 3.5 系列
+  'claude-3-5-sonnet': 200_000,
+  'claude-3-5-sonnet-20240620': 200_000,
+  'claude-3-5-sonnet-20241022': 200_000,
+  'claude-3-5-haiku': 200_000,
+  'claude-3-5-haiku-20241022': 200_000,
+  // OpenAI GPT-4 系列
+  'gpt-4o': 128_000,
+  'gpt-4o-2024-05-13': 128_000,
+  'gpt-4o-mini': 128_000,
+  'gpt-4-turbo': 128_000,
+  'gpt-4-turbo-preview': 128_000,
+  // Google Gemini 系列
+  'gemini-pro': 1_000_000,
+  'gemini-1.5-pro': 2_000_000,
+  'gemini-1.5-flash': 1_000_000,
+  // 默认值（用于未知模型）
+  'default': 128_000,
 };
 
 /**
@@ -524,6 +559,88 @@ export const DEFAULT_SUMMARIZATION_CONFIG: SummarizationConfig = {
 };
 
 /**
+ * 获取模型的上下文窗口大小
+ * 
+ * @param modelId - 模型 ID（支持模糊匹配）
+ * @returns 模型的上下文窗口大小
+ */
+export function getModelContextLimit(modelId: string): number {
+  // 精确匹配
+  if (MODEL_CONTEXT_LIMITS[modelId]) {
+    return MODEL_CONTEXT_LIMITS[modelId];
+  }
+  
+  // 模糊匹配（支持前缀匹配）
+  const normalizedId = modelId.toLowerCase();
+  for (const [key, value] of Object.entries(MODEL_CONTEXT_LIMITS)) {
+    if (normalizedId.startsWith(key.toLowerCase())) {
+      return value;
+    }
+  }
+  
+  // 返回默认值
+  return MODEL_CONTEXT_LIMITS['default'] ?? 128_000;
+}
+
+/**
+ * 计算模型感知的阈值配置
+ * 
+ * 自动根据模型上下文窗口调整所有阈值，确保：
+ * - softLimit < hardLimit
+ * - rotThreshold < hardLimit
+ * 
+ * @param modelId - 模型 ID
+ * @param overrides - 可选的阈值覆盖
+ * @returns 计算后的阈值配置
+ */
+export function computeModelAwareThresholds(
+  modelId: string,
+  overrides?: Partial<ContextThresholds>
+): ContextThresholds {
+  const contextLimit = getModelContextLimit(modelId);
+  const hardLimit = overrides?.hardLimit ?? Math.floor(contextLimit * 0.8); // 模型窗口的 80%
+  
+  // 确保 softLimit < hardLimit（留 10k 余量）
+  const defaultSoftLimit = Math.min(DEFAULT_THRESHOLDS.softLimit, hardLimit - 10_000);
+  const softLimit = overrides?.softLimit ?? defaultSoftLimit;
+  
+  // 确保 rotThreshold < hardLimit（留 10k 余量）
+  // 这是关键修复：对于小窗口模型（如 GPT-4o 128k），rotThreshold 需要下调
+  const defaultRotThreshold = Math.min(DEFAULT_THRESHOLDS.rotThreshold, hardLimit - 10_000);
+  const rotThreshold = overrides?.rotThreshold ?? defaultRotThreshold;
+  
+  return {
+    softLimit,
+    hardLimit,
+    rotThreshold,
+  };
+}
+
+/**
+ * 验证阈值配置的有效性
+ * 
+ * @param thresholds - 阈值配置
+ * @throws {Error} 配置无效时抛出错误
+ */
+export function validateThresholds(thresholds: ContextThresholds): void {
+  if (thresholds.softLimit <= 0) {
+    throw new Error('softLimit must be positive');
+  }
+  if (thresholds.hardLimit <= 0) {
+    throw new Error('hardLimit must be positive');
+  }
+  if (thresholds.rotThreshold <= 0) {
+    throw new Error('rotThreshold must be positive');
+  }
+  if (thresholds.softLimit >= thresholds.hardLimit) {
+    throw new Error('softLimit must be less than hardLimit');
+  }
+  if (thresholds.rotThreshold >= thresholds.hardLimit) {
+    throw new Error('rotThreshold must be less than hardLimit');
+  }
+}
+
+/**
  * 创建默认上下文管理器配置
  */
 export function createDefaultContextConfig(
@@ -545,3 +662,56 @@ export function createDefaultContextConfig(
     },
   };
 }
+
+/**
+ * 创建模型感知的上下文管理器配置
+ * 
+ * 自动根据模型的上下文窗口大小计算 hardLimit
+ * 
+ * @param modelId - 模型 ID
+ * @param workDir - 工作目录
+ * @param thresholdOverrides - 可选的阈值覆盖
+ * @returns 模型感知的配置
+ * 
+ * @example
+ * ```ts
+ * // 创建 Claude 配置（hardLimit = 200K × 0.8 = 160K）
+ * const config = createModelAwareConfig('claude-3-sonnet', '/tmp/workspace');
+ * 
+ * // 创建 GPT-4 配置（hardLimit = 128K × 0.8 = 102K）
+ * const config = createModelAwareConfig('gpt-4o', '/tmp/workspace');
+ * 
+ * // 使用自定义阈值
+ * const config = createModelAwareConfig('gemini-1.5-pro', '/tmp/workspace', {
+ *   softLimit: 500_000,
+ *   hardLimit: 800_000,
+ * });
+ * ```
+ */
+export function createModelAwareConfig(
+  modelId: string,
+  workDir: string,
+  thresholdOverrides?: Partial<ContextThresholds>
+): ContextManagerConfig {
+  const thresholds = computeModelAwareThresholds(modelId, thresholdOverrides);
+  
+  // 验证配置
+  validateThresholds(thresholds);
+  
+  return {
+    thresholds,
+    compaction: DEFAULT_COMPACTION_CONFIG,
+    summarization: DEFAULT_SUMMARIZATION_CONFIG,
+    offload: {
+      workDir,
+      tokenThreshold: 5000,
+      fileFormat: 'jsonl',
+    },
+    cacheOptimization: {
+      deterministicSerialization: true,
+      addCacheBreakpoints: true,
+      forbiddenDynamicContent: ['timestamp', 'random', 'uuid'],
+    },
+  };
+}
+

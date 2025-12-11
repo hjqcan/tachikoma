@@ -9,6 +9,7 @@ import type { Sandbox, SandboxConfig } from '../sandbox';
 import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
 import type { InterventionFile } from '../orchestrator/session/types';
+import type { ContextManagerConfig } from '../context';
 
 // Re-export for external use
 export type { InterventionFile };
@@ -443,6 +444,15 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
   sandboxConfig?: Partial<SandboxConfig>;
   /** 沙盒实例 */
   sandbox?: Sandbox;
+  /** 工作目录（用于上下文卸载等） */
+  workDir?: string;
+  /**
+   * 上下文管理器配置
+   *
+   * 如果提供，将使用完整的 ContextManager 替代内置的 SimpleContextManager，
+   * 支持自动压缩/摘要、KV 缓存优化和笔记系统
+   */
+  contextManagerConfig?: ContextManagerConfig;
 }
 
 /**
