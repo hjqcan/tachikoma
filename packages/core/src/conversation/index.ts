@@ -35,7 +35,7 @@ export { IntentAnalyzer } from './intent-analyzer';
 export { FeedbackLoop } from './feedback-loop';
 
 // Context Manager
-export { ContextManager } from './context-manager';
+export { ConversationContextManager } from './context-manager';
 
 // Conversational Runner
 export { ConversationalRunner } from './conversational-runner';

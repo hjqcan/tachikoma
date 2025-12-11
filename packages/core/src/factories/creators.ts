@@ -247,23 +247,27 @@ export function createSandbox(options: CreateSandboxOptions = {}): Sandbox {
 }
 
 /**
- * 创建 ContextManager
+ * 创建上下文管理器（通过注册表）
+ *
+ * 注意：
+ * - 这是基于注册表模式的工厂函数，用于创建 types.ContextManager 接口实现
+ * - 如果需要上下文工程模块的 ContextManager，请使用 `context.createContextManager`
  *
  * @param options - 创建选项
- * @returns ContextManager 实例
+ * @returns 上下文管理器实例
  *
  * @example
  * ```ts
- * // 创建上下文管理器
- * const contextManager = createContextManager();
+ * // 创建上下文管理器（推荐入口）
+ * const contextManager = createRegisteredContextManager();
  *
  * // 使用自定义会话 ID
- * const contextManager = createContextManager({
+ * const contextManager = createRegisteredContextManager({
  *   sessionId: 'session-123'
  * });
  * ```
  */
-export function createContextManager(
+export function createRegisteredContextManager(
   options: CreateContextManagerOptions = {}
 ): ContextManager {
   const {
@@ -287,6 +291,18 @@ export function createContextManager(
 
   // 否则抛出错误
   throw new NotRegisteredError('contextManager', 'ContextManager');
+}
+
+/**
+ * @deprecated 请使用 createRegisteredContextManager。
+ *
+ * 为兼容旧版 API，保留 createContextManager 别名，内部委托给
+ * createRegisteredContextManager。
+ */
+export function createContextManager(
+  options: CreateContextManagerOptions = {}
+): ContextManager {
+  return createRegisteredContextManager(options);
 }
 
 // ============================================================================

@@ -18,9 +18,12 @@ const SUMMARY_THRESHOLD = 10;
 // =============================================================================
 
 /**
- * 上下文管理器
+ * 会话上下文管理器
+ * 
+ * 用于 ConversationalRunner，管理多轮对话上下文
+ * 注意：这是一个轻量级的会话管理器，不要与 context 模块的 ContextManager 混淆
  */
-export class ContextManager {
+export class ConversationContextManager {
   private readonly maxMessages: number;
 
   constructor(options: { maxMessages?: number } = {}) {

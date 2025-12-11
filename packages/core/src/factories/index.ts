@@ -22,6 +22,7 @@ export {
 export {
   createAgent,
   createSandbox,
+  createRegisteredContextManager,
   createContextManager,
   createOrchestrator,
   createWorker,

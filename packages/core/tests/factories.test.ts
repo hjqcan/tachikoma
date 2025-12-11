@@ -10,6 +10,7 @@ import {
   DuplicateRegistrationError,
   createAgent,
   createSandbox,
+  createRegisteredContextManager,
   createContextManager,
   createOrchestrator,
   createWorker,
@@ -234,23 +235,38 @@ describe('createSandbox', () => {
   });
 });
 
-describe('createContextManager', () => {
+describe('createRegisteredContextManager', () => {
   beforeEach(() => {
     resetGlobalConfig();
     defaultRegistry.clear();
   });
 
   it('应创建 Stub ContextManager（显式启用 stub）', () => {
-    const contextManager = createContextManager({ useStub: true });
+    const contextManager = createRegisteredContextManager({ useStub: true });
 
     expect(contextManager).toBeInstanceOf(StubContextManager);
   });
 
   it('应使用自定义会话 ID', () => {
-    const contextManager = createContextManager({ sessionId: 'session-123', useStub: true });
+    const contextManager = createRegisteredContextManager({ sessionId: 'session-123', useStub: true });
     const context = contextManager.getContext();
 
     expect(context.sessionId).toBe('session-123');
+  });
+});
+
+describe('createContextManager (alias)', () => {
+  beforeEach(() => {
+    resetGlobalConfig();
+    defaultRegistry.clear();
+  });
+
+  it('应作为 createRegisteredContextManager 的兼容别名', () => {
+    const ctxFromAlias = createContextManager({ useStub: true, sessionId: 'alias-1' });
+    const ctxFromRegistered = createRegisteredContextManager({ useStub: true, sessionId: 'alias-1' });
+
+    expect(ctxFromAlias.getContext().sessionId).toBe('alias-1');
+    expect(ctxFromAlias.constructor).toBe(ctxFromRegistered.constructor);
   });
 });
 

@@ -59,7 +59,7 @@ export {
   // 创建函数
   createAgent,
   createSandbox,
-  createContextManager,
+  createRegisteredContextManager,
   createOrchestrator,
   createWorker,
   createPlanner,
@@ -274,7 +274,7 @@ export {
   SessionStore,
   IntentAnalyzer,
   FeedbackLoop,
-  ContextManager,
+  ConversationContextManager,
   UserIntent,
   FeedbackAction,
 } from './conversation';
@@ -329,9 +329,9 @@ export type {
 } from './context';
 
 export {
-  // 为避免与 conversation.ContextManager 冲突，将 context 模块的 ContextManager 重命名为 ContextEngineer
-  ContextManager as ContextEngineer,
-  createContextManager as createContextEngineer,
+  // 上下文管理器核心类
+  ContextManager,
+  createContextManager,
   createDefaultContextConfig,
   createModelAwareConfig,
   DEFAULT_THRESHOLDS,
@@ -356,4 +356,3 @@ export {
 
 // Token 估算类型导出
 export type { TokenEstimator, TokenEstimatorType } from './context';
-
