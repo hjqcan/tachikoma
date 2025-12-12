@@ -7,6 +7,7 @@ import type {
   ContextMessageMinimal 
 } from './types';
 import { InMemoryMemoryProvider } from './providers/in-memory';
+import { LevelDBMemoryProvider } from './providers/leveldb';
 import { OpenRouterEmbeddingService, MockEmbeddingService } from './embedding';
 
 /**
@@ -18,6 +19,7 @@ import { OpenRouterEmbeddingService, MockEmbeddingService } from './embedding';
 export class MemoryService implements MemoryProvider {
   private provider: MemoryProvider;
   private config: MemoryConfig;
+  private levelDBProvider?: LevelDBMemoryProvider;
 
   constructor(config: MemoryConfig) {
     this.config = config;
@@ -30,7 +32,12 @@ export class MemoryService implements MemoryProvider {
       case 'redis':
         throw new Error('Redis provider not implemented yet');
       case 'leveldb':
-        throw new Error('LevelDB provider not implemented yet');
+        if (!config.persistPath) {
+          throw new Error('LevelDB provider requires persistPath in config');
+        }
+        this.levelDBProvider = new LevelDBMemoryProvider(config.persistPath, embeddingService);
+        this.provider = this.levelDBProvider;
+        break;
       case 'vector':
         throw new Error('Vector provider not implemented yet');
       case 'in-memory':
@@ -102,6 +109,15 @@ export class MemoryService implements MemoryProvider {
       return;
     }
     return this.provider.clear(scope);
+  }
+
+  /**
+   * Close the provider (required for LevelDB)
+   */
+  async close(): Promise<void> {
+    if (this.levelDBProvider) {
+      await this.levelDBProvider.close();
+    }
   }
 
   /**

@@ -972,9 +972,10 @@
               9
             ],
             "details": "1. 新增 LevelDBMemoryProvider，实现 MemoryProvider 接口。\\n2. 使用 persistPath 作为数据库目录；按 scope 分桶存储。\\n3. save/retrieve/search 支持 embedding 与 metadata 持久化；检索先用全表扫描（MVP），预留索引。\\n4. 提供 JSON dump 导入导出工具用于调试与迁移。\\n5. MemoryService 支持 providerType='leveldb'。\\n6. 添加 tests：临时目录持久化、重启后可检索。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：save→重建 provider→retrieve 命中；无权限/损坏库错误处理",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T06:45:14.120Z"
           },
           {
             "id": 11,
@@ -1025,7 +1026,7 @@
             "parentId": "9"
           }
         ],
-        "updatedAt": "2025-12-12T06:30:27.353Z"
+        "updatedAt": "2025-12-12T06:45:14.120Z"
       },
       {
         "id": "10",
@@ -1692,7 +1693,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T06:30:27.355Z",
+      "lastModified": "2025-12-12T06:45:14.122Z",
       "taskCount": 16,
       "completedCount": 8,
       "tags": [
