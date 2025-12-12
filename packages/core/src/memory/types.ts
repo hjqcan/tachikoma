@@ -111,6 +111,67 @@ export interface EmbeddingService {
 }
 
 /**
+ * Vector Database Point
+ * A single vector with associated payload
+ */
+export interface VectorPoint {
+  /** Unique identifier */
+  id: string;
+  /** Vector embedding */
+  vector: number[];
+  /** Associated payload/metadata */
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Vector Search Result
+ */
+export interface VectorSearchResult {
+  /** Point ID */
+  id: string;
+  /** Similarity score (higher = more similar) */
+  score: number;
+  /** Associated payload */
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Vector Database Provider Interface
+ * 
+ * Generic interface for vector database operations.
+ * Implementations: Qdrant, Pinecone, Chroma, Weaviate, etc.
+ */
+export interface VectorDBProvider {
+  /** Initialize connection and create collection if needed */
+  initialize(): Promise<void>;
+  
+  /** Upsert points into the collection */
+  upsert(points: VectorPoint[]): Promise<void>;
+  
+  /** Search for similar vectors */
+  search(
+    vector: number[],
+    limit: number,
+    filter?: Record<string, unknown>
+  ): Promise<VectorSearchResult[]>;
+  
+  /** Delete points by IDs */
+  delete(ids: string[]): Promise<void>;
+  
+  /** Delete points by filter (for bulk clear operations) */
+  deleteByFilter(filter: Record<string, unknown>): Promise<number>;
+  
+  /** Scroll through all IDs matching filter (for iteration without search) */
+  scrollIds(filter?: Record<string, unknown>, limit?: number): Promise<string[]>;
+  
+  /** Get collection info (count, etc.) */
+  getInfo(): Promise<{ count: number; vectorSize: number }>;
+  
+  /** Close connection */
+  close(): Promise<void>;
+}
+
+/**
  * Memory Configuration
  */
 export interface MemoryConfig {
@@ -130,6 +191,8 @@ export interface MemoryConfig {
   redisKeyPrefix?: string;
   /** Redis TTL in seconds (for redis provider, optional) */
   redisTtlSeconds?: number;
+  /** Vector DB provider (for vector provider) */
+  vectorDBProvider?: VectorDBProvider;
   /**
    * Auto-retrieve memories before LLM calls.
    * ⚠️ WARNING: This sends conversation context to the embedding API (external).

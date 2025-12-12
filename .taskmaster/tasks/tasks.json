@@ -998,9 +998,10 @@
               10
             ],
             "details": "1. 新增 VectorMemoryProvider（Qdrant/Chroma 任选其一优先实现）。\\n2. 保存时写入向量库（collection/namespace 按 scope 或 projectId）。\\n3. retrieve/search 调用向量库 topK + 可选 metadata filter。\\n4. MemoryConfig 增加向量库端点/API key/collection 名称等配置。\\n5. MemoryService 支持 providerType='vector'。\\n6. tests：mock client + 有服务时端到端 smoke。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：真实向量库下 save→retrieve 命中；无服务时 mock 覆盖主逻辑",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T07:42:22.314Z"
           },
           {
             "id": 13,
@@ -1027,7 +1028,7 @@
             "parentId": "9"
           }
         ],
-        "updatedAt": "2025-12-12T07:10:42.672Z"
+        "updatedAt": "2025-12-12T07:42:22.314Z"
       },
       {
         "id": "10",
@@ -1694,7 +1695,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T07:10:42.673Z",
+      "lastModified": "2025-12-12T07:42:22.316Z",
       "taskCount": 16,
       "completedCount": 8,
       "tags": [

@@ -47,6 +47,7 @@
     "@ai-sdk/anthropic": "^2.0.53",
     "@ai-sdk/openai": "^2.0.77",
     "@modelcontextprotocol/sdk": "^1.24.3",
+    "@qdrant/js-client-rest": "^1.16.2",
     "@types/uuid": "^11.0.0",
     "ai": "^5.0.107",
     "ioredis": "^5.8.2",

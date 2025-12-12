@@ -9,6 +9,7 @@ import type {
 import { InMemoryMemoryProvider } from './providers/in-memory';
 import { LevelDBMemoryProvider } from './providers/leveldb';
 import { RedisMemoryProvider } from './providers/redis';
+import { VectorMemoryProvider } from './providers/vector';
 import { OpenRouterEmbeddingService, MockEmbeddingService } from './embedding';
 
 /**
@@ -22,6 +23,7 @@ export class MemoryService implements MemoryProvider {
   private config: MemoryConfig;
   private levelDBProvider?: LevelDBMemoryProvider;
   private redisProvider?: RedisMemoryProvider;
+  private vectorProvider?: VectorMemoryProvider;
 
   constructor(config: MemoryConfig) {
     this.config = config;
@@ -54,7 +56,12 @@ export class MemoryService implements MemoryProvider {
         this.provider = this.levelDBProvider;
         break;
       case 'vector':
-        throw new Error('Vector provider not implemented yet');
+        if (!config.vectorDBProvider) {
+          throw new Error('Vector provider requires vectorDBProvider in config');
+        }
+        this.vectorProvider = new VectorMemoryProvider(config.vectorDBProvider, embeddingService);
+        this.provider = this.vectorProvider;
+        break;
       case 'in-memory':
       default:
         this.provider = new InMemoryMemoryProvider(embeddingService);
@@ -127,7 +134,7 @@ export class MemoryService implements MemoryProvider {
   }
 
   /**
-   * Close the provider (required for LevelDB and Redis)
+   * Close the provider (required for LevelDB, Redis, and Vector)
    */
   async close(): Promise<void> {
     if (this.levelDBProvider) {
@@ -135,6 +142,9 @@ export class MemoryService implements MemoryProvider {
     }
     if (this.redisProvider) {
       await this.redisProvider.disconnect();
+    }
+    if (this.vectorProvider) {
+      await this.vectorProvider.close();
     }
   }
 
