@@ -16,9 +16,8 @@ import type {
   OffloadResult,
   StructuredSummary,
   AgentNotes,
-  MemoryProvider,
-  MemoryEntry,
 } from './types';
+import type { MemoryProvider, MemoryEntry } from '../memory/types';
 
 import { CompactionStrategy } from './strategies/compaction';
 import {

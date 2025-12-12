@@ -5,7 +5,7 @@ import type {
   MemoryScope, 
   MemoryRetrievalResult, 
   EmbeddingService, 
-  ContextMessage
+  ContextMessageMinimal
 } from '../types';
 
 /**
@@ -92,8 +92,8 @@ export class InMemoryMemoryProvider implements MemoryProvider {
   }
 
   async search(
-    context: ContextMessage[], 
-    topK: number = 5
+    context: ContextMessageMinimal[], 
+    topK = 5
   ): Promise<MemoryRetrievalResult> {
     // Simple strategy: use the content of the last message as query
     // In future, this could be enhanced with LLM keyword extraction

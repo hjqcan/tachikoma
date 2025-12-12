@@ -4,7 +4,7 @@ import type {
   MemoryEntry, 
   MemoryScope, 
   MemoryRetrievalResult,
-  ContextMessage 
+  ContextMessageMinimal 
 } from './types';
 import { InMemoryMemoryProvider } from './providers/in-memory';
 import { OpenRouterEmbeddingService, MockEmbeddingService } from './embedding';
@@ -75,8 +75,8 @@ export class MemoryService implements MemoryProvider {
    * Search memories based on context
    */
   async search(
-    context: ContextMessage[], 
-    topK: number = 5
+    context: ContextMessageMinimal[], 
+    topK = 5
   ): Promise<MemoryRetrievalResult> {
     if (!this.config.enabled) {
       return { memories: [], latencyMs: 0, fromCache: false };

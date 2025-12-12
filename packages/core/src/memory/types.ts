@@ -1,4 +1,15 @@
-export type { ContextMessage } from '../context/types';
+/**
+ * Minimal ContextMessage shape for MemoryProvider.search()
+ * 
+ * This is a subset of context/types.ContextMessage to avoid circular imports.
+ * The full ContextMessage type should be imported from @tachikoma/core/context.
+ */
+export interface ContextMessageMinimal {
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string;
+  timestamp: number;
+}
 
 /**
  * Memory Scope
@@ -74,7 +85,7 @@ export interface MemoryProvider {
    * Search memories based on conversation context
    */
   search(
-    context: ContextMessage[],
+    context: ContextMessageMinimal[],
     topK?: number
   ): Promise<MemoryRetrievalResult>;
 
