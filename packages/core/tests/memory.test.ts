@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import { MemoryService } from '../src/memory/service';
 import { InMemoryMemoryProvider } from '../src/memory/providers/in-memory';
 import { MockEmbeddingService } from '../src/memory/embedding';
-import type { MemoryConfig, MemoryEntry, ContextMessage } from '../src/memory/types';
+import type { MemoryConfig, MemoryEntry, ContextMessageMinimal as ContextMessage } from '../src/memory/types';
 
 describe('Memory System', () => {
   const mockEmbeddingService = new MockEmbeddingService(10); // Low dimension for easy testing
@@ -81,7 +81,6 @@ describe('Memory System', () => {
           role: 'user',
           content: 'How to build an agent?',
           timestamp: Date.now(),
-          format: 'full',
         },
       ];
 
@@ -99,6 +98,26 @@ describe('Memory System', () => {
       const disabledService = new MemoryService({ ...config, enabled: false });
       const result = await disabledService.retrieve('test');
       expect(result.memories.length).toBe(0);
+    });
+
+    test('search filters system/tool messages', async () => {
+      // Save a memory about agents
+      await service.save({
+        content: 'Agent architecture uses memory for long-term storage',
+        scope: 'declarative',
+      });
+
+      // Context with mixed message types
+      const mixedContext: ContextMessage[] = [
+        { id: '1', role: 'system', content: 'You are a helpful assistant', timestamp: Date.now() },
+        { id: '2', role: 'tool', content: 'Tool result: file read success', timestamp: Date.now() },
+        { id: '3', role: 'user', content: 'Tell me about agent memory', timestamp: Date.now() },
+        { id: '4', role: 'assistant', content: 'Agent memory enables persistent knowledge', timestamp: Date.now() },
+      ];
+
+      const result = await service.search(mixedContext);
+      // Should find memory based on user/assistant messages, not system/tool
+      expect(result.memories.length).toBeGreaterThan(0);
     });
   });
 });

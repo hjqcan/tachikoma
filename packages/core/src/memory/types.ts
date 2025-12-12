@@ -138,4 +138,23 @@ export interface MemoryConfig {
    * @default true
    */
   autoSave?: boolean;
+  /**
+   * Query strategy for memory search.
+   * - 'last-message': Use only the last message content (simple, fast)
+   * - 'user-assistant': Filter to user/assistant messages only, combine last N
+   * - 'retrieval-context': Use ContextManager.getRetrievalContext() for rich query (recommended)
+   * @default 'user-assistant'
+   */
+  queryStrategy?: 'last-message' | 'user-assistant' | 'retrieval-context';
+  /**
+   * Number of memories to retrieve (topK).
+   * @default 5
+   */
+  topK?: number;
+  /**
+   * Minimum interval between memory retrievals (ms).
+   * Prevents excessive embedding API calls in rapid loops.
+   * @default 10000 (10 seconds)
+   */
+  retrievalCooldownMs?: number;
 }

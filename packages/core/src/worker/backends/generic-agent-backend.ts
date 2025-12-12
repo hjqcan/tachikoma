@@ -531,6 +531,8 @@ export class GenericAgentBackend implements IWorkerBackend {
 
   // Memory 支持
   private memoryService?: MemoryService;
+  private lastMemoryRetrievalAt?: number;
+  private injectedMemoryIds = new Set<string>();
 
   constructor(config: GenericBackendConfig) {
     this.config = config;
@@ -633,6 +635,10 @@ export class GenericAgentBackend implements IWorkerBackend {
     // 创建 AbortController
     this.abortController = new AbortController();
     this.isExecuting = true;
+
+    // Reset memory state for new task (avoid cross-task dedup interference)
+    this.lastMemoryRetrievalAt = 0;
+    this.injectedMemoryIds.clear();
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
@@ -807,15 +813,51 @@ When the task is complete, provide a final summary of what was accomplished.`));
         }
 
         // Memory: 自动检索相关记忆 (best-effort, 不中断主循环)
-        const autoRetrieve = this.config.memoryConfig?.autoRetrieve !== false;
-        if (this.memoryService && autoRetrieve && context.shouldRetrieveMemories()) {
+        const memoryConfig = this.config.memoryConfig;
+        const autoRetrieve = memoryConfig?.autoRetrieve !== false;
+        const cooldownMs = memoryConfig?.retrievalCooldownMs ?? 10000;
+        const now = Date.now();
+        const cooldownOk = !this.lastMemoryRetrievalAt || (now - this.lastMemoryRetrievalAt) >= cooldownMs;
+        
+        if (this.memoryService && autoRetrieve && cooldownOk && context.shouldRetrieveMemories()) {
           try {
             console.debug('[GenericAgentBackend] Retrieving relevant memories...');
-            // eslint-disable-next-line no-await-in-loop
-            const memoryResult = await this.memoryService.search(context.getContext());
-            if (memoryResult.memories.length > 0) {
-              console.debug(`[GenericAgentBackend] Injected ${memoryResult.memories.length} memories`);
-              context.injectRetrievedMemories(memoryResult.memories);
+            this.lastMemoryRetrievalAt = now;
+            
+            // Use queryStrategy to determine search approach
+            const queryStrategy = memoryConfig?.queryStrategy ?? 'user-assistant';
+            const topK = memoryConfig?.topK ?? 5;
+            let memoryResult;
+            
+            if (queryStrategy === 'retrieval-context') {
+              // Use ContextManager's rich retrieval context
+              const retrievalQuery = context.getRetrievalContext();
+              // eslint-disable-next-line no-await-in-loop
+              memoryResult = await this.memoryService.retrieve(retrievalQuery, topK);
+            } else if (queryStrategy === 'last-message') {
+              // Use only the last message (simple, fast)
+              const messages = context.getContext();
+              const lastMessage = messages[messages.length - 1];
+              const query = lastMessage?.content ?? '';
+              // eslint-disable-next-line no-await-in-loop
+              memoryResult = await this.memoryService.retrieve(query, topK);
+            } else {
+              // 'user-assistant': Use provider's search (handles role filtering internally)
+              // eslint-disable-next-line no-await-in-loop
+              memoryResult = await this.memoryService.search(context.getContext(), topK);
+            }
+            
+            // Dedup: filter out already-injected memories
+            const newMemories = memoryResult.memories.filter(
+              m => !this.injectedMemoryIds.has(m.id)
+            );
+            
+            if (newMemories.length > 0) {
+              console.debug(`[GenericAgentBackend] Injected ${newMemories.length} new memories (skipped ${memoryResult.memories.length - newMemories.length} duplicates)`);
+              for (const m of newMemories) {
+                this.injectedMemoryIds.add(m.id);
+              }
+              context.injectRetrievedMemories(newMemories);
             }
           } catch (memoryError) {
             console.warn('[GenericAgentBackend] Memory retrieval failed (continuing):', memoryError);

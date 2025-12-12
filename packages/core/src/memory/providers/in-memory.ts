@@ -95,21 +95,38 @@ export class InMemoryMemoryProvider implements MemoryProvider {
     context: ContextMessageMinimal[], 
     topK = 5
   ): Promise<MemoryRetrievalResult> {
-    // Simple strategy: use the content of the last message as query
-    // In future, this could be enhanced with LLM keyword extraction
     if (context.length === 0) {
       return { memories: [], latencyMs: 0, fromCache: false };
     }
 
-    const lastMessage = context[context.length - 1];
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    if (!lastMessage) {
-       return { memories: [], latencyMs: 0, fromCache: false };
-    }
-    const query = lastMessage.content;
+    // Filter to user and assistant messages only (skip system/tool/status)
+    const relevantMessages = context.filter(
+      m => m.role === 'user' || m.role === 'assistant'
+    );
 
-    // TODO: optimization - combine last few messages or extract keywords
+    if (relevantMessages.length === 0) {
+      // Fallback to last message if no user/assistant messages
+      const lastMessage = context[context.length - 1];
+      if (!lastMessage) {
+        return { memories: [], latencyMs: 0, fromCache: false };
+      }
+      return this.retrieve(lastMessage.content, topK);
+    }
+
+    // Combine last 3 relevant messages for richer query
+    const queryParts = relevantMessages
+      .slice(-3)
+      .map(m => m.content)
+      .filter(c => c.length > 0);
+
+    let query = queryParts.join(' | ');
     
+    // Limit query length to avoid excessive embedding costs
+    const MAX_QUERY_LENGTH = 2000;
+    if (query.length > MAX_QUERY_LENGTH) {
+      query = query.slice(0, MAX_QUERY_LENGTH);
+    }
+
     return this.retrieve(query, topK);
   }
 
