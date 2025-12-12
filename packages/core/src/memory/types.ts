@@ -59,6 +59,22 @@ export interface MemoryRetrievalResult {
 }
 
 /**
+ * Memory Metrics for tracking memory system effectiveness
+ */
+export interface MemoryMetrics {
+  /** Number of memory retrieval attempts */
+  retrievalCount: number;
+  /** Number of retrievals that returned at least one memory */
+  hitCount: number;
+  /** Hit rate (hitCount / retrievalCount) */
+  hitRate: number;
+  /** Estimated tokens saved by reusing memories (rough estimate) */
+  tokensSaved: number;
+  /** Total retrieval latency in ms */
+  totalLatencyMs: number;
+}
+
+/**
  * Memory Provider Interface
  * 
  * Abstract interface for storage backends.

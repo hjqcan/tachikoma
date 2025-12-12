@@ -15,6 +15,7 @@ import type {
   JSONSchema,
   AgentConfig,
 } from '../types';
+import type { MemoryConfig } from '../memory';
 
 // ============================================================================
 // 统筹者任务类型
@@ -562,6 +563,13 @@ export interface OrchestratorConfig {
   approval: ApprovalPolicy;
   /** 偏离检测配置 */
   deviationDetection: DeviationDetectionConfig;
+  /**
+   * Memory 系统配置
+   *
+   * 如果提供，Orchestrator 将在聚合后保存结果到记忆，
+   * 并支持跨会话知识复用
+   */
+  memoryConfig?: MemoryConfig;
 }
 
 /**
@@ -588,6 +596,13 @@ export interface PlannerConfig {
   maxParseRetries: number;
   /** 是否启用详细推理 */
   enableReasoning: boolean;
+  /**
+   * Memory 系统配置
+   *
+   * 如果提供，Planner 将在规划前检索相关 declarative/procedural 记忆
+   * 作为规划上下文
+   */
+  memoryConfig?: MemoryConfig;
 }
 
 /**

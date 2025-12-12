@@ -851,7 +851,7 @@
         "dependencies": [
           "8"
         ],
-        "status": "in-progress",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1024,12 +1024,13 @@
               13
             ],
             "details": "1. Planner 规划前检索 declarative/procedural 记忆并注入 system prompt。\\n2. Orchestrator 聚合后将子任务摘要/关键结论写入 memory（scope 按类型选择）。\\n3. 支持 session scope 自动 clear（任务结束或超时）。\\n4. 增加简单指标：memoryHitRate、tokensSaved（接入 AgentOps 时复用）。\\n5. 更新文档说明 memory 在 plan/execute/aggregate 的作用。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "端到端测试：同一项目多次运行可复用记忆提升规划；指标输出正确",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T08:14:08.926Z"
           }
         ],
-        "updatedAt": "2025-12-12T08:08:32.630Z"
+        "updatedAt": "2025-12-12T08:14:08.926Z"
       },
       {
         "id": "10",
@@ -1696,9 +1697,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T08:08:32.632Z",
+      "lastModified": "2025-12-12T08:14:08.928Z",
       "taskCount": 16,
-      "completedCount": 8,
+      "completedCount": 9,
       "tags": [
         "master"
       ]

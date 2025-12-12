@@ -15,6 +15,7 @@ import type {
   ApprovalPolicy,
   DeviationDetectionConfig,
 } from './types';
+import type { MemoryConfig } from '../memory';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
 
 // ============================================================================
@@ -257,6 +258,7 @@ interface PartialPlannerConfig {
   defaultMaxSubtasks?: number;
   maxParseRetries?: number;
   enableReasoning?: boolean;
+  memoryConfig?: MemoryConfig;
 }
 
 /**
@@ -272,6 +274,7 @@ export interface PartialOrchestratorConfig {
   session?: Partial<SessionDirConfig>;
   approval?: Partial<ApprovalPolicy>;
   deviationDetection?: Partial<DeviationDetectionConfig>;
+  memoryConfig?: MemoryConfig;
 }
 
 /**
@@ -308,8 +311,12 @@ export function createOrchestratorConfig(
   // 深度合并嵌套对象，确保正确处理 retryPolicy 和 agent
   const { retryPolicy: overrideRetryPolicy, ...restDelegation } =
     overrides.delegation || {};
-  const { agent: overridePlannerAgent, ...restPlanner } =
+  const { agent: overridePlannerAgent, memoryConfig: overridePlannerMemoryConfig, ...restPlanner } =
     overrides.planner || {};
+  
+  // 确定最终 memoryConfig（仅当定义时才包含）
+  const plannerMemoryConfig = overridePlannerMemoryConfig ?? baseConfig.planner.memoryConfig;
+  const orchestratorMemoryConfig = overrides.memoryConfig ?? baseConfig.memoryConfig;
 
   return {
     agent: {
@@ -323,6 +330,8 @@ export function createOrchestratorConfig(
         ...baseConfig.planner.agent,
         ...overridePlannerAgent,
       },
+      // memoryConfig 仅当定义时才包含
+      ...(plannerMemoryConfig ? { memoryConfig: plannerMemoryConfig } : {}),
     },
     workerPool: {
       ...baseConfig.workerPool,
@@ -356,6 +365,8 @@ export function createOrchestratorConfig(
       ...baseConfig.deviationDetection,
       ...overrides.deviationDetection,
     },
+    // memoryConfig 仅当定义时才包含
+    ...(orchestratorMemoryConfig ? { memoryConfig: orchestratorMemoryConfig } : {}),
   };
 }
 

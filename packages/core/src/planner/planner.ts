@@ -30,6 +30,7 @@ import {
   DEFAULT_RETRY_POLICY,
 } from '../orchestrator/config';
 import { injectToolRecommendations } from './subtask-validator';
+import { MemoryService } from '../memory';
 
 // ============================================================================
 // 类型定义
@@ -114,6 +115,13 @@ export class Planner {
   private readonly llmClient: LLMClient;
   private readonly parser: PlanningParser;
   private readonly parseRetryConfig: ParseRetryConfig;
+  private memoryService?: MemoryService;
+  private memoryMetrics = {
+    retrievalCount: 0,
+    hitCount: 0,
+    tokensSaved: 0,
+    totalLatencyMs: 0,
+  };
 
   constructor(options: PlannerOptions = {}) {
     // 合并配置
@@ -138,6 +146,12 @@ export class Planner {
 
     // 创建解析器
     this.parser = new PlanningParser(this.llmClient, this.parseRetryConfig);
+    
+    // 初始化 MemoryService (如果配置启用)
+    if (this.config.memoryConfig?.enabled) {
+      this.memoryService = new MemoryService(this.config.memoryConfig);
+      console.debug('[Planner] MemoryService initialized');
+    }
   }
 
   /**
@@ -154,13 +168,14 @@ export class Planner {
     const degraded = false;
 
     try {
-      // 生成用户 Prompt
+      // 生成用户 Prompt (包含异步获取的记忆上下文)
+      const additionalContext = await this.buildAdditionalContext(task, preferences);
       const userPrompt = generatePlanningUserPrompt({
         objective: task.objective,
         constraints: task.constraints,
         availableTools,
         maxSubtasks: maxSubtasks ?? this.config.defaultMaxSubtasks,
-        additionalContext: this.buildAdditionalContext(task, preferences),
+        additionalContext,
       });
 
       // 构建 LLM 请求
@@ -230,11 +245,13 @@ export class Planner {
 
   /**
    * 构建额外上下文
+   * 
+   * 包含任务元数据和相关历史记忆
    */
-  private buildAdditionalContext(
+  private async buildAdditionalContext(
     task: OrchestratorTask,
     preferences?: PlannerInput['preferences']
-  ): string | undefined {
+  ): Promise<string | undefined> {
     const parts: string[] = [];
 
     // 添加优先级和复杂度信息
@@ -247,6 +264,53 @@ export class Planner {
     }
     if (preferences?.conservativeMode) {
       parts.push('模式：保守模式，生成较少的子任务');
+    }
+
+    // Memory: 检索相关历史记忆 (best-effort)
+    if (this.memoryService) {
+      try {
+        console.debug('[Planner] Retrieving relevant memories for planning...');
+        const topK = this.config.memoryConfig?.topK ?? 5;
+        
+        // Track metrics
+        this.memoryMetrics.retrievalCount++;
+        const retrievalStart = Date.now();
+        
+        // 检索 declarative (事实/知识) 和 procedural (过去任务/决策) 记忆
+        const [declarativeResult, proceduralResult] = await Promise.all([
+          this.memoryService.retrieve(task.objective, topK, 'declarative'),
+          this.memoryService.retrieve(task.objective, topK, 'procedural'),
+        ]);
+        
+        // Track latency
+        this.memoryMetrics.totalLatencyMs += Date.now() - retrievalStart;
+        
+        // 合并并按 relevanceScore 排序（高分优先）
+        const allMemories = [...declarativeResult.memories, ...proceduralResult.memories]
+          .sort((a, b) => (b.relevanceScore ?? 0) - (a.relevanceScore ?? 0));
+        
+        // 取全局 topK（最多10条，防止 context 过长）
+        const maxMemories = Math.min(topK * 2, 10);
+        const memories = allMemories.slice(0, maxMemories);
+        
+        if (memories.length > 0) {
+          // Track hit and estimate tokens saved (rough: ~4 chars per token)
+          this.memoryMetrics.hitCount++;
+          const totalContent = memories.reduce((acc, m) => acc + m.content.length, 0);
+          this.memoryMetrics.tokensSaved += Math.floor(totalContent / 4);
+          
+          console.debug(`[Planner] Found ${memories.length} relevant memories (from ${allMemories.length} total)`);
+          parts.push('');
+          parts.push('[历史记忆参考]');
+          parts.push('以下是与当前任务相关的历史记忆，仅作为规划参考，不是新的任务要求：');
+          for (const m of memories) {
+            const score = m.relevanceScore ? ` [score: ${m.relevanceScore.toFixed(2)}]` : '';
+            parts.push(`- ${m.content.slice(0, 200)}${m.content.length > 200 ? '...' : ''}${score}`);
+          }
+        }
+      } catch (error) {
+        console.warn('[Planner] Memory retrieval failed (continuing):', error);
+      }
     }
 
     return parts.length > 0 ? parts.join('\n') : undefined;
@@ -448,6 +512,40 @@ export class Planner {
    */
   isAvailable(): boolean {
     return this.llmClient.isAvailable();
+  }
+
+  /**
+   * 关闭 Planner 资源（释放 MemoryService 连接）
+   * 
+   * 必须在 Planner 不再使用后调用，以释放 Redis/LevelDB/Vector 连接
+   */
+  async close(): Promise<void> {
+    if (this.memoryService) {
+      await this.memoryService.close();
+      console.debug('[Planner] MemoryService closed');
+    }
+  }
+
+  /**
+   * 获取内存指标
+   * 
+   * @returns Memory metrics with hitRate computed
+   */
+  getMemoryMetrics(): {
+    retrievalCount: number;
+    hitCount: number;
+    hitRate: number;
+    tokensSaved: number;
+    totalLatencyMs: number;
+  } {
+    const { retrievalCount, hitCount, tokensSaved, totalLatencyMs } = this.memoryMetrics;
+    return {
+      retrievalCount,
+      hitCount,
+      hitRate: retrievalCount > 0 ? hitCount / retrievalCount : 0,
+      tokensSaved,
+      totalLatencyMs,
+    };
   }
 }
 

@@ -42,6 +42,7 @@ import {
   type ThinkingRecord,
   type InterventionFile,
 } from './session';
+import { MemoryService } from '../memory';
 
 // ============================================================================
 // 类型定义
@@ -171,6 +172,9 @@ export class Orchestrator extends BaseAgent {
   /** 审批请求缓存 TTL（5 分钟） */
   private static readonly REQUEST_CACHE_TTL = 5 * 60 * 1000;
 
+  /** Memory 服务（跨会话记忆） */
+  private memoryService?: MemoryService;
+
   constructor(id: string, options: OrchestratorOptions = {}) {
     const config = createOrchestratorConfig(options.config);
 
@@ -191,6 +195,12 @@ export class Orchestrator extends BaseAgent {
 
     // 绑定审批处理器方法
     this.boundApprovalHandler = this.handlePendingApproval.bind(this);
+    
+    // 初始化 MemoryService（如果配置启用）
+    if (config.memoryConfig?.enabled) {
+      this.memoryService = new MemoryService(config.memoryConfig);
+      console.debug('[Orchestrator] MemoryService initialized');
+    }
   }
 
   // ============================================================================
@@ -364,7 +374,32 @@ export class Orchestrator extends BaseAgent {
       );
 
       // 阶段 3: 创建最终结果
-      return this.createFinalResult(task.id, aggregatedResult, startTime);
+      const finalResult = this.createFinalResult(task.id, aggregatedResult, startTime);
+
+      // Memory: 保存任务结果到记忆 (best-effort)
+      if (this.memoryService && this.orchestratorConfig.memoryConfig?.autoSave !== false) {
+        try {
+          const outputSummary = typeof aggregatedResult.output === 'string'
+            ? aggregatedResult.output.slice(0, 500)
+            : JSON.stringify(aggregatedResult.output).slice(0, 500);
+          const memoryContent = `Task: ${orchestratorTask.objective}\nStatus: ${finalResult.status}\nResult: ${outputSummary}`;
+          
+          await this.memoryService.save({
+            content: memoryContent,
+            scope: 'procedural',
+            metadata: {
+              source: `orchestrator:${this.id}`,
+              taskId: task.id,
+              status: finalResult.status,
+            }
+          });
+          console.debug('[Orchestrator] Task result saved to memory');
+        } catch (error) {
+          console.warn('[Orchestrator] Memory save failed (continuing):', error);
+        }
+      }
+
+      return finalResult;
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       return this.createFailureResult(
@@ -377,6 +412,15 @@ export class Orchestrator extends BaseAgent {
       // 清理
       this.executionState = null;
       await this.closeSession();
+      
+      // 清除 session scope 记忆（防止跨任务污染）
+      if (this.memoryService) {
+        try {
+          await this.memoryService.clear('session');
+        } catch {
+          // 忽略清理错误
+        }
+      }
     }
   }
 
@@ -1620,6 +1664,14 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
     // 清除事件监听器
     this.eventListeners.clear();
+    
+    // 关闭 Planner（释放其内部 MemoryService 连接）
+    await this.planner.close();
+    
+    // 关闭 Orchestrator 自身的 MemoryService
+    if (this.memoryService) {
+      await this.memoryService.close();
+    }
   }
 }
 
