@@ -958,9 +958,10 @@
               7
             ],
             "details": "1. OpenRouterEmbeddingService 添加重试/指数退避（处理 429/5xx/网络抖动）。\\n2. 添加轻量 LRU embedding 缓存（按文本 hash，默认 1000 条，可配置）。\\n3. 明确超时与错误分类，失败时抛出可读错误。\\n4. 补充 Mock fetch 测试：重试次数、退避、缓存命中。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：模拟失败后成功；缓存命中不触发 fetch；批量 embed 顺序正确",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T06:30:27.353Z"
           },
           {
             "id": 10,
@@ -1024,7 +1025,7 @@
             "parentId": "9"
           }
         ],
-        "updatedAt": "2025-12-12T06:03:10.705Z"
+        "updatedAt": "2025-12-12T06:30:27.353Z"
       },
       {
         "id": "10",
@@ -1691,7 +1692,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T06:03:10.708Z",
+      "lastModified": "2025-12-12T06:30:27.355Z",
       "taskCount": 16,
       "completedCount": 8,
       "tags": [

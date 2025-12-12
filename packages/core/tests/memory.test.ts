@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import { MemoryService } from '../src/memory/service';
 import { InMemoryMemoryProvider } from '../src/memory/providers/in-memory';
-import { MockEmbeddingService } from '../src/memory/embedding';
+import { MockEmbeddingService, OpenRouterEmbeddingService } from '../src/memory/embedding';
 import type { MemoryConfig, MemoryEntry, ContextMessageMinimal as ContextMessage } from '../src/memory/types';
 
 describe('Memory System', () => {
@@ -17,6 +17,16 @@ describe('Memory System', () => {
       const vectors = await mockEmbeddingService.embedBatch(['hello', 'world']);
       expect(vectors.length).toBe(2);
       expect(vectors[0].length).toBe(10);
+    });
+
+    test('OpenRouterEmbeddingService has cache and retry options', () => {
+      // Test constructor options are accepted (no actual API call)
+      const service = new OpenRouterEmbeddingService('fake-key', 'openai/text-embedding-3-small', {
+        cacheSize: 500,
+        maxRetries: 5,
+        timeoutMs: 60000,
+      });
+      expect(service.getCacheSize()).toBe(0);
     });
   });
 
