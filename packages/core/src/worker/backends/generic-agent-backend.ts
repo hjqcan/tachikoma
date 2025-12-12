@@ -1052,8 +1052,34 @@ When the task is complete, provide a final summary of what was accomplished.`));
           // 阶段 1: 并行执行可并行工具
           // =============================================
           if (parallel.length > 0) {
-            // 先发出所有 tool_call 消息
+            // 安全检查：过滤需要审批的工具调用，转移到顺序队列
+            const safeParallel: ParsedToolCall[] = [];
             for (const call of parallel) {
+              const tool = tools.find((t) => t.name === call.name);
+              const keyDecisionResult = isKeyDecision(
+                call.name,
+                call.input,
+                tool,
+                options.keyDecisionPolicy,
+                options.riskPolicy,
+                options.unknownToolPolicy
+              );
+              
+              if (keyDecisionResult.isKeyDecision) {
+                // 需要审批的工具转移到顺序队列
+                console.debug(
+                  `[GenericAgentBackend] Moving ${call.name} to sequential queue (requires approval: ${keyDecisionResult.reason})`
+                );
+                sequential.push(call);
+              } else {
+                safeParallel.push(call);
+              }
+            }
+
+            // 如果还有安全的并行工具，执行它们
+            if (safeParallel.length > 0) {
+            // 先发出所有 tool_call 消息
+            for (const call of safeParallel) {
               yield {
                 type: 'tool_call',
                 tool: call.name,
@@ -1073,7 +1099,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
             const limiter = createConcurrencyLimiter(parallelConfig.maxConcurrency);
 
             // 构建并行执行 Promise
-            const parallelExecutions = parallel.map(async (call) => {
+            const parallelExecutions = safeParallel.map(async (call) => {
               await limiter.acquire();
               try {
                 const startTime = Date.now();
@@ -1135,6 +1161,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
               done = true;
               continue; // 跳过顺序执行
             }
+            } // 关闭 safeParallel.length > 0 分支
           }
 
           // =============================================
@@ -1249,6 +1276,21 @@ When the task is complete, provide a final summary of what was accomplished.`));
               duration,
               timestamp: Date.now(),
             };
+
+            // P1 FAS: 检测 terminateSubtask 标志 (用于 report_back 等子任务终止工具)
+            // 兼容两种形态：output.terminateSubtask 或 output.data.terminateSubtask
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const out = result.output as any;
+            const terminate =
+              out?.terminateSubtask === true ||
+              out?.data?.terminateSubtask === true;
+            if (terminate) {
+              console.debug(
+                `[GenericAgentBackend] Tool ${call.name} returned terminateSubtask=true, terminating subtask`
+              );
+              done = true;
+              break;
+            }
           }
         } else {
           // 没有工具调用，任务完成

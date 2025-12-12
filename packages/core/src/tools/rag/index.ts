@@ -140,3 +140,6 @@ export const knowledgeRetrievalTool: Tool = {
     }
   },
 };
+
+// 导出混合搜索工具
+export { hybridSearchTool } from './hybrid-search';

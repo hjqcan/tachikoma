@@ -18,6 +18,10 @@ export { typeCheckTool } from './type-check';
 export { packageInfoTool } from './package-info';
 export { envGetTool } from './env-get';
 
+// Agent/子任务工具
+export { spawnSubagentTool } from './spawn-subagent';
+export { reportBackTool } from './report-back';
+
 // 安全工具函数
 export {
   DEFAULT_ENV_WHITELIST,

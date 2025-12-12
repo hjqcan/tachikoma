@@ -411,13 +411,6 @@ export interface ParallelExecutionConfig {
   excludeTools: string[];
   
   /**
-   * 是否按依赖关系分组
-   * 如果为 true，会分析工具调用之间的依赖并智能分组
-   * @default false
-   */
-  groupByDependency: boolean;
-  
-  /**
    * 并行工具白名单（可选）
    * 如果提供，只有在此列表中的工具才能并行执行
    * 默认使用 PARALLELIZABLE_TOOLS
@@ -446,7 +439,6 @@ export const DEFAULT_PARALLEL_EXECUTION_CONFIG: ParallelExecutionConfig = {
   enabled: false,               // 默认关闭，需显式启用
   maxConcurrency: 6,            // FAS 建议值
   excludeTools: [...SEQUENTIAL_TOOLS],
-  groupByDependency: false,
   parallelizableTools: [...PARALLELIZABLE_TOOLS],
 };
 
