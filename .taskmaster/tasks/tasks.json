@@ -843,113 +843,76 @@
       },
       {
         "id": "9",
-        "title": "记忆系统与 Skills 渐进加载",
-        "description": "实现会话/声明式/过程式/集体反馈记忆，并支持 Skills 目录的渐进披露加载。",
-        "details": "- 存储适配：Redis 会话缓存，LevelDB 持久化，Qdrant/Chroma 向量检索；统一 MemoryProvider 接口。\n- Skills Loader：三层加载（metadata -> instructions -> resources），按 triggers 选择性注入上下文。\n- APIs：saveMemory(query,fact)、retrieve(context,topK)、loadSkillByTrigger(trigger)。",
-        "testStrategy": "- 单元：Memory CRUD，向量检索 mock 验证 topK；Skills 分层加载不跨阈值。\n- 集成：任务执行时按 trigger 加载对应 Skill 指令。\n- 回归：缓存失效或缺失资源时优雅降级。",
+        "title": "记忆系统核心实现",
+        "description": "实现 Memory 模块核心：InMemoryProvider、EmbeddingService、MemoryService，与 ContextManager 集成。Skills 渐进加载已在 Task 8 中完成。",
+        "details": "- Memory 模块：packages/core/src/memory/，独立于 context 模块\\n- InMemoryProvider：零外部依赖，支持 session/declarative/procedural/collective 四类 scope\\n- EmbeddingService：通过 OpenRouter 调用 text-embedding-3-small，支持批量 embedding\\n- MemoryService：统一入口，路由到正确的 provider，支持 save/retrieve/search API\\n- 与 ContextManager 集成：实现 Task 8.5 预留的 MemoryProvider 接口\\n- 外部存储（Redis/LevelDB/Qdrant）后置到 Task 9B",
+        "testStrategy": "- 单元测试：InMemoryProvider CRUD、余弦相似度检索、topK 排序\\n- 集成测试：MemoryService 跨 scope 存取、EmbeddingService API 调用\\n- 端到端：GenericAgentBackend 执行时触发 memory 检索",
         "priority": "medium",
-        "dependencies": [],
+        "dependencies": ["8"],
         "status": "pending",
         "subtasks": [
           {
             "id": 1,
-            "title": "定义记忆与 Skills 接口类型",
-            "description": "设计 MemoryProvider、MemoryEntry、SkillMetadata 等核心类型",
+            "title": "创建 Memory 模块骨架与统一类型",
+            "description": "建立 packages/core/src/memory/ 目录结构，复用 Task 8.5 已定义的类型",
             "dependencies": [],
-            "details": "在 packages/core/src/memory/types.ts 定义 MemoryProvider 接口、MemoryEntry（id/content/embedding/metadata）、MemoryScope 枚举（session/declarative/procedural/collective）；在 packages/core/src/skills/types.ts 定义 SkillMetadata/Instruction/Resource 分层结构与 loadSkillByTrigger API 签名",
+            "details": "1. 创建目录结构：memory/{types.ts, index.ts, providers/, service.ts}\\n2. 从 context/types.ts 复制 MemoryProvider/MemoryEntry/MemoryScope 类型到 memory/types.ts（保持源代码正确位置）\\n3. 新增 MemoryConfig 类型（provider 选择、embedding 配置）\\n4. 新增 EmbeddingService 接口（embed(text) → number[], embedBatch(texts) → number[][]）\\n5. 导出到 core/index.ts",
             "status": "pending",
-            "testStrategy": "类型检查通过；接口符合 PRD 定义",
-            "parentId": "undefined"
+            "testStrategy": "类型检查通过；从 @tachikoma/core 可导入 Memory 相关类型",
+            "parentId": "9"
           },
           {
             "id": 2,
-            "title": "实现 Redis 会话缓存适配器",
-            "description": "开发 Redis 适配器用于会话级记忆缓存",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/memory/providers/redis.ts 实现 RedisSessionCache 类；封装连接池、get/set/delete 操作、TTL 管理；支持健康检查与重连；提供配置化 Redis URL/密码",
+            "title": "实现 EmbeddingService（OpenRouter）",
+            "description": "通过 OpenRouter 调用 OpenAI text-embedding-3-small",
+            "dependencies": [1],
+            "details": "1. 在 memory/embedding.ts 实现 OpenRouterEmbeddingService 类\\n2. 使用 OpenRouter API：POST https://openrouter.ai/api/v1/embeddings\\n3. 模型：openai/text-embedding-3-small（1536 维）\\n4. 支持批量 embedding（减少 API 调用）\\n5. 实现重试（3次，指数退避）\\n6. 缓存：可选本地缓存避免重复 embedding（LRU，最多 1000 条）\\n7. 提供 MockEmbeddingService 用于测试（返回随机向量）",
             "status": "pending",
-            "testStrategy": "单元测试：mock Redis 验证操作序列；集成测试：本地 Redis 读写",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：mock HTTP 验证请求格式、批量处理、重试逻辑；集成测试：真实 API 调用验证维度正确",
+            "parentId": "9"
           },
           {
             "id": 3,
-            "title": "实现 LevelDB 持久化适配器",
-            "description": "开发 LevelDB 适配器用于声明式/过程式记忆持久化",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/memory/providers/leveldb.ts 实现 LevelDBStore 类；封装打开/关闭、put/get/delete/batch 操作；支持按 scope 前缀隔离；处理并发写入与损坏恢复",
+            "title": "实现 InMemoryProvider",
+            "description": "零外部依赖的内存存储，支持向量相似度检索",
+            "dependencies": [1, 2],
+            "details": "1. 在 memory/providers/in-memory.ts 实现 InMemoryMemoryProvider 类\\n2. 使用 Map<string, MemoryEntry> 存储（按 scope 隔离）\\n3. save(): 调用 embeddingService 生成向量后存储\\n4. retrieve(): 计算查询向量与存储向量的余弦相似度，返回 topK\\n5. search(): 支持元数据过滤 + 向量检索组合\\n6. 实现 getByScope()/deleteByScope() 辅助方法\\n7. 支持可选的持久化到 JSON 文件（用于调试）",
             "status": "pending",
-            "testStrategy": "单元测试：验证 CRUD 操作、scope 隔离、错误处理",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：CRUD 操作、余弦相似度正确性、topK 排序、scope 隔离",
+            "parentId": "9"
           },
           {
             "id": 4,
-            "title": "实现向量检索适配器",
-            "description": "开发 Qdrant/Chroma 适配器用于语义检索",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/memory/providers/vector.ts 实现 VectorSearchProvider 类；支持 Qdrant 和 Chroma 两种后端（可配置）；封装 upsert/search/delete 操作；支持 topK 检索与相似度阈值过滤",
+            "title": "实现 MemoryService 编排层",
+            "description": "统一 Memory API 入口，管理 provider 生命周期",
+            "dependencies": [3],
+            "details": "1. 在 memory/service.ts 实现 MemoryService 类\\n2. 构造函数接收 MemoryConfig（provider、embeddingService）\\n3. save(content, scope, metadata): 路由到正确 provider\\n4. retrieve(query, options): 向量检索 + topK + 去重\\n5. search(context, options): 从上下文提取关键信息检索相关记忆\\n6. 实现 createMemoryService() 工厂函数\\n7. 支持 provider 热切换（未来扩展）\\n8. 日志记录操作（用于调试）",
             "status": "pending",
-            "testStrategy": "单元测试：mock 向量数据库验证查询参数；集成测试：本地 Qdrant 插入检索",
-            "parentId": "undefined"
+            "testStrategy": "单元测试：路由逻辑、去重、日志记录；集成测试：完整 save→retrieve 流程",
+            "parentId": "9"
           },
           {
             "id": 5,
-            "title": "实现内存 Stub 适配器",
-            "description": "提供无外部依赖的内存实现，用于开发和测试",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/memory/providers/memory.ts 实现 InMemoryProvider 类；使用 Map 存储数据，简单向量相似度计算（余弦相似度）；作为缺失后端时的降级方案",
+            "title": "与 ContextManager 集成",
+            "description": "将 MemoryService 作为 MemoryProvider 注入到 ContextManager",
+            "dependencies": [4],
+            "details": "1. 确保 MemoryService 实现 context/types.ts 中的 MemoryProvider 接口\\n2. 在 GenericAgentBackend 构造函数中创建 MemoryService 实例\\n3. 将 MemoryService 作为 memoryProvider 注入到 ContextManager\\n4. 实现自动 memory 注入逻辑：\\n   - 任务开始时：检索相关历史记忆\\n   - 任务结束时：保存关键结论为 declarative 记忆\\n5. 添加配置开关：memoryConfig.enabled（默认 false，显式启用）",
             "status": "pending",
-            "testStrategy": "单元测试：验证 CRUD 和 topK 检索",
-            "parentId": "undefined"
+            "testStrategy": "集成测试：GenericAgentBackend 执行任务时自动检索/保存记忆；配置关闭时无影响",
+            "parentId": "9"
           },
           {
             "id": 6,
-            "title": "构建统一 MemoryService",
-            "description": "编排四类记忆的存取流程，封装 saveMemory/retrieve API",
-            "dependencies": [
-              2,
-              3,
-              4,
-              5
-            ],
-            "details": "在 packages/core/src/memory/service.ts 实现 MemoryService 类；根据 MemoryScope 路由到对应适配器；session 用 Redis，declarative/procedural 用 LevelDB+向量，collective 用向量检索；支持 topK 去重、后端失效降级",
+            "title": "导出、文档与验证",
+            "description": "更新导出，编写文档，运行完整测试",
+            "dependencies": [5],
+            "details": "1. 更新 packages/core/src/index.ts 导出 Memory 模块\\n2. 编写 packages/core/src/memory/README.md 使用指南\\n3. 添加示例代码展示 save/retrieve/search 用法\\n4. 运行 bun test 确保所有测试通过\\n5. 运行 bun lint 确保无风格问题\\n6. 更新 walkthrough.md 记录实现",
             "status": "pending",
-            "testStrategy": "集成测试：验证 save/retrieve 跨 scope、topK 排序、降级逻辑",
-            "parentId": "undefined"
-          },
-          {
-            "id": 7,
-            "title": "开发 Skills 渐进加载器",
-            "description": "按三层模型加载 Skills 目录并基于 trigger 选择性注入",
-            "dependencies": [
-              1
-            ],
-            "details": "在 packages/core/src/skills/loader.ts 实现 SkillsLoader 类；扫描 skills/ 目录读取 metadata.json；loadSkillByTrigger(trigger) 返回匹配的 SKILL.md 指令；按需加载资源文件；缓存已加载技能；缺失文件时返回空指令",
-            "status": "pending",
-            "testStrategy": "单元测试：trigger 匹配、分层加载、缓存命中、缺失资源降级",
-            "parentId": "undefined"
-          },
-          {
-            "id": 8,
-            "title": "对外 API 导出与集成验证",
-            "description": "更新入口导出，编写文档与集成测试",
-            "dependencies": [
-              6,
-              7
-            ],
-            "details": "更新 packages/core/src/index.ts 导出 MemoryService 与 SkillsLoader；在 gateway 增加占位路由调用 saveMemory/retrieve/loadSkillByTrigger；编写 README 示例；确保 bun test 通过",
-            "status": "pending",
-            "testStrategy": "集成测试：端到端验证记忆存取与技能加载；缺失后端时降级响应",
-            "parentId": "undefined"
+            "testStrategy": "bun test 全量通过；文档示例可运行；从 @tachikoma/core 导入无错误",
+            "parentId": "9"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-12T10:40:00.000Z"
       },
       {
         "id": "10",

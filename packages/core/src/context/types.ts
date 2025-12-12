@@ -650,6 +650,27 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gemini-pro': 1_000_000,
   'gemini-1.5-pro': 2_000_000,
   'gemini-1.5-flash': 1_000_000,
+
+  // Claude 4 / 4.5 系列 (Predicted)
+  'claude-4-sonnet': 1_000_000,
+  'claude-4.5-sonnet': 1_000_000,
+  'claude-4.1-opus': 200_000,
+  'claude-4.5-opus': 200_000,
+
+  // GPT-5 系列 (Predicted)
+  'gpt-5': 400_000,
+  'gpt-5-turbo': 400_000,
+  'gpt-5-o': 400_000,
+  'gpt-5.1': 400_000,
+  'gpt-5.2': 400_000,
+
+  // Gemini 3 系列 (Predicted)
+  'gemini-3-pro': 2_000_000,
+  'gemini-3': 2_000_000, // Fallback for gemini-3-preview etc.
+
+  // Claude 4 Generic Fallback
+  'claude-4': 200_000, // Fallback for unknown Claude 4 variants
+
   // 默认值（用于未知模型）
   'default': 128_000,
 };
