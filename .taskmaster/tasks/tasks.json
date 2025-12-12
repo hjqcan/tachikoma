@@ -849,7 +849,7 @@
         "testStrategy": "- 单元测试：InMemoryProvider CRUD、余弦相似度检索、topK 排序\\n- 集成测试：MemoryService 跨 scope 存取、EmbeddingService API 调用\\n- 端到端：GenericAgentBackend 执行时触发 memory 检索",
         "priority": "medium",
         "dependencies": ["8"],
-        "status": "pending",
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -857,7 +857,7 @@
             "description": "建立 packages/core/src/memory/ 目录结构，复用 Task 8.5 已定义的类型",
             "dependencies": [],
             "details": "1. 创建目录结构：memory/{types.ts, index.ts, providers/, service.ts}\\n2. 从 context/types.ts 复制 MemoryProvider/MemoryEntry/MemoryScope 类型到 memory/types.ts（保持源代码正确位置）\\n3. 新增 MemoryConfig 类型（provider 选择、embedding 配置）\\n4. 新增 EmbeddingService 接口（embed(text) → number[], embedBatch(texts) → number[][]）\\n5. 导出到 core/index.ts",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "类型检查通过；从 @tachikoma/core 可导入 Memory 相关类型",
             "parentId": "9"
           },
@@ -867,7 +867,7 @@
             "description": "通过 OpenRouter 调用 OpenAI text-embedding-3-small",
             "dependencies": [1],
             "details": "1. 在 memory/embedding.ts 实现 OpenRouterEmbeddingService 类\\n2. 使用 OpenRouter API：POST https://openrouter.ai/api/v1/embeddings\\n3. 模型：openai/text-embedding-3-small（1536 维）\\n4. 支持批量 embedding（减少 API 调用）\\n5. 实现重试（3次，指数退避）\\n6. 缓存：可选本地缓存避免重复 embedding（LRU，最多 1000 条）\\n7. 提供 MockEmbeddingService 用于测试（返回随机向量）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：mock HTTP 验证请求格式、批量处理、重试逻辑；集成测试：真实 API 调用验证维度正确",
             "parentId": "9"
           },
@@ -877,7 +877,7 @@
             "description": "零外部依赖的内存存储，支持向量相似度检索",
             "dependencies": [1, 2],
             "details": "1. 在 memory/providers/in-memory.ts 实现 InMemoryMemoryProvider 类\\n2. 使用 Map<string, MemoryEntry> 存储（按 scope 隔离）\\n3. save(): 调用 embeddingService 生成向量后存储\\n4. retrieve(): 计算查询向量与存储向量的余弦相似度，返回 topK\\n5. search(): 支持元数据过滤 + 向量检索组合\\n6. 实现 getByScope()/deleteByScope() 辅助方法\\n7. 支持可选的持久化到 JSON 文件（用于调试）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：CRUD 操作、余弦相似度正确性、topK 排序、scope 隔离",
             "parentId": "9"
           },
@@ -887,7 +887,7 @@
             "description": "统一 Memory API 入口，管理 provider 生命周期",
             "dependencies": [3],
             "details": "1. 在 memory/service.ts 实现 MemoryService 类\\n2. 构造函数接收 MemoryConfig（provider、embeddingService）\\n3. save(content, scope, metadata): 路由到正确 provider\\n4. retrieve(query, options): 向量检索 + topK + 去重\\n5. search(context, options): 从上下文提取关键信息检索相关记忆\\n6. 实现 createMemoryService() 工厂函数\\n7. 支持 provider 热切换（未来扩展）\\n8. 日志记录操作（用于调试）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：路由逻辑、去重、日志记录；集成测试：完整 save→retrieve 流程",
             "parentId": "9"
           },
@@ -897,23 +897,103 @@
             "description": "将 MemoryService 作为 MemoryProvider 注入到 ContextManager",
             "dependencies": [4],
             "details": "1. 确保 MemoryService 实现 context/types.ts 中的 MemoryProvider 接口\\n2. 在 GenericAgentBackend 构造函数中创建 MemoryService 实例\\n3. 将 MemoryService 作为 memoryProvider 注入到 ContextManager\\n4. 实现自动 memory 注入逻辑：\\n   - 任务开始时：检索相关历史记忆\\n   - 任务结束时：保存关键结论为 declarative 记忆\\n5. 添加配置开关：memoryConfig.enabled（默认 false，显式启用）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：GenericAgentBackend 执行任务时自动检索/保存记忆；配置关闭时无影响",
             "parentId": "9"
           },
-          {
-            "id": 6,
-            "title": "导出、文档与验证",
-            "description": "更新导出，编写文档，运行完整测试",
-            "dependencies": [5],
-            "details": "1. 更新 packages/core/src/index.ts 导出 Memory 模块\\n2. 编写 packages/core/src/memory/README.md 使用指南\\n3. 添加示例代码展示 save/retrieve/search 用法\\n4. 运行 bun test 确保所有测试通过\\n5. 运行 bun lint 确保无风格问题\\n6. 更新 walkthrough.md 记录实现",
-            "status": "pending",
-            "testStrategy": "bun test 全量通过；文档示例可运行；从 @tachikoma/core 导入无错误",
-            "parentId": "9"
-          }
-        ],
-        "updatedAt": "2025-12-12T10:40:00.000Z"
-      },
+	          {
+	            "id": 6,
+	            "title": "导出、文档与验证",
+	            "description": "更新导出，编写文档，运行完整测试",
+	            "dependencies": [5],
+	            "details": "1. 更新 packages/core/src/index.ts 导出 Memory 模块\\n2. 编写 packages/core/src/memory/README.md 使用指南\\n3. 添加示例代码展示 save/retrieve/search 用法\\n4. 运行 bun test 确保所有测试通过\\n5. 运行 bun lint 确保无风格问题\\n6. 更新 walkthrough.md 记录实现",
+	            "status": "done",
+	            "testStrategy": "bun test 全量通过；文档示例可运行；从 @tachikoma/core 导入无错误",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 7,
+	            "title": "统一 Memory 类型来源",
+	            "description": "消除 context 与 memory 模块的 Memory* 类型重复，建立单一来源并保持向后兼容。",
+	            "dependencies": [6],
+	            "details": "1. 选定单一 Memory 类型来源（建议 memory/types.ts），context/types.ts 改为 re-export。\\n2. 更新 ContextManager/GenericAgentBackend/MemoryService/测试的导入路径。\\n3. 保证仅 type-only 交叉引用，避免运行时循环依赖。\\n4. 更新 core/index.ts 与 memory/index.ts 的导出。\\n5. 如需向后兼容，保留旧路径并加 deprecation 注释。",
+	            "status": "pending",
+	            "testStrategy": "bun typecheck + bun test；确认无类型漂移且导入不破坏现有 API",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 8,
+	            "title": "改进记忆检索 Query 与注入策略",
+	            "description": "提升 memory 检索命中率并避免重复注入。",
+	            "dependencies": [7],
+	            "details": "1. 在 MemoryService.search 或 Provider.search 中使用 ContextManager.getRetrievalContext() 生成 query。\\n2. 过滤 system/tool/status 角色，只基于 user/assistant 与 todo/findings。\\n3. 在 MemoryConfig 增加可选 queryStrategy/topK 参数（默认 retrieval-context/5）。\\n4. 在 ContextManager.shouldRetrieveMemories 中增加简单冷却/去重，避免每轮重复检索。\\n5. 补充 tests：不同角色上下文、重复检索、topK 生效。",
+	            "status": "pending",
+	            "testStrategy": "单元测试：search 只用有效消息；集成测试：GenericAgentBackend 注入记忆且不重复",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 9,
+	            "title": "EmbeddingService 可靠性增强",
+	            "description": "为 OpenRouterEmbeddingService 增加重试、退避和 LRU 缓存，降低外部 API 抖动影响。",
+	            "dependencies": [7],
+	            "details": "1. OpenRouterEmbeddingService 添加重试/指数退避（处理 429/5xx/网络抖动）。\\n2. 添加轻量 LRU embedding 缓存（按文本 hash，默认 1000 条，可配置）。\\n3. 明确超时与错误分类，失败时抛出可读错误。\\n4. 补充 Mock fetch 测试：重试次数、退避、缓存命中。",
+	            "status": "pending",
+	            "testStrategy": "单元测试：模拟失败后成功；缓存命中不触发 fetch；批量 embed 顺序正确",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 10,
+	            "title": "实现 LevelDB 持久化 Provider",
+	            "description": "为 declarative/procedural/collective 记忆提供本地持久化能力。",
+	            "dependencies": [7,9],
+	            "details": "1. 新增 LevelDBMemoryProvider，实现 MemoryProvider 接口。\\n2. 使用 persistPath 作为数据库目录；按 scope 分桶存储。\\n3. save/retrieve/search 支持 embedding 与 metadata 持久化；检索先用全表扫描（MVP），预留索引。\\n4. 提供 JSON dump 导入导出工具用于调试与迁移。\\n5. MemoryService 支持 providerType='leveldb'。\\n6. 添加 tests：临时目录持久化、重启后可检索。",
+	            "status": "pending",
+	            "testStrategy": "集成测试：save→重建 provider→retrieve 命中；无权限/损坏库错误处理",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 11,
+	            "title": "实现 Redis Provider（会话级）",
+	            "description": "为 session scope 提供可 TTL 的分布式缓存记忆。",
+	            "dependencies": [7],
+	            "details": "1. 新增 RedisMemoryProvider（主要覆盖 session scope）。\\n2. 设计 key：tachikoma:memory:{scope}:{id}，支持 sessionId 前缀与 TTL。\\n3. save/retrieve/search 对 session 记忆可使用 embedding 或关键词检索（MVP 可先关键词）。\\n4. MemoryConfig 增加 redisUrl/redisOptions。\\n5. MemoryService 支持 providerType='redis'。\\n6. tests：使用 mock redis 或本地 Redis 验证 TTL 与隔离。",
+	            "status": "pending",
+	            "testStrategy": "单元测试：key/TTL 逻辑；集成测试：session scope 自动清理",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 12,
+	            "title": "实现向量库 Provider（Qdrant/Chroma）",
+	            "description": "为 collective/长期记忆提供生产级向量检索后端。",
+	            "dependencies": [10],
+	            "details": "1. 新增 VectorMemoryProvider（Qdrant/Chroma 任选其一优先实现）。\\n2. 保存时写入向量库（collection/namespace 按 scope 或 projectId）。\\n3. retrieve/search 调用向量库 topK + 可选 metadata filter。\\n4. MemoryConfig 增加向量库端点/API key/collection 名称等配置。\\n5. MemoryService 支持 providerType='vector'。\\n6. tests：mock client + 有服务时端到端 smoke。",
+	            "status": "pending",
+	            "testStrategy": "集成测试：真实向量库下 save→retrieve 命中；无服务时 mock 覆盖主逻辑",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 13,
+	            "title": "集成到 Claude Agent SDK 后端",
+	            "description": "让 Anthropic/Claude SDK 模式下也能自动检索与保存记忆。",
+	            "dependencies": [8],
+	            "details": "1. 在 ClaudeAgentSDKBackend 中接入 MemoryService（同 Generic）。\\n2. autoRetrieve：每轮 SDK 调用前检索并以 system/user message 注入。\\n3. autoSave：任务完成后保存结果与关键 decision。\\n4. 处理 SDK 自带工具循环与我们注入的 context 顺序。\\n5. tests：mock SDK 流水验证记忆注入/保存不打断执行。",
+	            "status": "pending",
+	            "testStrategy": "集成测试：Claude backend 开启 memoryConfig 后行为与 Generic 一致",
+	            "parentId": "9"
+	          },
+	          {
+	            "id": 14,
+	            "title": "Planner/Orchestrator 记忆增强",
+	            "description": "在规划与聚合阶段复用/沉淀记忆，形成跨会话知识闭环。",
+	            "dependencies": [13],
+	            "details": "1. Planner 规划前检索 declarative/procedural 记忆并注入 system prompt。\\n2. Orchestrator 聚合后将子任务摘要/关键结论写入 memory（scope 按类型选择）。\\n3. 支持 session scope 自动 clear（任务结束或超时）。\\n4. 增加简单指标：memoryHitRate、tokensSaved（接入 AgentOps 时复用）。\\n5. 更新文档说明 memory 在 plan/execute/aggregate 的作用。",
+	            "status": "pending",
+	            "testStrategy": "端到端测试：同一项目多次运行可复用记忆提升规划；指标输出正确",
+	            "parentId": "9"
+	          }
+	        ],
+	        "updatedAt": "2025-12-12T10:40:00.000Z"
+	      },
       {
         "id": "10",
         "title": "AgentOps 可观测性与评估套件",

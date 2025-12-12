@@ -114,6 +114,7 @@ import { knowledgeUpsertTool } from './rag/upsert';
 
 // 6.7 新增工具
 export { webSearchTool } from './core/web-search';
+export { deepResearchTool } from './core/deep-research';
 export { spawnSubagentTool } from './core/spawn-subagent';
 export { submitResultTool } from './core/submit-result';
 export {
@@ -125,6 +126,7 @@ export {
 } from './core/browser-tools';
 
 import { webSearchTool } from './core/web-search';
+import { deepResearchTool } from './core/deep-research';
 import { spawnSubagentTool } from './core/spawn-subagent';
 import { submitResultTool } from './core/submit-result';
 import {
@@ -195,6 +197,7 @@ export const agentTools: Tool[] = [
  */
 export const networkTools: Tool[] = [
   webSearchTool,
+  deepResearchTool,
 ];
 
 /**
