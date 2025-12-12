@@ -255,6 +255,18 @@ export interface WorkerExecutionOptions {
    * 如果为 true 且 Sandbox 初始化失败，将拒绝执行高风险工具
    */
   strictSandboxRequired?: boolean;
+
+  // === 并行执行配置 (FAS) ===
+
+  /**
+   * 并行执行配置
+   * 
+   * 控制工具调用的并行执行行为，可显著降低执行延迟
+   * 默认关闭，需显式启用
+   * 
+   * @see https://www.relace.ai/blog/fast-agentic-search
+   */
+  parallelExecution?: ParallelExecutionConfig;
 }
 
 /**
@@ -342,6 +354,100 @@ export const DEFAULT_RESOURCE_LIMITS: Required<ResourceLimits> = {
   maxMessageWindow: 50,        // 保留最近 50 条消息
   maxThinkingRounds: 50,       // 最大 50 轮
   maxToolCalls: 100,           // 最大 100 次工具调用
+};
+
+// ============================================================================
+// 并行执行配置 (FAS: Fast Agentic Search)
+// ============================================================================
+
+/**
+ * 可并行执行的工具列表（无副作用、只读操作）
+ * 
+ * 这些工具可以安全地并行执行，不会相互干扰：
+ * - file_read: 文件读取
+ * - code_search: 代码搜索
+ * - file_list: 目录列表
+ * - web_search: 网页搜索
+ * - knowledge_search: 知识库搜索
+ * - deep_research: 深度研究
+ */
+export const PARALLELIZABLE_TOOLS: readonly string[] = [
+  'file_read',
+  'code_search', 
+  'file_list',
+  'web_search',
+  'knowledge_search',
+  'deep_research',
+  'grep_search',
+  'view_file',
+  'list_directory',
+] as const;
+
+/**
+ * 并行执行配置
+ * 
+ * 控制工具调用的并行执行行为，可显著降低执行延迟
+ * 
+ * @see https://www.relace.ai/blog/fast-agentic-search
+ */
+export interface ParallelExecutionConfig {
+  /**
+   * 是否启用并行执行
+   * @default false
+   */
+  enabled: boolean;
+  
+  /**
+   * 最大并发数
+   * FAS 论文建议 4-12，过高可能导致资源竞争
+   * @default 6
+   */
+  maxConcurrency: number;
+  
+  /**
+   * 需要顺序执行的工具（排除列表）
+   * 这些工具有副作用或依赖其他工具结果，必须顺序执行
+   */
+  excludeTools: string[];
+  
+  /**
+   * 是否按依赖关系分组
+   * 如果为 true，会分析工具调用之间的依赖并智能分组
+   * @default false
+   */
+  groupByDependency: boolean;
+  
+  /**
+   * 并行工具白名单（可选）
+   * 如果提供，只有在此列表中的工具才能并行执行
+   * 默认使用 PARALLELIZABLE_TOOLS
+   */
+  parallelizableTools?: string[];
+}
+
+/**
+ * 需要顺序执行的工具（有副作用）
+ */
+export const SEQUENTIAL_TOOLS: readonly string[] = [
+  'file_write',
+  'file_patch',
+  'shell_run',
+  'run_command',
+  'spawn_subagent',
+  'submit_result',
+  'delete_file',
+  'create_directory',
+] as const;
+
+/**
+ * 默认并行执行配置
+ */
+export const DEFAULT_PARALLEL_EXECUTION_CONFIG: ParallelExecutionConfig = {
+  enabled: false,               // 默认关闭，需显式启用
+  maxConcurrency: 6,            // FAS 建议值
+  excludeTools: [...SEQUENTIAL_TOOLS],
+  groupByDependency: false,
+  parallelizableTools: [...PARALLELIZABLE_TOOLS],
 };
 
 // ============================================================================

@@ -62,8 +62,17 @@ export { WorkerExecutor, createWorkerExecutor } from './worker-executor';
 export type { WorkerExecutorConfig, ExecutionResult } from './worker-executor';
 
 // 类型重导出
-export type { RiskPolicy, ResourceLimits, KeyDecisionPolicy, KeyDecisionTriggers, ApprovalCategory, InterventionFile } from './types';
-export { DEFAULT_RISK_POLICY, DEFAULT_RESOURCE_LIMITS, DEFAULT_KEY_DECISION_POLICY, DEFAULT_KEY_DECISION_TRIGGERS } from './types';
+export type { RiskPolicy, ResourceLimits, KeyDecisionPolicy, KeyDecisionTriggers, ApprovalCategory, InterventionFile, ParallelExecutionConfig } from './types';
+export { 
+  DEFAULT_RISK_POLICY, 
+  DEFAULT_RESOURCE_LIMITS, 
+  DEFAULT_KEY_DECISION_POLICY, 
+  DEFAULT_KEY_DECISION_TRIGGERS,
+  // 并行执行配置 (FAS)
+  PARALLELIZABLE_TOOLS,
+  SEQUENTIAL_TOOLS,
+  DEFAULT_PARALLEL_EXECUTION_CONFIG,
+} from './types';
 
 // 关键决策检测
 export type { KeyDecisionResult, RiskLevel } from './key-decision';

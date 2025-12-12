@@ -15,7 +15,13 @@ import type {
   GenericBackendConfig,
   WorkerApprovalRequestMessage,
 } from '../types';
-import { DEFAULT_RESOURCE_LIMITS, DEFAULT_KEY_DECISION_POLICY } from '../types';
+import { 
+  DEFAULT_RESOURCE_LIMITS, 
+  DEFAULT_KEY_DECISION_POLICY,
+  type ParallelExecutionConfig,
+  DEFAULT_PARALLEL_EXECUTION_CONFIG,
+  PARALLELIZABLE_TOOLS,
+} from '../types';
 import type { Tool } from '../../types';
 import type { LLMClient, LLMRequest } from '../../planner/types';
 import type { Sandbox, SandboxConfig } from '../../sandbox';
@@ -491,6 +497,82 @@ function containsToolCall(content: string): boolean {
   );
 }
 
+/**
+ * 工具调用分类结果
+ */
+interface ClassifiedToolCalls {
+  /** 可并行执行的工具调用 */
+  parallel: ParsedToolCall[];
+  /** 需顺序执行的工具调用 */
+  sequential: ParsedToolCall[];
+}
+
+/**
+ * 将工具调用分类为可并行和需顺序执行两组
+ * 
+ * @param toolCalls - 待分类的工具调用
+ * @param config - 并行执行配置
+ * @returns 分类后的工具调用
+ */
+function classifyToolCalls(
+  toolCalls: ParsedToolCall[],
+  config: ParallelExecutionConfig
+): ClassifiedToolCalls {
+  const parallel: ParsedToolCall[] = [];
+  const sequential: ParsedToolCall[] = [];
+
+  const parallelizableSet = new Set(
+    config.parallelizableTools ?? PARALLELIZABLE_TOOLS
+  );
+  const excludeSet = new Set(config.excludeTools);
+
+  for (const call of toolCalls) {
+    // 排除列表优先级最高
+    if (excludeSet.has(call.name)) {
+      sequential.push(call);
+    } else if (parallelizableSet.has(call.name)) {
+      parallel.push(call);
+    } else {
+      // 未知工具默认顺序执行（安全保守）
+      sequential.push(call);
+    }
+  }
+
+  return { parallel, sequential };
+}
+
+/**
+ * 并发限制器
+ * 
+ * 用于控制并行执行的最大并发数
+ */
+function createConcurrencyLimiter(maxConcurrency: number) {
+  let running = 0;
+  const queue: (() => void)[] = [];
+
+  const acquire = (): Promise<void> => {
+    return new Promise((resolve) => {
+      if (running < maxConcurrency) {
+        running++;
+        resolve();
+      } else {
+        queue.push(resolve);
+      }
+    });
+  };
+
+  const release = (): void => {
+    running--;
+    const next = queue.shift();
+    if (next) {
+      running++;
+      next();
+    }
+  };
+
+  return { acquire, release };
+}
+
 // ============================================================================
 // 通用后端实现
 // ============================================================================
@@ -952,7 +1034,113 @@ When the task is complete, provide a final summary of what was accomplished.`));
           // 清空待执行队列（即将执行）
           pendingToolCalls = [];
 
-          for (const call of toolCalls) {
+          // 获取并行执行配置
+          const parallelConfig = options.parallelExecution ?? DEFAULT_PARALLEL_EXECUTION_CONFIG;
+          
+          // 分类工具调用
+          const { parallel, sequential } = parallelConfig.enabled 
+            ? classifyToolCalls(toolCalls, parallelConfig)
+            : { parallel: [], sequential: toolCalls };
+
+          console.debug(
+            `[GenericAgentBackend] Tool call classification: ` +
+            `${parallel.length} parallel, ${sequential.length} sequential ` +
+            `(parallelEnabled=${parallelConfig.enabled})`
+          );
+
+          // =============================================
+          // 阶段 1: 并行执行可并行工具
+          // =============================================
+          if (parallel.length > 0) {
+            // 先发出所有 tool_call 消息
+            for (const call of parallel) {
+              yield {
+                type: 'tool_call',
+                tool: call.name,
+                input: call.input,
+                callId: call.callId,
+                timestamp: Date.now(),
+              };
+            }
+
+            yield {
+              type: 'status',
+              status: 'acting',
+              timestamp: Date.now(),
+            };
+
+            // 创建并发限制器
+            const limiter = createConcurrencyLimiter(parallelConfig.maxConcurrency);
+
+            // 构建并行执行 Promise
+            const parallelExecutions = parallel.map(async (call) => {
+              await limiter.acquire();
+              try {
+                const startTime = Date.now();
+                const result = await this.executeTool(call, tools, options);
+                const duration = Date.now() - startTime;
+                return { call, result, duration, success: true as const };
+              } catch (error) {
+                return { 
+                  call, 
+                  result: { success: false, output: String(error) }, 
+                  duration: 0, 
+                  success: false as const 
+                };
+              } finally {
+                limiter.release();
+              }
+            });
+
+            // 等待所有并行执行完成
+            const parallelResults = await Promise.allSettled(parallelExecutions);
+
+            // 处理结果（按原始顺序）
+            for (const settled of parallelResults) {
+              if (settled.status === 'fulfilled') {
+                const { call, result, duration } = settled.value;
+                totalToolCalls++;
+                
+                if (result.success) {
+                  toolCallsSucceeded++;
+                }
+
+                // 添加结果到上下文
+                context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
+
+                yield {
+                  type: 'tool_result',
+                  tool: call.name,
+                  callId: call.callId,
+                  result: result.output,
+                  success: result.success,
+                  duration,
+                  timestamp: Date.now(),
+                };
+              } else {
+                // Promise rejected (不应该发生，因为我们在内部捕获了错误)
+                console.error('[GenericAgentBackend] Unexpected parallel execution rejection:', settled.reason);
+              }
+            }
+
+            // 检查工具调用次数限制
+            if (totalToolCalls >= limits.maxToolCalls) {
+              yield {
+                type: 'error',
+                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
+                code: 'MAX_TOOL_CALLS_EXCEEDED',
+                retryable: false,
+                timestamp: Date.now(),
+              };
+              done = true;
+              continue; // 跳过顺序执行
+            }
+          }
+
+          // =============================================
+          // 阶段 2: 顺序执行需顺序执行的工具
+          // =============================================
+          for (const call of sequential) {
             // 发出工具调用消息
             yield {
               type: 'tool_call',
