@@ -985,9 +985,10 @@
               7
             ],
             "details": "1. 新增 RedisMemoryProvider（主要覆盖 session scope）。\\n2. 设计 key：tachikoma:memory:{scope}:{id}，支持 sessionId 前缀与 TTL。\\n3. save/retrieve/search 对 session 记忆可使用 embedding 或关键词检索（MVP 可先关键词）。\\n4. MemoryConfig 增加 redisUrl/redisOptions。\\n5. MemoryService 支持 providerType='redis'。\\n6. tests：使用 mock redis 或本地 Redis 验证 TTL 与隔离。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：key/TTL 逻辑；集成测试：session scope 自动清理",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T07:10:42.672Z"
           },
           {
             "id": 12,
@@ -1026,7 +1027,7 @@
             "parentId": "9"
           }
         ],
-        "updatedAt": "2025-12-12T06:45:14.120Z"
+        "updatedAt": "2025-12-12T07:10:42.672Z"
       },
       {
         "id": "10",
@@ -1693,7 +1694,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T06:45:14.122Z",
+      "lastModified": "2025-12-12T07:10:42.673Z",
       "taskCount": 16,
       "completedCount": 8,
       "tags": [

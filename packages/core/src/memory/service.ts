@@ -8,6 +8,7 @@ import type {
 } from './types';
 import { InMemoryMemoryProvider } from './providers/in-memory';
 import { LevelDBMemoryProvider } from './providers/leveldb';
+import { RedisMemoryProvider } from './providers/redis';
 import { OpenRouterEmbeddingService, MockEmbeddingService } from './embedding';
 
 /**
@@ -20,6 +21,7 @@ export class MemoryService implements MemoryProvider {
   private provider: MemoryProvider;
   private config: MemoryConfig;
   private levelDBProvider?: LevelDBMemoryProvider;
+  private redisProvider?: RedisMemoryProvider;
 
   constructor(config: MemoryConfig) {
     this.config = config;
@@ -29,8 +31,21 @@ export class MemoryService implements MemoryProvider {
 
     // Initialize Provider based on type
     switch (config.providerType) {
-      case 'redis':
-        throw new Error('Redis provider not implemented yet');
+      case 'redis': {
+        if (!config.redisUrl) {
+          throw new Error('Redis provider requires redisUrl in config');
+        }
+        const redisOptions: { keyPrefix?: string; ttlSeconds?: number } = {};
+        if (config.redisKeyPrefix) redisOptions.keyPrefix = config.redisKeyPrefix;
+        if (config.redisTtlSeconds) redisOptions.ttlSeconds = config.redisTtlSeconds;
+        this.redisProvider = new RedisMemoryProvider(
+          config.redisUrl, 
+          embeddingService,
+          redisOptions
+        );
+        this.provider = this.redisProvider;
+        break;
+      }
       case 'leveldb':
         if (!config.persistPath) {
           throw new Error('LevelDB provider requires persistPath in config');
@@ -112,11 +127,14 @@ export class MemoryService implements MemoryProvider {
   }
 
   /**
-   * Close the provider (required for LevelDB)
+   * Close the provider (required for LevelDB and Redis)
    */
   async close(): Promise<void> {
     if (this.levelDBProvider) {
       await this.levelDBProvider.close();
+    }
+    if (this.redisProvider) {
+      await this.redisProvider.disconnect();
     }
   }
 

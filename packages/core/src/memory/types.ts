@@ -120,10 +120,16 @@ export interface MemoryConfig {
   providerType: 'in-memory' | 'redis' | 'leveldb' | 'vector';
   /** Embedding service implementation */
   embeddingService?: EmbeddingService;
-  /** Optional persistence path (for in-memory dump or leveldb) */
+  /** Persistence path for LevelDB provider */
   persistPath?: string;
   /** OpenRouter API Key (if using OpenRouterEmbeddingService) */
   openRouterApiKey?: string;
+  /** Redis connection URL (for redis provider) */
+  redisUrl?: string;
+  /** Redis key prefix (for redis provider) @default 'tachikoma' */
+  redisKeyPrefix?: string;
+  /** Redis TTL in seconds (for redis provider, optional) */
+  redisTtlSeconds?: number;
   /**
    * Auto-retrieve memories before LLM calls.
    * ⚠️ WARNING: This sends conversation context to the embedding API (external).
