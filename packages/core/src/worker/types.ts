@@ -434,6 +434,12 @@ export interface ClaudeAgentSDKBackendConfig extends WorkerBackendBaseConfig {
     /** 系统提示 */
     systemPrompt?: string;
   };
+  /**
+   * Memory 系统配置
+   *
+   * 如果提供，将支持跨会话记忆和自动检索/保存
+   */
+  memoryConfig?: MemoryConfig;
 }
 
 /**

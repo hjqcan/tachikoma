@@ -1011,9 +1011,10 @@
               8
             ],
             "details": "1. 在 ClaudeAgentSDKBackend 中接入 MemoryService（同 Generic）。\\n2. autoRetrieve：每轮 SDK 调用前检索并以 system/user message 注入。\\n3. autoSave：任务完成后保存结果与关键 decision。\\n4. 处理 SDK 自带工具循环与我们注入的 context 顺序。\\n5. tests：mock SDK 流水验证记忆注入/保存不打断执行。",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：Claude backend 开启 memoryConfig 后行为与 Generic 一致",
-            "parentId": "9"
+            "parentId": "9",
+            "updatedAt": "2025-12-12T08:08:32.630Z"
           },
           {
             "id": 14,
@@ -1028,7 +1029,7 @@
             "parentId": "9"
           }
         ],
-        "updatedAt": "2025-12-12T07:42:22.314Z"
+        "updatedAt": "2025-12-12T08:08:32.630Z"
       },
       {
         "id": "10",
@@ -1695,7 +1696,7 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-12T07:42:22.316Z",
+      "lastModified": "2025-12-12T08:08:32.632Z",
       "taskCount": 16,
       "completedCount": 8,
       "tags": [
