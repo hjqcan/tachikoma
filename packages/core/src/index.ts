@@ -386,3 +386,26 @@ export {
   SKILL_FILENAME,
   DEFAULT_GLOBAL_SKILLS_DIR,
 } from './skills';
+
+// ============================================================================
+// Memory 模块 (Task 9)
+// ============================================================================
+
+export * as memory from './memory';
+
+// 常用 Memory 类型顶层导出
+export type {
+  MemoryScope,
+  MemoryEntry,
+  MemoryRetrievalResult,
+  MemoryProvider,
+  EmbeddingService,
+  MemoryConfig,
+} from './memory';
+
+export {
+  MemoryService,
+  InMemoryMemoryProvider,
+  OpenRouterEmbeddingService,
+  MockEmbeddingService,
+} from './memory';

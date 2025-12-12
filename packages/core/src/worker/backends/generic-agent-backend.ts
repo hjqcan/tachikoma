@@ -32,6 +32,7 @@ import {
   createContextManager,
   createDefaultContextConfig,
   type ContextMessage,
+  type ContextManagerDependencies,
 } from '../../context';
 // Skills 模块
 import {
@@ -40,6 +41,8 @@ import {
   type SkillMetadata,
   type SkillLoadOutcome,
 } from '../../skills';
+// Memory 模块
+import { MemoryService } from '../../memory';
 
 // ============================================================================
 // 常量
@@ -526,6 +529,9 @@ export class GenericAgentBackend implements IWorkerBackend {
   private skills: SkillMetadata[] = [];
   private skillLoadErrors: SkillLoadOutcome['errors'] = [];
 
+  // Memory 支持
+  private memoryService?: MemoryService;
+
   constructor(config: GenericBackendConfig) {
     this.config = config;
     this.provider = config.provider;
@@ -569,6 +575,12 @@ export class GenericAgentBackend implements IWorkerBackend {
       if (this.skillLoadErrors.length > 0) {
         console.warn('[GenericAgentBackend] Skill loading errors:', this.skillLoadErrors);
       }
+    }
+
+    // 初始化 MemoryService
+    if (config.memoryConfig?.enabled) {
+      this.memoryService = new MemoryService(config.memoryConfig);
+      console.debug('[GenericAgentBackend] MemoryService initialized');
     }
   }
 
@@ -657,7 +669,11 @@ export class GenericAgentBackend implements IWorkerBackend {
       };
     }
     
-    const context = createContextManager(contextConfig);
+    const contextDeps: ContextManagerDependencies = {};
+    if (this.memoryService) {
+      contextDeps.memoryProvider = this.memoryService;
+    }
+    const context = createContextManager(contextConfig, contextDeps);
     
     // Token 使用追踪（独立于 ContextManager）
     let totalTokensUsed = 0;
@@ -788,6 +804,22 @@ When the task is complete, provide a final summary of what was accomplished.`));
           
           // 压缩成功后注入状态提醒帮助 agent 理解上下文变化
           context.injectStatusReminder();
+        }
+
+        // Memory: 自动检索相关记忆 (best-effort, 不中断主循环)
+        const autoRetrieve = this.config.memoryConfig?.autoRetrieve !== false;
+        if (this.memoryService && autoRetrieve && context.shouldRetrieveMemories()) {
+          try {
+            console.debug('[GenericAgentBackend] Retrieving relevant memories...');
+            // eslint-disable-next-line no-await-in-loop
+            const memoryResult = await this.memoryService.search(context.getContext());
+            if (memoryResult.memories.length > 0) {
+              console.debug(`[GenericAgentBackend] Injected ${memoryResult.memories.length} memories`);
+              context.injectRetrievedMemories(memoryResult.memories);
+            }
+          } catch (memoryError) {
+            console.warn('[GenericAgentBackend] Memory retrieval failed (continuing):', memoryError);
+          }
         }
 
         // 调用 LLM
@@ -991,6 +1023,26 @@ When the task is complete, provide a final summary of what was accomplished.`));
         } else {
           // 没有工具调用，任务完成
           done = true;
+
+          // Memory: 自动保存任务结果 (best-effort, 不中断主循环)
+          const autoSave = this.config.memoryConfig?.autoSave !== false;
+          if (this.memoryService && autoSave) {
+            try {
+              console.debug('[GenericAgentBackend] Saving task result to memory...');
+              // eslint-disable-next-line no-await-in-loop
+              await this.memoryService.save({
+                content: `Task: ${task.objective}\n\nResult: ${response.content}`,
+                scope: 'procedural',
+                metadata: {
+                  sessionId: task.sessionId,
+                  taskId: task.id,
+                  type: 'task_result',
+                },
+              });
+            } catch (memorySaveError) {
+              console.warn('[GenericAgentBackend] Memory save failed (continuing):', memorySaveError);
+            }
+          }
 
           yield {
             type: 'output',

@@ -11,6 +11,7 @@ import type { LLMClient } from '../planner/types';
 import type { InterventionFile } from '../orchestrator/session/types';
 import type { ContextManagerConfig } from '../context';
 import type { SkillDiscoveryConfig } from '../skills';
+import type { MemoryConfig } from '../memory';
 
 // Re-export for external use
 export type { InterventionFile };
@@ -461,6 +462,12 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
    * Skills 采用渐进披露机制，仅元数据始终加载
    */
   skillsConfig?: SkillDiscoveryConfig;
+  /**
+   * Memory 系统配置
+   *
+   * 如果提供，将支持跨会话记忆和自动检索
+   */
+  memoryConfig?: MemoryConfig;
 }
 
 /**
