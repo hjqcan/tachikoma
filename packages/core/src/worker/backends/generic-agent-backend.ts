@@ -23,7 +23,7 @@ import {
   PARALLELIZABLE_TOOLS,
 } from '../types';
 import type { Tool } from '../../types';
-import type { LLMClient, LLMRequest } from '../../planner/types';
+import type { LLMClient, LLMRequest, LLMResponse } from '../../planner/types';
 import type { Sandbox, SandboxConfig } from '../../sandbox';
 import { createLLMClient } from '../../planner/llm-client';
 import { createLocalSandbox } from '../../sandbox/drivers/local';
@@ -958,8 +958,9 @@ When the task is complete, provide a final summary of what was accomplished.`));
           abortSignal: this.abortController.signal,
         };
 
-        // eslint-disable-next-line no-await-in-loop -- LLM call is intentionally sequential in agent loop
-        const response = await this.llmClient.complete(request);
+        // LLM 调用（带重试逻辑）
+        // eslint-disable-next-line no-await-in-loop
+        const response = await this.executeLLMWithRetry(request);
 
         // 记录 token 使用量
         recordTokenUsage(
@@ -1963,6 +1964,58 @@ When the task is complete, provide a final summary of what was accomplished.`));
       console.warn(`[GenericAgentBackend] Error checking intervention:`, error);
       return 'continue';
     }
+  }
+
+  /**
+   * 执行 LLM 请求（带重试逻辑）
+   */
+  private async executeLLMWithRetry(request: LLMRequest): Promise<LLMResponse> {
+    const MAX_LLM_RETRIES = 3;
+    const RETRY_DELAYS = [1000, 2000, 4000]; // 递增延迟
+    let lastError: Error | null = null;
+    let response: LLMResponse | null = null;
+
+    for (let attempt = 0; attempt < MAX_LLM_RETRIES; attempt++) {
+      try {
+        response = await this.llmClient.complete(request);
+
+        // 检测空响应
+        if (!response.content || response.content.trim().length === 0) {
+          throw new Error('LLM returned empty response');
+        }
+
+        return response;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const errorMessage = lastError.message.toLowerCase();
+        
+        // 判断是否为可重试的错误
+        const isRetryable = 
+          errorMessage.includes('empty response') ||
+          errorMessage.includes('json parse') ||
+          errorMessage.includes('api_error') ||
+          errorMessage.includes('rate limit') ||
+          errorMessage.includes('timeout') ||
+          errorMessage.includes('network') ||
+          errorMessage.includes('econnreset');
+
+        if (!isRetryable || attempt >= MAX_LLM_RETRIES - 1) {
+          console.error(
+            `[GenericAgentBackend] LLM call failed after ${attempt + 1} attempt(s): ${lastError.message}`
+          );
+          throw lastError;
+        }
+
+        const delay = RETRY_DELAYS[attempt] ?? 4000;
+        console.warn(
+          `[GenericAgentBackend] LLM call failed (attempt ${attempt + 1}/${MAX_LLM_RETRIES}): ` +
+          `${lastError.message}. Retrying in ${delay}ms...`
+        );
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError ?? new Error('LLM retry failed unknown reason');
   }
 
   /**

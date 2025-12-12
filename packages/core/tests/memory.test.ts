@@ -129,5 +129,73 @@ describe('Memory System', () => {
       // Should find memory based on user/assistant messages, not system/tool
       expect(result.memories.length).toBeGreaterThan(0);
     });
+
+    test('semanticSearch combines memories and knowledge, and filters user scope by userId', async () => {
+      const fakeKB = {
+        search: async (_query: string, _limit?: number, _minScore?: number) => [
+          { content: 'kb hit', score: 0.9, metadata: { source: 'kb' } },
+        ],
+      };
+
+      await service.save({
+        content: 'User memory for agent',
+        scope: 'user',
+        metadata: { userId: 'u1' },
+      });
+      await service.save({
+        content: 'Other user memory',
+        scope: 'user',
+        metadata: { userId: 'u2' },
+      });
+
+      const result = await service.semanticSearch('agent', {
+        scope: 'user',
+        userId: 'u1',
+        includeKnowledge: true,
+        knowledgeBase: fakeKB,
+      });
+
+      expect(result.memories.length).toBeGreaterThan(0);
+      expect(result.memories.every(m => m.scope === 'user')).toBe(true);
+      expect(result.memories.every(m => m.metadata?.userId === 'u1')).toBe(true);
+      expect(result.knowledge.length).toBeGreaterThan(0);
+      expect(result.knowledge[0].content).toContain('kb');
+    });
+
+    test('semanticSearch does not filter non-user scopes by userId', async () => {
+      await service.save({
+        content: 'Declarative memory without user id',
+        scope: 'declarative',
+      });
+
+      const result = await service.semanticSearch('agent', {
+        scope: 'declarative',
+        userId: 'u1',
+      });
+
+      expect(result.memories.length).toBeGreaterThan(0);
+      expect(result.memories[0].scope).toBe('declarative');
+    });
+
+    test('semanticSearch is best-effort when memory retrieval fails', async () => {
+      const throwingEmbeddingService = {
+        embed: async () => {
+          throw new Error('boom');
+        },
+        embedBatch: async () => {
+          throw new Error('boom');
+        },
+      };
+
+      const throwingService = new MemoryService({
+        enabled: true,
+        providerType: 'in-memory',
+        embeddingService: throwingEmbeddingService,
+      } as MemoryConfig);
+
+      const result = await throwingService.semanticSearch('anything');
+      expect(result.memories.length).toBe(0);
+      expect(result.knowledge.length).toBe(0);
+    });
   });
 });

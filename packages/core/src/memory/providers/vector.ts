@@ -157,7 +157,7 @@ export class VectorMemoryProvider implements MemoryProvider {
       await this.vectorDB.deleteByFilter({ scope });
     } else {
       // Clear all scopes using filter-based deletion
-      const scopes: MemoryScope[] = ['session', 'declarative', 'procedural', 'collective'];
+      const scopes: MemoryScope[] = ['session', 'user', 'declarative', 'procedural', 'collective'];
       for (const s of scopes) {
         await this.vectorDB.deleteByFilter({ scope: s });
       }

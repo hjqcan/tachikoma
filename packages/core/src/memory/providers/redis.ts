@@ -70,7 +70,13 @@ export class RedisMemoryProvider implements MemoryProvider {
     return `${this.keyPrefix}:memory:ids:${scope}`;
   }
 
-  private static readonly ALL_SCOPES: MemoryScope[] = ['session', 'declarative', 'procedural', 'collective'];
+  private static readonly ALL_SCOPES: MemoryScope[] = [
+    'session',
+    'user',
+    'declarative',
+    'procedural',
+    'collective',
+  ];
 
   async save(entry: Omit<MemoryEntry, 'id' | 'createdAt'>): Promise<string> {
     const id = uuidv4();

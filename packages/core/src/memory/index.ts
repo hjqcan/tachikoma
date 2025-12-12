@@ -12,3 +12,4 @@ export * from './providers/leveldb';
 export * from './providers/redis';
 export * from './providers/qdrant';
 export * from './providers/vector';
+export * from './providers/postgres';

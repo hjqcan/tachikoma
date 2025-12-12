@@ -4,7 +4,10 @@ import type {
   MemoryEntry, 
   MemoryScope, 
   MemoryRetrievalResult,
-  ContextMessageMinimal 
+  ContextMessageMinimal,
+  SemanticSearchOptions,
+  SemanticSearchResult,
+  KnowledgeSearchItem
 } from './types';
 import { InMemoryMemoryProvider } from './providers/in-memory';
 import { LevelDBMemoryProvider } from './providers/leveldb';
@@ -131,6 +134,81 @@ export class MemoryService implements MemoryProvider {
       return;
     }
     return this.provider.clear(scope);
+  }
+
+  /**
+   * 语义搜索 - 结合 Memory 和 KnowledgeBase
+   * 
+   * 两阶段检索：
+   * 1. Memory 向量搜索（长期记忆）
+   * 2. KnowledgeBase 代码知识搜索（可选）
+   * 
+   * @param query 搜索查询
+   * @param options 搜索选项
+   */
+  async semanticSearch(
+    query: string,
+    options: SemanticSearchOptions = {}
+  ): Promise<SemanticSearchResult> {
+    if (!this.config.enabled) {
+      return { memories: [], knowledge: [], latencyMs: 0 };
+    }
+
+    const startTime = Date.now();
+    const { 
+      topK = 5, 
+      scope, 
+      includeKnowledge = false, 
+      knowledgeBase,
+      userId
+    } = options;
+
+    // 阶段1: Memory 检索
+    // 如果指定了 userId 且 scope 为 user，添加到过滤条件
+    let memoryScope = scope;
+    if (userId && (!scope || scope === 'user')) {
+      memoryScope = 'user';
+    }
+
+    let memoryResult: MemoryRetrievalResult;
+    try {
+      memoryResult = await this.retrieve(query, topK, memoryScope);
+    } catch (error) {
+      console.warn('[MemoryService] Memory retrieval failed in semanticSearch:', error);
+      memoryResult = { memories: [], latencyMs: 0, fromCache: false };
+    }
+    
+    // user scope 下按 userId 过滤（userId 约定存于 metadata.userId）
+    let filteredMemories = memoryResult.memories;
+    if (userId && memoryScope === 'user') {
+      filteredMemories = memoryResult.memories.filter(
+        m => m.metadata?.userId === userId
+      );
+    }
+
+    // 阶段2: KnowledgeBase 检索 (可选)
+    let knowledge: KnowledgeSearchItem[] = [];
+    if (includeKnowledge && knowledgeBase) {
+      try {
+        const kbResults = await knowledgeBase.search(query, topK);
+        knowledge = kbResults.map(r => ({
+          content: r.content,
+          score: r.score,
+          metadata: r.metadata,
+        }));
+      } catch (error) {
+        console.warn('[MemoryService] KnowledgeBase search failed:', error);
+        // 降级：继续返回 memory 结果
+      }
+    }
+
+    const latencyMs = Date.now() - startTime;
+
+    return {
+      memories: filteredMemories,
+      knowledge,
+      latencyMs,
+    };
   }
 
   /**

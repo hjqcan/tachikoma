@@ -16,11 +16,12 @@ export interface ContextMessageMinimal {
  * 
  * Defines the scope and lifecycle of a memory entry:
  * - session: Ephemeral, cleared after session ends
+ * - user: User-specific, persists across sessions but isolated per user
  * - declarative: Facts and knowledge, long-term persistence
  * - procedural: How-to knowledge, long-term persistence
  * - collective: Shared across agents, long-term persistence
  */
-export type MemoryScope = 'session' | 'declarative' | 'procedural' | 'collective';
+export type MemoryScope = 'session' | 'user' | 'declarative' | 'procedural' | 'collective';
 
 /**
  * Memory Entry
@@ -242,4 +243,56 @@ export interface MemoryConfig {
    * @default 10000 (10 seconds)
    */
   retrievalCooldownMs?: number;
+}
+
+// ============================================================================
+// 语义搜索类型 (LangGraph 最佳实践)
+// ============================================================================
+
+/**
+ * KnowledgeBase 接口 (避免循环依赖)
+ */
+export interface KnowledgeBaseInterface {
+  search(
+    query: string,
+    limit?: number,
+    minScore?: number
+  ): Promise<{ content: string; score: number; metadata: Record<string, unknown> }[]>;
+}
+
+/**
+ * 语义搜索选项
+ */
+export interface SemanticSearchOptions {
+  /** 返回数量 */
+  topK?: number;
+  /** 记忆范围 */
+  scope?: MemoryScope;
+  /** 是否包含代码知识库结果 */
+  includeKnowledge?: boolean;
+  /** KnowledgeBase 实例 (如果 includeKnowledge=true) */
+  knowledgeBase?: KnowledgeBaseInterface;
+  /** 用户 ID (用于 user scope 过滤) */
+  userId?: string;
+}
+
+/**
+ * 知识库搜索结果条目
+ */
+export interface KnowledgeSearchItem {
+  content: string;
+  score: number;
+  metadata: Record<string, unknown>;
+}
+
+/**
+ * 语义搜索结果
+ */
+export interface SemanticSearchResult {
+  /** 长期记忆 */
+  memories: MemoryEntry[];
+  /** 代码知识 (来自 KnowledgeBase) */
+  knowledge: KnowledgeSearchItem[];
+  /** 总检索延迟 */
+  latencyMs: number;
 }
