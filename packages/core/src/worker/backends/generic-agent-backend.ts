@@ -33,6 +33,13 @@ import {
   createDefaultContextConfig,
   type ContextMessage,
 } from '../../context';
+// Skills 模块
+import {
+  loadSkills,
+  renderSkillsSection,
+  type SkillMetadata,
+  type SkillLoadOutcome,
+} from '../../skills';
 
 // ============================================================================
 // 常量
@@ -514,6 +521,10 @@ export class GenericAgentBackend implements IWorkerBackend {
   private sandboxNeedsInit = false; // 是否需要初始化
   private abortController: AbortController | null = null;
   private isExecuting = false;
+  
+  // Skills 支持
+  private skills: SkillMetadata[] = [];
+  private skillLoadErrors: SkillLoadOutcome['errors'] = [];
 
   constructor(config: GenericBackendConfig) {
     this.config = config;
@@ -541,6 +552,23 @@ export class GenericAgentBackend implements IWorkerBackend {
       this.sandbox = this.createSandboxFromConfig(config.sandboxConfig);
       this.sandboxOwned = true;
       this.sandboxNeedsInit = true;
+    }
+
+    // 加载 Skills
+    if (config.skillsConfig?.enabled !== false) {
+      const outcome = loadSkills(
+        config.skillsConfig ?? {},
+        config.workDir ?? process.cwd()
+      );
+      this.skills = outcome.skills;
+      this.skillLoadErrors = outcome.errors;
+      
+      if (this.skills.length > 0) {
+        console.debug(`[GenericAgentBackend] Loaded ${this.skills.length} skills`);
+      }
+      if (this.skillLoadErrors.length > 0) {
+        console.warn('[GenericAgentBackend] Skill loading errors:', this.skillLoadErrors);
+      }
     }
   }
 
@@ -667,6 +695,16 @@ Please accomplish this task step by step. When you need to use a tool, output it
 
 When the task is complete, provide a final summary of what was accomplished.`));
 
+    // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
+    let systemPromptWithSkills = DEFAULT_SYSTEM_PROMPT;
+    const skillsSection = renderSkillsSection(
+      this.skills,
+      this.config.skillsConfig?.maxSkillTokens
+    );
+    if (skillsSection) {
+      systemPromptWithSkills += '\n\n' + skillsSection;
+    }
+
     try {
       let round = 0;
       let done = false;
@@ -754,7 +792,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
 
         // 调用 LLM
         const request: LLMRequest = {
-          systemPrompt: DEFAULT_SYSTEM_PROMPT,
+          systemPrompt: systemPromptWithSkills,
           messages: contextToLLMMessages(context.getContext()),
           maxTokens: Math.min(
             this.config.maxTokens ?? 4096,
@@ -773,17 +811,46 @@ When the task is complete, provide a final summary of what was accomplished.`));
           response.usage.outputTokens
         );
 
-        // 检查 token 预算
+        // 检查 token 预算 - 超过预算时尝试压缩上下文而不是直接失败
         if (isOverBudget()) {
+          console.warn(
+            `[GenericAgentBackend] Token budget warning: ${totalTokensUsed}/${maxTotalTokens}. ` +
+            `Attempting context reduction before continuing...`
+          );
+          
+          // 触发上下文压缩/摘要
+          // eslint-disable-next-line no-await-in-loop -- Context reduction is intentionally sequential
+          await context.autoReduce();
+          
+          // 如果 autoReduce 后仍然需要压缩，尝试多轮压缩
+          if (context.needsReduction()) {
+            console.debug('[GenericAgentBackend] Context still large after autoReduce, forcing compact');
+            for (let i = 0; i < 3 && context.needsReduction(); i++) {
+              // eslint-disable-next-line no-await-in-loop -- Sequential compaction attempts
+              await context.compact();
+            }
+          }
+          
+          // 注入状态提醒帮助 agent 理解上下文变化
+          context.injectStatusReminder();
+          
+          // 报告压缩结果
+          const contextState = context.getState();
+          console.debug(
+            `[GenericAgentBackend] Context reduced. New token count: ${contextState.totalTokens}. ` +
+            `Messages: ${contextState.messages.length}. Continuing execution...`
+          );
+          
           yield {
-            type: 'error',
-            error: `Token budget exceeded: ${totalTokensUsed} tokens used (limit: ${limits.maxTotalTokens})`,
-            code: 'TOKEN_BUDGET_EXCEEDED',
-            retryable: false,
+            type: 'thinking',
+            content: `[Context Management] Token budget reached (${totalTokensUsed}/${maxTotalTokens}). ` +
+                     `Context has been summarized/compressed (now ${contextState.totalTokens} tokens). Continuing...`,
             timestamp: Date.now(),
           };
-          done = true;
-          break;
+          
+          // 注意：我们不再直接失败，而是继续执行
+          // 如果上下文压缩成功，下一轮 LLM 调用将使用更少的 input tokens
+          // 真正的硬限制检查在 context.needsSummarization() -> hardLimit
         }
 
         // 发出思考消息

@@ -356,3 +356,33 @@ export {
 
 // Token 估算类型导出
 export type { TokenEstimator, TokenEstimatorType } from './context';
+
+// ============================================================================
+// Skills 模块
+// ============================================================================
+
+export * as skills from './skills';
+
+// 常用 Skills 类型顶层导出
+export type {
+  SkillMetadata,
+  SkillContent,
+  SkillError,
+  SkillLoadOutcome,
+  SkillDiscoveryConfig,
+  SkillExecutionOptions,
+  SkillExecutionResult,
+} from './skills';
+
+export {
+  loadSkills,
+  loadSkillContent,
+  parseSkillFile,
+  renderSkillsSection,
+  renderSkillContentPrompt,
+  executeSkillScript,
+  hasExecutableScripts,
+  listSkillScripts,
+  SKILL_FILENAME,
+  DEFAULT_GLOBAL_SKILLS_DIR,
+} from './skills';

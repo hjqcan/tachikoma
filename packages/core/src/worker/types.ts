@@ -10,6 +10,7 @@ import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
 import type { InterventionFile } from '../orchestrator/session/types';
 import type { ContextManagerConfig } from '../context';
+import type { SkillDiscoveryConfig } from '../skills';
 
 // Re-export for external use
 export type { InterventionFile };
@@ -453,6 +454,13 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
    * 支持自动压缩/摘要、KV 缓存优化和笔记系统
    */
   contextManagerConfig?: ContextManagerConfig;
+  /**
+   * Skills 发现配置
+   *
+   * 如果提供，将在启动时加载 Skills 并注入到 system prompt
+   * Skills 采用渐进披露机制，仅元数据始终加载
+   */
+  skillsConfig?: SkillDiscoveryConfig;
 }
 
 /**
