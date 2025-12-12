@@ -24,6 +24,19 @@ const INCREMENTAL_KEYWORDS = [
 ];
 
 /**
+ * 研究/调研类任务关键词
+ *
+ * 用于推荐 deep_research 工具（Gemini Deep Research Agent）。
+ */
+const RESEARCH_KEYWORDS = [
+  // English
+  'research', 'deep research', 'investigate', 'survey', 'literature', 'benchmark',
+  'compare', 'analysis', 'analyze', 'web', 'public web', 'news', 'citations',
+  // Chinese
+  '调研', '研究', '深度研究', '检索', '搜集资料', '资料收集', '对比', '分析', '引用', '公开网', '新闻',
+];
+
+/**
  * 验证结果
  */
 export interface SubtaskValidationResult {
@@ -66,7 +79,7 @@ export function validateSubtask(
   // 检查是否已经约束使用增量工具
   const hasIncrementalConstraint = 
     /apply_patch|replace_between|增量|incremental/i.test(fullText);
-  
+
   // 风险评估
   if (isCreating && !isIncremental) {
     riskLevel += 4;
@@ -102,6 +115,15 @@ export function validateSubtask(
     recommendedTools.push('file_write', 'apply_patch');
   }
   
+  // 研究型任务推荐 Deep Research 工具
+  const isResearchTask = RESEARCH_KEYWORDS.some((kw) => fullText.includes(kw));
+  if (isResearchTask) {
+    if (!recommendedTools.includes('deep_research')) {
+      recommendedTools.push('deep_research');
+    }
+    suggestions.push('如需长时公开网调研与引用合成，可使用 deep_research 工具');
+  }
+
   // 如果已有增量约束，降低风险
   if (hasIncrementalConstraint) {
     riskLevel = Math.max(0, riskLevel - 3);
@@ -151,10 +173,19 @@ export function injectToolRecommendations(
   return subtasks.map(subtask => {
     const validation = validateSubtask(subtask.objective, subtask.constraints);
     
-    if (!validation.isValid && validation.recommendedTools) {
-      // 只有在风险高且有推荐工具时才注入
+    if (validation.recommendedTools && validation.recommendedTools.length > 0) {
+      // 风险类推荐（如 apply_patch）仅在风险高时注入；
+      // deep_research 作为研究能力推荐，可在任意风险级别注入。
+      const toolsToInject = validation.isValid
+        ? validation.recommendedTools.filter(t => t === 'deep_research')
+        : validation.recommendedTools;
+
+      if (toolsToInject.length === 0) {
+        return subtask;
+      }
+
       const existingConstraints = subtask.constraints || [];
-      const toolConstraint = `推荐工具：${validation.recommendedTools.join(', ')}`;
+      const toolConstraint = `推荐工具：${toolsToInject.join(', ')}`;
       
       // 避免重复添加
       if (!existingConstraints.some(c => c.includes('推荐工具'))) {
