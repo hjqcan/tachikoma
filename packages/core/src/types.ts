@@ -25,7 +25,7 @@ export type JSONSchema = Record<string, unknown>;
 /**
  * 智能体类型
  */
-export type AgentType = 'orchestrator' | 'worker' | 'planner' | 'memory';
+export type AgentType = 'orchestrator' | 'worker';
 
 /**
  * 智能体配置

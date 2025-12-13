@@ -62,8 +62,6 @@ export {
   createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
-  createPlanner,
-  createMemoryAgent,
   setGlobalConfig,
   resetGlobalConfig,
   type CreateAgentOptions,
@@ -98,6 +96,13 @@ export {
   type ConversationContextManagerHooks,
   type ConversationContextManagerLogContext,
 } from './abstracts';
+
+// ============================================================================
+// Agents 模块（对外可继承实现）
+// ============================================================================
+
+export * as agents from './agents';
+export { WorkerAgent, createWorkerAgent, type WorkerAgentOptions } from './agents';
 
 // ============================================================================
 // 统筹者模块

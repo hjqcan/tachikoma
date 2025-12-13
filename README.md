@@ -83,11 +83,12 @@ tachikoma/
 │   └── references/          # 参考资料
 ├── packages/
 │   ├── core/                # 核心库
-│   │   ├── agents/          # 智能体实现
-│   │   ├── context/         # 上下文管理
-│   │   ├── tools/           # 原子工具
-│   │   ├── sandbox/         # 沙盒管理
-│   │   └── mcp/             # MCP 集成
+│   │   ├── src/agents/      # 智能体实现
+│   │   ├── src/conversation/# 多轮对话 runtime
+│   │   ├── src/prompt/      # Prompt 上下文工程（internal）
+│   │   ├── src/tools/       # 工具系统
+│   │   ├── src/sandbox/     # 沙盒管理
+│   │   └── src/mcp/         # MCP 集成
 │   ├── gateway/             # API 网关
 │   ├── agentops/            # 可观测性
 │   └── cli/                 # 命令行工具

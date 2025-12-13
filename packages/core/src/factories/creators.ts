@@ -112,11 +112,6 @@ function getAgentConfig(type: AgentType, config: Config): AgentConfig {
       return toAgentConfig(config.models.orchestrator);
     case 'worker':
       return toAgentConfig(config.models.worker);
-    case 'planner':
-      return toAgentConfig(config.models.planner);
-    case 'memory':
-      // Memory Agent 使用 planner 配置作为默认
-      return toAgentConfig(config.models.planner);
   }
 }
 
@@ -188,16 +183,16 @@ export function createAgent(
   // 获取对应类型的模型配置
   const agentConfig = getAgentConfig(type, config);
 
+  // 显式要求 stub：优先返回 stub（忽略已注册实现）
+  if (useStub) {
+    return createStubAgent(id, type, agentConfig);
+  }
+
   // 尝试从注册表获取工厂
   const factory = registry.getAgentFactory(type);
 
   if (factory) {
     return factory(id, agentConfig, factoryOptions);
-  }
-
-  // 如果允许使用 stub，返回 stub 实现
-  if (useStub) {
-    return createStubAgent(id, type, agentConfig);
   }
 
   // 否则抛出错误
@@ -230,16 +225,16 @@ export function createSandbox(options: CreateSandboxOptions = {}): Sandbox {
     useStub = getDefaultUseStub(),
   } = options;
 
+  // 显式要求 stub：优先返回 stub（忽略已注册实现）
+  if (useStub) {
+    return createStubSandbox(id, config.sandbox);
+  }
+
   // 尝试从注册表获取工厂
   const factory = registry.getSandboxFactory();
 
   if (factory) {
     return factory(id, config.sandbox);
-  }
-
-  // 如果允许使用 stub，返回 stub 实现
-  if (useStub) {
-    return createStubSandbox(id, config.sandbox);
   }
 
   // 否则抛出错误
@@ -277,16 +272,16 @@ export function createRegisteredConversationContextManager(
     useStub = getDefaultUseStub(),
   } = options;
 
+  // 显式要求 stub：优先返回 stub（忽略已注册实现）
+  if (useStub) {
+    return createStubConversationContextManager(sessionId, config.context);
+  }
+
   // 尝试从注册表获取工厂
   const factory = registry.getConversationContextManagerFactory();
 
   if (factory) {
     return factory(sessionId, config.context);
-  }
-
-  // 如果允许使用 stub，返回 stub 实现
-  if (useStub) {
-    return createStubConversationContextManager(sessionId, config.context);
   }
 
   // 否则抛出错误
@@ -309,18 +304,4 @@ export function createOrchestrator(options?: Omit<CreateAgentOptions, 'type'>): 
  */
 export function createWorker(options?: Omit<CreateAgentOptions, 'type'>): Agent {
   return createAgent('worker', options);
-}
-
-/**
- * 创建 Planner Agent
- */
-export function createPlanner(options?: Omit<CreateAgentOptions, 'type'>): Agent {
-  return createAgent('planner', options);
-}
-
-/**
- * 创建 Memory Agent
- */
-export function createMemoryAgent(options?: Omit<CreateAgentOptions, 'type'>): Agent {
-  return createAgent('memory', options);
 }

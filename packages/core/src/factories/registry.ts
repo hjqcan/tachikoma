@@ -8,11 +8,19 @@ import type {
   Agent,
   AgentType,
   AgentConfig,
+  Tool,
   Sandbox,
   SandboxConfig,
   ConversationContextManager,
   ConversationContextThresholds,
 } from '../types';
+import type { WorkerBackendConfig, WorkerExecutionOptions } from '../worker';
+import type { Planner } from '../planner/planner';
+import type { IWorkerPool } from '../orchestrator/worker-pool';
+import type { ISessionFileManager } from '../orchestrator/session/types';
+import type { OrchestratorConfig } from '../orchestrator/types';
+import type { MCPClientManager } from '../mcp';
+import type { Logger, Tracer, MetricsCollector } from '../observability';
 
 // ============================================================================
 // 类型定义
@@ -35,6 +43,24 @@ export interface AgentFactoryOptions {
   conversationContextManager?: ConversationContextManager;
   /** 沙盒实例 */
   sandbox?: Sandbox;
+
+  // === Orchestrator 注入（可选）===
+  planner?: Planner;
+  workerPool?: IWorkerPool;
+  sessionManager?: ISessionFileManager;
+  config?: Partial<OrchestratorConfig>;
+
+  // === WorkerAgent 注入（可选）===
+  workDir?: string;
+  tools?: Tool[];
+  executionOptions?: Partial<WorkerExecutionOptions>;
+  backendConfig?: Partial<WorkerBackendConfig>;
+  mcpClient?: MCPClientManager;
+  autoRegisterMCPTools?: boolean;
+  logger?: Logger;
+  tracer?: Tracer;
+  metrics?: MetricsCollector;
+
   /** 额外选项 */
   [key: string]: unknown;
 }

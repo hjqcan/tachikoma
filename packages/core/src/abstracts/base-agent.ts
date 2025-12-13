@@ -148,8 +148,9 @@ export abstract class BaseAgent implements Agent {
 
       // 合并 Trace - 优先保留子类的值
       result.trace = {
-        traceId: result.trace?.traceId ?? task.context?.traceId ?? trace.traceId,
-        spanId: result.trace?.spanId ?? trace.spanId,
+        // 注意：子类可能返回空字符串，使用 || 避免断链
+        traceId: result.trace?.traceId || task.context?.traceId || trace.traceId,
+        spanId: result.trace?.spanId || trace.spanId,
         operation: result.trace?.operation ?? trace.operation,
         attributes: { ...trace.attributes, ...result.trace?.attributes },
         events: result.trace?.events ?? trace.events,

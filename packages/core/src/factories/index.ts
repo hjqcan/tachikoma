@@ -25,8 +25,6 @@ export {
   createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
-  createPlanner,
-  createMemoryAgent,
   setGlobalConfig,
   resetGlobalConfig,
   type CreateAgentOptions,
@@ -43,3 +41,11 @@ export {
   createStubSandbox,
   createStubConversationContextManager,
 } from './stubs';
+
+// 内置实现注册
+export { registerBuiltInFactories } from './builtins';
+
+// 默认注册内置实现（允许外部覆盖）
+import { defaultRegistry } from './registry';
+import { registerBuiltInFactories } from './builtins';
+registerBuiltInFactories(defaultRegistry);

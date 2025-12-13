@@ -13,8 +13,6 @@ import {
   createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
-  createPlanner,
-  createMemoryAgent,
   StubAgent,
   StubSandbox,
   StubConversationContextManager,
@@ -272,16 +270,6 @@ describe('便捷创建函数', () => {
     expect(agent.config.model).toBe('claude-sonnet-4');
   });
 
-  it('createPlanner 应创建 planner 类型', () => {
-    const agent = createPlanner({ useStub: true });
-    expect(agent.type).toBe('planner');
-    expect(agent.config.model).toBe('claude-haiku-3.5');
-  });
-
-  it('createMemoryAgent 应创建 memory 类型', () => {
-    const agent = createMemoryAgent({ useStub: true });
-    expect(agent.type).toBe('memory');
-  });
 });
 
 describe('StubAgent', () => {
