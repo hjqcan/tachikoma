@@ -156,6 +156,13 @@ export interface IWorkerPool {
   cancelTask(taskId: string): boolean;
 
   /**
+   * 标记任务完成（由外部调用）
+   *
+   * 说明：用于在实际执行结束后释放 Worker 占用与清理 activeTasks。
+   */
+  completeTask(taskId: string): boolean;
+
+  /**
    * 添加事件监听器
    * @param type - 事件类型
    * @param handler - 事件处理器
@@ -622,8 +629,20 @@ export class DefaultWorkerPool implements IWorkerPool {
       clearTimeout(task.timeoutTimer);
     }
 
-    // 恢复 Worker 状态
+    // 尝试中断绑定的 WorkerAgent（best-effort）
     const worker = this.workers.get(task.workerId);
+    const agent = worker?.agent;
+    if (agent) {
+      // interrupt 优先：不做 stop/cleanup，保持可复用
+      const interrupt = agent.interrupt?.bind(agent);
+      if (interrupt) {
+        void interrupt().catch(() => undefined);
+      } else {
+        void agent.stop().catch(() => undefined);
+      }
+    }
+
+    // 恢复 Worker 状态
     if (worker) {
       worker.status = 'idle';
       worker.currentTaskId = undefined;
@@ -734,6 +753,10 @@ export class DefaultWorkerPool implements IWorkerPool {
 
     // 注销所有 Worker
     for (const workerId of Array.from(this.workers.keys())) {
+      const worker = this.workers.get(workerId);
+      if (worker?.agent) {
+        await worker.agent.stop().catch(() => undefined);
+      }
       this.unregister(workerId);
     }
 
@@ -786,10 +809,40 @@ export class MockWorkerPool extends DefaultWorkerPool {
     // 注册初始 Workers
     const initialCount = options.initialWorkers ?? options.config.minWorkers;
     for (let i = 0; i < initialCount; i++) {
+      const workerId = `mock-worker-${i}`;
       this.register({
-        id: `mock-worker-${i}`,
+        id: workerId,
         status: 'idle',
         capabilities: ['general'],
+        // 提供一个最小可用的 Agent，便于 Orchestrator 走通 “WorkerAgent 驱动” 路径的单测/演示
+        agent: {
+          id: workerId,
+          type: 'worker',
+          config: { provider: 'mock', model: 'mock', maxTokens: 0 },
+          run: async (task) => ({
+            taskId: task.id,
+            status: 'success',
+            output: { objective: task.objective },
+            artifacts: [],
+            metrics: {
+              startTime: Date.now(),
+              endTime: Date.now(),
+              duration: 0,
+              tokensUsed: 0,
+              toolCallCount: 0,
+              retryCount: 0,
+            },
+            trace: {
+              traceId: `trace-${Date.now()}`,
+              spanId: `span-${Date.now()}`,
+              operation: 'mock-worker.run',
+              attributes: {},
+              events: [],
+              duration: 0,
+            },
+          }),
+          stop: async () => undefined,
+        },
       });
     }
   }

@@ -207,6 +207,18 @@ export abstract class BaseAgent implements Agent {
   }
 
   /**
+   * 中断当前执行（不做 stop/cleanup）
+   *
+   * 说明：
+   * - stop() 会将 Agent 置为 stopped（不可复用）；interrupt() 仅中断本次 run
+   * - 子类应在 executeTask 内部监听 signal.aborted
+   */
+  async interrupt(): Promise<void> {
+    if (this.state !== 'running') return;
+    this.abortController?.abort();
+  }
+
+  /**
    * 停止 Agent
    */
   async stop(): Promise<void> {
@@ -286,3 +298,4 @@ export abstract class BaseAgent implements Agent {
     // 默认不做任何事情
   }
 }
+

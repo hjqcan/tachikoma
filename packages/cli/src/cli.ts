@@ -5,7 +5,8 @@
  */
 
 import { VERSION } from './index';
-import { runMVP, type MVPRunnerConfig } from '@tachikoma/core';
+import { resolve } from 'node:path';
+import { ConversationalRunner, type ConversationalRunnerConfig } from '@tachikoma/core';
 
 /**
  * 显示帮助信息
@@ -72,6 +73,8 @@ function removeFlag(args: CLIArgs, name: string): CLIArgs {
 async function runTask(args: CLIArgs): Promise<number> {
   const workdir = parseFlagValue(args, '--workdir') ?? process.cwd();
   const verbose = hasFlag(args, '--verbose');
+  // 兼容旧参数：当前 ConversationalRunner 会从 Orchestrator 规划结果决定 workerCount
+  // 这里仅解析并移除，避免影响任务文本
   const maxWorkersRaw = parseFlagValue(args, '--max-workers');
   const maxWorkers = maxWorkersRaw ? Number(maxWorkersRaw) : undefined;
 
@@ -91,58 +94,61 @@ async function runTask(args: CLIArgs): Promise<number> {
     return 2;
   }
 
-  const config: MVPRunnerConfig = {
-    task,
-    workdir,
-    ...(maxWorkers !== undefined && !Number.isNaN(maxWorkers) && { maxWorkers }),
+  const runnerConfig: ConversationalRunnerConfig = {
+    sessionDir: resolve(workdir, '.tachikoma', 'conversations'),
+    workDir: workdir,
+    llm: {
+      apiKey: apiKey ?? process.env.OPENAI_API_KEY ?? '',
+      ...(baseUrl && { baseUrl }),
+      ...(model && { model }),
+    },
     verbose,
-    ...(apiKey || baseUrl || model
-      ? {
-          llm: {
-            ...(apiKey && { apiKey }),
-            ...(baseUrl && { baseUrl }),
-            ...(model && { model }),
-          },
-        }
-      : {}),
+    enableCheckpoints: false,
   };
 
-  const metrics = await runMVP(config, {
-    onPlanStart: () => {
-      console.log('[plan] start');
-    },
-    onPlanComplete: (subtasks) => {
-      console.log(`[plan] ok: ${subtasks.length} subtasks`);
-      for (const s of subtasks) {
-        console.log(`  - ${s.id}: ${s.objective}`);
-      }
-    },
-    onWorkerStart: (workerId, subtask) => {
-      console.log(`[worker] ${workerId} start: ${subtask.id}`);
-    },
-    onWorkerThinking: (workerId, content) => {
-      if (!verbose) return;
-      const line = content.trim().split('\n')[0] ?? '';
-      if (line) console.log(`[think] ${workerId}: ${line}`);
-    },
-    onToolCall: (workerId, tool, _args) => {
-      console.log(`[tool] ${workerId}: ${tool}`);
-    },
-    onToolResult: (workerId, tool, success) => {
-      console.log(`[tool] ${workerId}: ${tool} => ${success ? 'ok' : 'fail'}`);
-    },
-    onComplete: (success, m) => {
-      console.log(
-        `[done] ${success ? 'success' : 'partial/fail'} ` +
-          `subtasks=${m.subtasksCompleted}/${m.subtasksTotal} ` +
-          `tokens=${m.tokensUsed} tools=${m.toolCallsTotal} ` +
-          `time=${m.totalDuration}ms`
-      );
-    },
-  });
+  if (!runnerConfig.llm.apiKey) {
+    console.error('缺少 OpenAI API Key。请使用 --api-key 或设置 OPENAI_API_KEY。');
+    return 2;
+  }
 
-  const success = metrics.subtasksFailed === 0;
-  return success ? 0 : 1;
+  if (maxWorkers !== undefined && !Number.isNaN(maxWorkers)) {
+    console.warn('[warn] --max-workers 当前未生效（将由规划结果决定 workerCount）');
+  }
+
+  const runner = new ConversationalRunner(runnerConfig);
+  const session = await runner.createSession();
+
+  let finalSuccess: boolean | null = null;
+  for await (const evt of runner.handleMessage(session.sessionId, task)) {
+    switch (evt.type) {
+      case 'thinking':
+        console.log(`[think] ${evt.content}`);
+        break;
+      case 'tool_call':
+        console.log(`[tool] ${evt.tool}`);
+        break;
+      case 'tool_result':
+        console.log(`[tool] ${evt.tool} => ${evt.success ? 'ok' : 'fail'}`);
+        break;
+      case 'subtask_complete':
+        console.log(`[subtask] ${evt.subtaskId} => ${evt.success ? 'ok' : 'fail'}`);
+        break;
+      case 'need_user_input':
+        console.log(`[need] ${evt.question}`);
+        finalSuccess = false;
+        break;
+      case 'complete':
+        console.log(`[done] ${evt.success ? 'success' : 'partial/fail'}: ${evt.summary}`);
+        finalSuccess = evt.success;
+        break;
+      case 'error':
+        console.error(`[error] ${evt.error}`);
+        finalSuccess = false;
+        break;
+    }
+  }
+
+  return finalSuccess ? 0 : 1;
 }
 
 /**

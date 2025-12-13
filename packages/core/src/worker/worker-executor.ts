@@ -7,7 +7,7 @@
 
 import type { Tool } from '../types';
 import type { SubTask } from '../orchestrator/types';
-import type { ISessionFileManager } from '../orchestrator/session/types';
+import type { ISessionFileManager, SharedContextFile, SyncLogEntry } from '../orchestrator/session/types';
 import type {
   IWorkerBackend,
   WorkerMessage,
@@ -174,12 +174,17 @@ export class WorkerExecutor {
     const workerId = this.config.workerId;
     const sessionManager = this.config.sessionManager;
 
+    // selective memory sync：从 shared context 注入“关键决策/产物”摘要到约束（best-effort）
+    const injectedSharedConstraint = await this.buildSharedContextConstraint(sessionManager);
+
     // 转换 SubTask 为 WorkerTask
     const workerTask: WorkerTask = {
       id: subtask.id,
       type: 'atomic', // 子任务默认为原子任务
       objective: subtask.objective,
-      constraints: subtask.constraints,
+      constraints: injectedSharedConstraint
+        ? [...subtask.constraints, injectedSharedConstraint]
+        : subtask.constraints,
       parentTaskId: subtask.parentId,
       ...(subtask.priority !== undefined && { priority: subtask.priority }),
     };
@@ -649,6 +654,46 @@ export class WorkerExecutor {
         });
         break;
     }
+  }
+
+  private async buildSharedContextConstraint(
+    sessionManager?: ISessionFileManager
+  ): Promise<string | null> {
+    if (!sessionManager) return null;
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return null;
+    return this.formatSharedContextConstraint(shared);
+  }
+
+  private formatSharedContextConstraint(shared: SharedContextFile): string | null {
+    const data = shared.sharedKnowledge?.data;
+    const syncLog = Array.isArray(data?.syncLog) ? data.syncLog.slice(-5) : [];
+    if (syncLog.length === 0) return null;
+
+    // 将共享内容压缩为可读摘要，避免爆 token（约 2k 字符上限）
+    const lines: string[] = [];
+    lines.push('Shared context (selective sync):');
+
+    for (const item of syncLog) {
+      const entry = item as SyncLogEntry;
+      const subtaskId = entry.subtaskId || 'unknown';
+      const objective = entry.objective || '';
+      const modifiedFiles = Array.isArray(entry.modifiedFiles) ? entry.modifiedFiles : [];
+      const decisions = Array.isArray(entry.decisions) ? entry.decisions : [];
+
+      lines.push(`- ${subtaskId}${objective ? `: ${objective}` : ''}`);
+      if (modifiedFiles.length > 0) lines.push(`  files: ${modifiedFiles.slice(0, 10).join(', ')}`);
+      if (decisions.length > 0) {
+        const reasons = decisions
+          .map((d) => d.reason)
+          .filter((r) => typeof r === 'string' && r.trim())
+          .slice(0, 5);
+        if (reasons.length > 0) lines.push(`  decisions: ${reasons.join(' | ')}`);
+      }
+    }
+
+    const text = lines.join('\n').slice(0, 2000);
+    return text.trim() ? text : null;
   }
 }
 

@@ -56,6 +56,13 @@ export interface Agent {
 
   /** 执行任务 */
   run(task: Task): Promise<TaskResult>;
+  /**
+   * 中断当前执行（可选）
+   *
+   * 语义：仅触发当前任务的 AbortSignal，不做 stop/cleanup，不改变可复用性。
+   * 对于不支持的实现可忽略。
+   */
+  interrupt?(): Promise<void>;
   /** 停止执行 */
   stop(): Promise<void>;
 }
@@ -348,7 +355,7 @@ export interface Tool {
    * **默认行为**（未声明时）:
    * - 视为"无特殊权限要求"
    * - 允许执行，但建议明确声明所需权限
-   * - MVP工具迁移期间可以暂时不填，后续会强制要求
+   * - 工具迁移/过渡期间可以暂时不填，后续会强制要求
    * 
    * @example
    * ```ts

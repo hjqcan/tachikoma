@@ -261,14 +261,16 @@ export function extractFrontmatter(
   const lines = content.split('\n');
 
   // 第一行必须是 ---
-  if (lines.length === 0 || lines[0].trim() !== '---') {
+  const first = lines[0];
+  if (!first || first.trim() !== '---') {
     return null;
   }
 
   // 查找结束的 ---
   let endIndex = -1;
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === '---') {
+    const line = lines[i];
+    if (line && line.trim() === '---') {
       endIndex = i;
       break;
     }

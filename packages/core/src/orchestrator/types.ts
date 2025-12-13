@@ -14,6 +14,7 @@ import type {
   RetryPolicy,
   JSONSchema,
   AgentConfig,
+  Agent,
 } from '../types';
 import type { MemoryConfig } from '../memory';
 
@@ -195,6 +196,12 @@ export interface WorkerInfo {
   load?: WorkerLoad;
   /** 能力标签（可执行的任务类型） */
   capabilities?: string[];
+  /**
+   * 绑定的 WorkerAgent（或兼容 Agent）
+   *
+   * 说明：WorkerPool “管理 + 调度”，执行由绑定的 Agent 负责。
+   */
+  agent?: Agent;
   /** 上次心跳时间 */
   lastHeartbeat?: number;
 }
@@ -635,6 +642,8 @@ export type OrchestratorEventType =
   | 'subtask:complete'
   | 'subtask:failed'
   | 'subtask:retrying'
+  | 'worker:thinking'
+  | 'worker:action'
   | 'aggregate:start'
   | 'aggregate:complete'
   | 'checkpoint:created'

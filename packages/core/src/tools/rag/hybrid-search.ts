@@ -311,7 +311,7 @@ export const hybridSearchTool: Tool = {
       // RAG 无结果或 skipRag=true，都使用全量 code_search
       console.debug('[HybridSearch] No candidates, using full code_search');
       
-      const fallbackResult = await codeSearchTool.execute(
+      const fallbackResult = (await codeSearchTool.execute(
         {
           pattern: typedInput.query,
           path: '.',
@@ -319,7 +319,7 @@ export const hybridSearchTool: Tool = {
           fileTypes,
         },
         context
-      );
+      )) as { success: boolean; data?: unknown };
 
       if (fallbackResult.success && fallbackResult.data) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

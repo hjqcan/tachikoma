@@ -8,23 +8,23 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { Planner, createLLMClient } from '../planner';
-import { createWorkerExecutor, type WorkerExecutor } from '../worker';
-import { coreTools, getToolDefinitions } from '../tools';
-import { createObservability } from '../observability';
+import type { ConversationContextManager, Task, TaskResult } from '../types';
+import { createRegisteredConversationContextManager } from '../factories';
+import { Orchestrator } from '../orchestrator/orchestrator';
+import type { PlannerOutput } from '../orchestrator/types';
+import type { OrchestratorEvent } from '../orchestrator/types';
 
 import { SessionStore } from './session-store';
 import { IntentAnalyzer } from './intent-analyzer';
-import { FeedbackLoop } from './feedback-loop';
 import { ConversationPromptBuilder } from './prompt-builder';
 import {
   UserIntent,
-  FeedbackAction,
   type ConversationalRunnerConfig,
   type SessionState,
   type StreamEvent,
   type ExecutionSummary,
 } from './types';
-import type { SubTask } from '../orchestrator/types';
+import type { ActionRecord, ThinkingRecord } from '../orchestrator/session/types';
 
 // =============================================================================
 // ConversationalRunner 类
@@ -37,15 +37,14 @@ export class ConversationalRunner {
   private readonly config: ConversationalRunnerConfig;
   private readonly sessionStore: SessionStore;
   private readonly intentAnalyzer: IntentAnalyzer;
-  private readonly feedbackLoop: FeedbackLoop;
   private readonly promptBuilder: ConversationPromptBuilder;
-  private executor: WorkerExecutor | null = null;
+  private readonly contextManagers = new Map<string, ConversationContextManager>();
+  private readonly orchestrators = new Map<string, Orchestrator>();
 
   constructor(config: ConversationalRunnerConfig) {
     this.config = config;
     this.sessionStore = new SessionStore(config.sessionDir);
     this.intentAnalyzer = new IntentAnalyzer();
-    this.feedbackLoop = new FeedbackLoop();
     this.promptBuilder = new ConversationPromptBuilder(
       config.maxHistoryMessages ? { maxMessages: config.maxHistoryMessages } : {}
     );
@@ -99,6 +98,12 @@ export class ConversationalRunner {
     await this.sessionStore.addMessage(sessionId, {
       role: 'user',
       content: userMessage,
+    });
+    this.getContextManager(sessionId).addMessage({
+      id: `msg-${randomUUID().substring(0, 8)}`,
+      role: 'user',
+      content: userMessage,
+      timestamp: Date.now(),
     });
 
     // 3. 分析意图
@@ -162,12 +167,6 @@ export class ConversationalRunner {
     session: SessionState,
     task: string
   ): AsyncGenerator<StreamEvent> {
-    yield {
-      type: 'thinking',
-      content: '正在规划任务...',
-      timestamp: Date.now(),
-    };
-
     try {
       // 1. 创建检查点
       if (this.config.enableCheckpoints) {
@@ -177,25 +176,8 @@ export class ConversationalRunner {
         );
       }
 
-      // 2. 规划任务
-      const subtasks = await this.planTask(task);
-
-      session.currentPlan = {
-        subtasks,
-        executionOrder: subtasks.map((s) => s.id),
-      };
-      session.pendingSubtasks = subtasks.map((s) => s.id);
-      session.completedSubtasks = [];
-      await this.sessionStore.saveSession(session);
-
-      yield {
-        type: 'thinking',
-        content: `已规划 ${subtasks.length} 个子任务`,
-        timestamp: Date.now(),
-      };
-
-      // 3. 执行子任务
-      yield* this.executeSubtasks(session);
+      // 2. 执行（对话驱动 → Orchestrator）
+      yield* this.runWithOrchestrator(session, task);
     } catch (error) {
       yield {
         type: 'error',
@@ -212,23 +194,12 @@ export class ConversationalRunner {
   private async *handleContinue(
     session: SessionState
   ): AsyncGenerator<StreamEvent> {
-    if (session.pendingSubtasks.length === 0) {
-      yield {
-        type: 'complete',
-        success: true,
-        summary: '没有待执行的任务',
-        timestamp: Date.now(),
-      };
-      return;
-    }
-
     yield {
-      type: 'thinking',
-      content: `继续执行，剩余 ${session.pendingSubtasks.length} 个子任务`,
+      type: 'complete',
+      success: true,
+      summary: session.currentPlan ? '当前会话没有挂起执行（已收敛为单次 Orchestrator 运行）' : '没有待执行的任务',
       timestamp: Date.now(),
     };
-
-    yield* this.executeSubtasks(session);
   }
 
   /**
@@ -274,8 +245,8 @@ export class ConversationalRunner {
       timestamp: Date.now(),
     };
 
-    // 继续执行
-    yield* this.executeSubtasks(session);
+    // 当前版本不支持“中途提问后续跑”，按新任务处理
+    yield* this.handleNewTask(session, answer);
   }
 
   /**
@@ -348,9 +319,24 @@ export class ConversationalRunner {
   // ---------------------------------------------------------------------------
 
   /**
-   * 规划任务
+   * 获取/创建 ConversationContextManager（会话容器）
    */
-  private async planTask(task: string): Promise<SubTask[]> {
+  private getContextManager(sessionId: string): ConversationContextManager {
+    const existing = this.contextManagers.get(sessionId);
+    if (existing) return existing;
+
+    const created = createRegisteredConversationContextManager({ sessionId });
+    this.contextManagers.set(sessionId, created);
+    return created;
+  }
+
+  /**
+   * 获取/创建 Orchestrator（每个会话复用）
+   */
+  private getOrchestrator(session: SessionState): Orchestrator {
+    const existing = this.orchestrators.get(session.sessionId);
+    if (existing) return existing;
+
     const { apiKey, baseUrl, model } = this.config.llm;
 
     const llmClient = createLLMClient({
@@ -359,199 +345,248 @@ export class ConversationalRunner {
       apiKey,
       ...(baseUrl && { baseUrl }),
       maxTokens: 8192,
+      temperature: 0.3,
     });
 
-    const planner = new Planner({ llmClient });
-
-    const toolDescriptions = getToolDefinitions()
-      .map((t) => `- ${t.name}: ${t.description}`)
-      .join('\n');
-
-    const planResult = await planner.plan({
-      task: {
-        id: `task-${randomUUID().substring(0, 8)}`,
-        type: 'composite',
-        objective: task,
-        constraints: [
-          `当前工作目录: ${resolve(this.config.workDir)}`,
-          '所有文件操作使用相对路径',
-          `可用工具:\n${toolDescriptions}`,
-        ],
-        priority: 'medium',
-        complexity: 'moderate',
+    const planner = new Planner({
+      llmClient,
+      config: {
+        agent: {
+          provider: 'openai',
+          model: model ?? 'gpt-4o',
+          maxTokens: 8192,
+          temperature: 0.3,
+          ...(baseUrl && { baseUrl }),
+          apiKey,
+        },
       },
-      maxSubtasks: 5,
-      availableTools: coreTools.map((t) => t.name),
     });
 
-    if (!planResult.output) {
-      throw new Error('规划失败：未返回输出');
-    }
+    const orchestrator = new Orchestrator(`orch-${session.sessionId}`, {
+      planner,
+      config: {
+        session: {
+          rootDir: resolve(this.config.sessionDir, session.sessionId, 'orch'),
+          enableWatch: true,
+          watchPollInterval: 300,
+        },
+      },
+    });
 
-    return planResult.output.subtasks;
+    this.orchestrators.set(session.sessionId, orchestrator);
+    return orchestrator;
   }
 
   /**
-   * 执行子任务
+   * 对话驱动的执行入口（内部调用 Orchestrator）
    */
-  private async *executeSubtasks(
-    session: SessionState
+  private async *runWithOrchestrator(
+    session: SessionState,
+    objective: string
   ): AsyncGenerator<StreamEvent> {
-    const { apiKey, baseUrl, model } = this.config.llm;
+    const orchestrator = this.getOrchestrator(session);
+    const taskId = `task-${randomUUID().substring(0, 8)}`;
 
-    // 初始化执行器
-    if (!this.executor) {
-      const obs = createObservability();
+    const contextText = this.promptBuilder.buildContext(session);
 
-      this.executor = await createWorkerExecutor({
-        backendConfig: {
-          provider: 'openai',
-          model: model ?? 'gpt-4o',
-          apiKey,
-          ...(baseUrl && { baseUrl }),
+    const task: Task = {
+      id: taskId,
+      type: 'composite',
+      objective,
+      constraints: [
+        `当前工作目录: ${resolve(this.config.workDir)}`,
+        '所有文件操作使用相对路径',
+        ...(contextText ? [`对话上下文（仅供参考，不要逐字复述）:\n${contextText}`] : []),
+      ],
+      context: {
+        parentTaskId: session.sessionId,
+        sessionId: session.sessionId,
+        metadata: {
+          workDir: resolve(this.config.workDir),
+          llm: {
+            provider: 'openai',
+            apiKey: this.config.llm.apiKey,
+            ...(this.config.llm.baseUrl && { baseUrl: this.config.llm.baseUrl }),
+            model: this.config.llm.model ?? 'gpt-4o',
+          },
+          memorySync: { strategy: 'selective' },
         },
-        workerId: `conv-worker-${randomUUID().substring(0, 4)}`,
-        workDir: resolve(this.config.workDir),
-        logger: obs.logger,
-        tracer: obs.tracer,
-        metrics: obs.metrics,
+      },
+    };
+
+    const queue: StreamEvent[] = [];
+    let done = false;
+    let notify: (() => void) | null = null;
+
+    const push = (evt: StreamEvent) => {
+      queue.push(evt);
+      notify?.();
+      notify = null;
+    };
+
+    const waitForNext = async (): Promise<void> => {
+      if (queue.length > 0 || done) return;
+      await new Promise<void>((resolve) => {
+        notify = resolve;
       });
-    }
+    };
 
     const filesAffected: string[] = [];
+    const onPlanStart = () => {
+      push({ type: 'thinking', content: '正在规划任务...', timestamp: Date.now() });
+    };
+    const onPlanComplete = (plan: PlannerOutput) => {
+      session.currentPlan = {
+        subtasks: plan.subtasks,
+        executionOrder: plan.executionPlan.steps.flatMap((s) => s.subtaskIds),
+      };
+      session.pendingSubtasks = plan.subtasks.map((s) => s.id);
+      session.completedSubtasks = [];
+      void this.sessionStore.saveSession(session);
 
-    while (session.pendingSubtasks.length > 0) {
-      const subtaskId = session.pendingSubtasks[0];
-      
-      // noUncheckedIndexedAccess: 数组访问可能返回 undefined
-      if (!subtaskId) {
-        session.pendingSubtasks.shift();
-        continue;
-      }
-      
-      const subtask = session.currentPlan?.subtasks.find((s) => s.id === subtaskId);
-
-      if (!subtask) {
-        session.pendingSubtasks.shift();
-        continue;
-      }
-
-      yield {
+      push({
         type: 'thinking',
-        content: `执行: ${subtask.objective}`,
+        content: `已规划 ${plan.subtasks.length} 个子任务`,
         timestamp: Date.now(),
-      };
-
-      let success = true;
-      let error: string | undefined;
-
-      try {
-        for await (const msg of this.executor.execute(subtask, coreTools, {
-          keyDecisionPolicy: { enabled: false },
-        })) {
-          switch (msg.type) {
-            case 'thinking':
-              yield { type: 'thinking', content: msg.content, timestamp: Date.now() };
-              break;
-            case 'tool_call':
-              yield { type: 'tool_call', tool: msg.tool, input: msg.input, timestamp: Date.now() };
-              // 追踪文件操作
-              if (['file_write', 'apply_patch'].includes(msg.tool)) {
-                const path = (msg.input as Record<string, unknown>).path as string;
-                if (path && !filesAffected.includes(path)) {
-                  filesAffected.push(path);
-                }
-              }
-              break;
-            case 'tool_result':
-              yield { type: 'tool_result', tool: msg.tool, success: msg.success, timestamp: Date.now() };
-              break;
-            case 'error':
-              error = msg.error;
-              success = false;
-              break;
-          }
-        }
-      } catch (e) {
-        error = String(e);
-        success = false;
+      });
+    };
+    const onSubtaskAssigned = (subtaskId: string, subtaskObjective: string) => {
+      push({ type: 'thinking', content: `执行: ${subtaskObjective}`, timestamp: Date.now() });
+      if (!session.pendingSubtasks.includes(subtaskId)) {
+        session.pendingSubtasks.push(subtaskId);
+        void this.sessionStore.saveSession(session);
       }
-
-      yield {
-        type: 'subtask_complete',
-        subtaskId,
-        success,
-        timestamp: Date.now(),
-      };
-
-      // 更新会话状态
-      session.pendingSubtasks.shift();
-      if (success) {
+    };
+    const onSubtaskDone = (subtaskId: string, success: boolean) => {
+      if (!subtaskId) return;
+      push({ type: 'subtask_complete', subtaskId, success, timestamp: Date.now() });
+      session.pendingSubtasks = session.pendingSubtasks.filter((id) => id !== subtaskId);
+      if (success && !session.completedSubtasks.includes(subtaskId)) {
         session.completedSubtasks.push(subtaskId);
       }
-      await this.sessionStore.saveSession(session);
+      void this.sessionStore.saveSession(session);
+    };
+    const onWorkerThinking = (workerId: string, record: ThinkingRecord) => {
+      if (!this.config.verbose) return;
+      const line = record.content.trim().split('\n')[0] ?? '';
+      if (!line) return;
+      push({
+        type: 'thinking',
+        content: `[${workerId}] ${line}`,
+        timestamp: Date.now(),
+      });
+    };
+    const onWorkerAction = (_workerId: string, record: ActionRecord) => {
+      const desc = record.description ?? '';
 
-      // 反馈循环分析
-      if (!success && error) {
-        const feedback = this.feedbackLoop.analyze(
-          {
-            success: false,
-            subtasksCompleted: session.completedSubtasks.length,
-            subtasksFailed: 1,
-            filesAffected,
-            error,
-          },
-          session
-        );
+      const callingMatch = desc.match(/^Calling tool:\s*(.+)$/);
+      if (callingMatch) {
+        const tool = callingMatch[1] ?? 'unknown';
+        const input = (record.params?.input as Record<string, unknown> | undefined) ?? {};
+        push({ type: 'tool_call', tool, input, timestamp: Date.now() });
 
-        if (feedback.action === FeedbackAction.ASK_USER && feedback.question) {
-          session.waitingForUser = true;
-          session.pendingQuestion = feedback.question;
-          await this.sessionStore.saveSession(session);
-
-          yield {
-            type: 'need_user_input',
-            question: feedback.question ?? '遇到问题，需要您的帮助',
-            timestamp: Date.now(),
-          };
-          return;
+        // 追踪文件操作（用于 summary）
+        if (['file_write', 'apply_patch'].includes(tool)) {
+          const path = (input as Record<string, unknown>).path as string | undefined;
+          if (path && !filesAffected.includes(path)) filesAffected.push(path);
         }
+        return;
+      }
 
-        if (feedback.action === FeedbackAction.REPLAN) {
-          yield {
-            type: 'thinking',
-            content: `需要重新规划: ${feedback.replanSuggestion}`,
-            timestamp: Date.now(),
-          };
-          // TODO: 触发重新规划
-          break;
-        }
+      const resultMatch = desc.match(/^Tool result:\s*(.+)$/);
+      if (resultMatch) {
+        const tool = resultMatch[1] ?? 'unknown';
+        const success = record.result?.success ?? false;
+        push({ type: 'tool_result', tool, success, timestamp: Date.now() });
+      }
+    };
+
+    const planStartHandler = () => onPlanStart();
+    const planCompleteHandler = (evt: OrchestratorEvent<{ plan: PlannerOutput }>) =>
+      onPlanComplete(evt.data.plan);
+    const subtaskAssignedHandler = (
+      evt: OrchestratorEvent<{ subtaskId: string; subtask: { objective: string } }>
+    ) => onSubtaskAssigned(evt.data.subtaskId, evt.data.subtask.objective);
+    const subtaskCompleteHandler = (evt: OrchestratorEvent<{ result: TaskResult }>) =>
+      onSubtaskDone(evt.subtaskId ?? '', true);
+    const subtaskFailedHandler = (evt: OrchestratorEvent<{ error: string; retryCount: number }>) =>
+      onSubtaskDone(evt.subtaskId ?? '', false);
+    const workerThinkingHandler = (evt: OrchestratorEvent<{ workerId: string; record: ThinkingRecord }>) =>
+      onWorkerThinking(evt.data.workerId, evt.data.record);
+    const workerActionHandler = (evt: OrchestratorEvent<{ workerId: string; record: ActionRecord }>) =>
+      onWorkerAction(evt.data.workerId, evt.data.record);
+
+    orchestrator.on('plan:start', planStartHandler);
+    orchestrator.on('plan:complete', planCompleteHandler);
+    orchestrator.on('subtask:assigned', subtaskAssignedHandler);
+    orchestrator.on('subtask:complete', subtaskCompleteHandler);
+    orchestrator.on('subtask:failed', subtaskFailedHandler);
+    orchestrator.on('worker:thinking', workerThinkingHandler);
+    orchestrator.on('worker:action', workerActionHandler);
+
+    const runPromise = orchestrator
+      .run(task)
+      .then(async (result) => {
+        // 更新变量
+        session.variables.lastFilesAffected = filesAffected;
+        await this.sessionStore.saveSession(session);
+
+        const summary: ExecutionSummary = {
+          success: result.status === 'success',
+          subtasksCompleted: session.completedSubtasks.length,
+          subtasksFailed: Math.max(0, session.currentPlan ? session.currentPlan.subtasks.length - session.completedSubtasks.length : 0),
+          filesAffected,
+        };
+
+        await this.sessionStore.addMessage(session.sessionId, {
+          role: 'assistant',
+          content: `已完成 ${summary.subtasksCompleted} 个子任务`,
+          executionSummary: summary,
+        });
+        this.getContextManager(session.sessionId).addMessage({
+          id: `msg-${randomUUID().substring(0, 8)}`,
+          role: 'assistant',
+          content: `已完成 ${summary.subtasksCompleted} 个子任务`,
+          timestamp: Date.now(),
+        });
+
+        push({
+          type: 'complete',
+          success: result.status === 'success',
+          summary: `已完成 ${summary.subtasksCompleted} 个子任务，修改了 ${filesAffected.length} 个文件`,
+          timestamp: Date.now(),
+        });
+      })
+      .catch((error) => {
+        push({
+          type: 'error',
+          error: error instanceof Error ? error.message : String(error),
+          retryable: false,
+          timestamp: Date.now(),
+        });
+      })
+      .finally(() => {
+        done = true;
+        notify?.();
+        notify = null;
+      });
+
+    while (!done || queue.length > 0) {
+      await waitForNext();
+      while (queue.length > 0) {
+        const evt = queue.shift();
+        if (evt) yield evt;
       }
     }
 
-    // 更新变量
-    session.variables.lastFilesAffected = filesAffected;
-    await this.sessionStore.saveSession(session);
+    orchestrator.off('plan:start', planStartHandler);
+    orchestrator.off('plan:complete', planCompleteHandler);
+    orchestrator.off('subtask:assigned', subtaskAssignedHandler);
+    orchestrator.off('subtask:complete', subtaskCompleteHandler);
+    orchestrator.off('subtask:failed', subtaskFailedHandler);
+    orchestrator.off('worker:thinking', workerThinkingHandler);
+    orchestrator.off('worker:action', workerActionHandler);
 
-    // 记录助手消息
-    const summary: ExecutionSummary = {
-      success: session.pendingSubtasks.length === 0,
-      subtasksCompleted: session.completedSubtasks.length,
-      subtasksFailed: 0,
-      filesAffected,
-    };
-
-    await this.sessionStore.addMessage(session.sessionId, {
-      role: 'assistant',
-      content: `已完成 ${summary.subtasksCompleted} 个子任务`,
-      executionSummary: summary,
-    });
-
-    yield {
-      type: 'complete',
-      success: true,
-      summary: `已完成 ${summary.subtasksCompleted} 个子任务，修改了 ${filesAffected.length} 个文件`,
-      timestamp: Date.now(),
-    };
+    await runPromise;
   }
 }

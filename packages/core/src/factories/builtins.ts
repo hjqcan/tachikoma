@@ -19,10 +19,10 @@ function pickOrchestratorOptions(options?: AgentFactoryOptions): OrchestratorOpt
   const o = options;
   if (!o) return {};
   return {
-    planner: o.planner,
-    workerPool: o.workerPool,
-    sessionManager: o.sessionManager,
-    config: o.config,
+    ...(o.planner && { planner: o.planner }),
+    ...(o.workerPool && { workerPool: o.workerPool }),
+    ...(o.sessionManager && { sessionManager: o.sessionManager }),
+    ...(o.orchestratorConfig && { config: o.orchestratorConfig }),
   };
 }
 
@@ -30,16 +30,16 @@ function pickWorkerAgentOptions(options?: AgentFactoryOptions): WorkerAgentOptio
   const o = options;
   if (!o) return {};
   return {
-    workDir: o.workDir,
-    tools: o.tools,
-    executionOptions: o.executionOptions,
-    backendConfig: o.backendConfig,
-    sessionManager: o.sessionManager,
-    mcpClient: o.mcpClient,
-    autoRegisterMCPTools: o.autoRegisterMCPTools,
-    logger: o.logger,
-    tracer: o.tracer,
-    metrics: o.metrics,
+    ...(o.workDir !== undefined && { workDir: o.workDir }),
+    ...(o.tools !== undefined && { tools: o.tools }),
+    ...(o.executionOptions !== undefined && { executionOptions: o.executionOptions }),
+    ...(o.backendConfig !== undefined && { backendConfig: o.backendConfig }),
+    ...(o.sessionManager !== undefined && { sessionManager: o.sessionManager }),
+    ...(o.mcpClient !== undefined && { mcpClient: o.mcpClient }),
+    ...(o.autoRegisterMCPTools !== undefined && { autoRegisterMCPTools: o.autoRegisterMCPTools }),
+    ...(o.logger !== undefined && { logger: o.logger }),
+    ...(o.tracer !== undefined && { tracer: o.tracer }),
+    ...(o.metrics !== undefined && { metrics: o.metrics }),
   };
 }
 

@@ -1,7 +1,7 @@
 /**
  * 核心工具模块入口
  *
- * 导出所有 MVP 核心工具
+ * 导出所有核心工具
  */
 
 export { fileReadTool } from './file-read';

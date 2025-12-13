@@ -37,8 +37,7 @@ userMessage: string ): AsyncGenerator<StreamEvent>;
 
 // 撤销到检查点 async undoToCheckpoint( sessionId: string, checkpointId: string ): Promise<void>;
 
-// 流式中断 async interrupt(sessionId: string): Promise<void>; } 与现有架构的关系现有: MVPRunner
-(一次性)
+// 流式中断 async interrupt(sessionId: string): Promise<void>; } 与旧架构的关系：一次性 runner（已移除）
 
 扩展后: ConversationalRunner ├── SessionManager (新增) ├── IntentAnalyzer (新增) ├── Planner (复用)
 ├── WorkerExecutor (复用) ├── FeedbackLoop (新增) └── ContextCompressor (新增) 这个架构允许：

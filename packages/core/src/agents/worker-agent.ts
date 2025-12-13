@@ -149,8 +149,8 @@ export class WorkerAgent extends BaseAgent {
       parentId: task.context?.parentTaskId ?? 'root',
       objective: task.objective,
       constraints: task.constraints,
-      outputSchema: task.outputSchema,
       status: 'pending' as const,
+      ...(task.outputSchema !== undefined && { outputSchema: task.outputSchema }),
     };
 
     const tools = this.options.tools ?? coreTools;

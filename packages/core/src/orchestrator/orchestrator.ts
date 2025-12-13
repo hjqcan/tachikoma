@@ -7,6 +7,7 @@
 
 import type { Task, TaskResult, Artifact, TaskMetrics, TraceData, RetryPolicy } from '../types';
 import { BaseAgent } from '../abstracts/base-agent';
+import { WorkerAgent } from '../agents/worker-agent';
 import type {
   OrchestratorTask,
   SubTask,
@@ -40,7 +41,9 @@ import {
   type ApprovalResponseFile,
   type SessionFileEvent,
   type ThinkingRecord,
+  type ActionRecord,
   type InterventionFile,
+  type DecisionRecord,
 } from './session';
 import { MemoryService } from '../memory';
 
@@ -160,6 +163,12 @@ export class Orchestrator extends BaseAgent {
   /** 审批处理器（绑定的方法引用，用于事件订阅/取消） */
   private readonly boundApprovalHandler: (event: SessionFileEvent<PendingApprovalFile>) => Promise<void>;
 
+  /** Worker 思考转发处理器 */
+  private readonly boundThinkingForwarder: (event: SessionFileEvent<ThinkingRecord>) => void;
+
+  /** Worker 行动转发处理器 */
+  private readonly boundActionForwarder: (event: SessionFileEvent<ActionRecord>) => void;
+
   /** 偏离检测定时器 */
   private deviationDetectionTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -174,6 +183,9 @@ export class Orchestrator extends BaseAgent {
 
   /** Memory 服务（跨会话记忆） */
   private memoryService?: MemoryService;
+
+  /** 当前运行上下文（从 task.context.metadata 派生） */
+  private currentRunMetadata: Record<string, unknown> | null = null;
 
   constructor(id: string, options: OrchestratorOptions = {}) {
     const config = createOrchestratorConfig(options.config);
@@ -195,6 +207,8 @@ export class Orchestrator extends BaseAgent {
 
     // 绑定审批处理器方法
     this.boundApprovalHandler = this.handlePendingApproval.bind(this);
+    this.boundThinkingForwarder = this.forwardThinkingEvent.bind(this);
+    this.boundActionForwarder = this.forwardActionEvent.bind(this);
     
     // 初始化 MemoryService（如果配置启用）
     if (config.memoryConfig?.enabled) {
@@ -329,7 +343,9 @@ export class Orchestrator extends BaseAgent {
     const orchestratorTask = this.convertToOrchestratorTask(task);
 
     // 初始化会话
-    await this.initializeSession(task.id);
+    this.currentRunMetadata = task.context?.metadata ?? null;
+    await this.initializeSession(task.id, task.context?.sessionId);
+    await this.initializeSharedContext(orchestratorTask);
 
     // 初始化执行状态
     this.executionState = {
@@ -365,6 +381,11 @@ export class Orchestrator extends BaseAgent {
 
       // 保存计划到会话文件
       await this.savePlanToSession(task.id, planResult.output);
+
+      // 确保 Worker 已注册（基于规划结果的 workerCount）
+      if (this.workerPool.workerCount === 0) {
+        await this.registerDefaultWorkers(planResult.output.delegation.workerCount);
+      }
 
       // 阶段 2: 执行（分配与聚合）
       const aggregatedResult = await this.executeAssignPhase(
@@ -412,6 +433,7 @@ export class Orchestrator extends BaseAgent {
       // 清理
       this.executionState = null;
       await this.closeSession();
+      this.currentRunMetadata = null;
       
       // 清除 session scope 记忆（防止跨任务污染）
       if (this.memoryService) {
@@ -422,6 +444,26 @@ export class Orchestrator extends BaseAgent {
         }
       }
     }
+  }
+
+  /**
+   * 初始化共享上下文（selective memory sync 的载体）
+   */
+  private async initializeSharedContext(task: OrchestratorTask): Promise<void> {
+    if (!this.sessionManager || !this.currentSessionId) return;
+
+    // 若已存在则不覆盖（允许跨 run 复用同一 sessionId）
+    const existing = await this.sessionManager.readSharedContext().catch(() => null);
+    if (existing) return;
+
+    const workDir = this.extractWorkDirFromMetadata() ?? process.cwd();
+
+    await this.sessionManager.writeSharedContext({
+      objective: task.objective,
+      constraints: task.constraints,
+      sharedKnowledge: { data: {}, updatedAt: Date.now() },
+      workspace: { rootPath: workDir, keyFiles: [] },
+    });
   }
 
   /**
@@ -445,8 +487,8 @@ export class Orchestrator extends BaseAgent {
    * 使用配置中的 session.rootDir，避免路径字符串替换
    * 初始化后启动文件监控（如果启用）并注册审批事件处理器
    */
-  private async initializeSession(_taskId: string): Promise<void> {
-    this.currentSessionId = generateTimestampId('session');
+  private async initializeSession(_taskId: string, sessionId?: string): Promise<void> {
+    this.currentSessionId = sessionId ?? generateTimestampId('session');
 
     // 使用注入的 SessionManager 或创建新的
     if (this.injectedSessionManager) {
@@ -467,6 +509,10 @@ export class Orchestrator extends BaseAgent {
       'pending_approval_created',
       this.boundApprovalHandler
     );
+
+    // 转发 Worker 日志事件（用于 Runtime 流式输出）
+    this.sessionManager.on<ThinkingRecord>('thinking_updated', this.boundThinkingForwarder);
+    this.sessionManager.on<ActionRecord>('action_completed', this.boundActionForwarder);
 
     // 启动文件监控（如果配置启用且 SessionManager 支持）
     // 对于注入的 SessionManager，由调用者负责管理监控生命周期
@@ -493,6 +539,8 @@ export class Orchestrator extends BaseAgent {
         'pending_approval_created',
         this.boundApprovalHandler
       );
+      this.sessionManager.off<ThinkingRecord>('thinking_updated', this.boundThinkingForwarder);
+      this.sessionManager.off<ActionRecord>('action_completed', this.boundActionForwarder);
     }
 
     // 只有当 sessionManager 不是注入的时候才关闭
@@ -507,6 +555,32 @@ export class Orchestrator extends BaseAgent {
 
     this.sessionManager = null;
     this.currentSessionId = null;
+  }
+
+  /**
+   * 转发 Worker 思考事件为 Orchestrator 事件
+   */
+  private forwardThinkingEvent(event: SessionFileEvent<ThinkingRecord>): void {
+    const workerId = this.deriveWorkerIdFromEvent(event) ?? 'unknown';
+    const taskId = this.currentTask?.id ?? '';
+    this.emit('worker:thinking', taskId, { workerId, record: event.data }, event.data.subtaskId);
+  }
+
+  /**
+   * 转发 Worker 行动事件为 Orchestrator 事件
+   */
+  private forwardActionEvent(event: SessionFileEvent<ActionRecord>): void {
+    const workerId = this.deriveWorkerIdFromEvent(event) ?? 'unknown';
+    const taskId = this.currentTask?.id ?? '';
+    this.emit('worker:action', taskId, { workerId, record: event.data }, event.data.subtaskId);
+  }
+
+  private deriveWorkerIdFromEvent(event: { workerId?: string; filePath?: string }): string | undefined {
+    if (event.workerId) return event.workerId;
+    if (!event.filePath) return undefined;
+    // 兼容不同平台分隔符：.../workers/<id>/...
+    const m = event.filePath.match(/[\\/]+workers[\\/]+([^\\/]+)[\\/]+/);
+    return m?.[1];
   }
 
   /**
@@ -1209,12 +1283,13 @@ Is this a genuine deviation? Answer YES or NO only.`,
           };
         }
 
-        // 等待 Worker 完成（简化实现，实际应监控 Worker 状态）
-        const result = await this.waitForWorkerCompletion(
-          subtask,
-          assignResult.workerId!,
-          timeout
-        );
+        const workerId = assignResult.workerId!;
+
+        // 等待 Worker 完成（WorkerAgent 驱动）
+        const result = await this.waitForWorkerCompletion(subtask, workerId, timeout, signal);
+
+        // selective sync：将关键决策/产物写入 shared context（best-effort）
+        await this.syncSharedContextSelective(workerId, subtask, result).catch(() => undefined);
 
         // 标记为完成
         this.executionState!.runningSubtasks.delete(subtaskId);
@@ -1264,6 +1339,98 @@ Is this a genuine deviation? Answer YES or NO only.`,
         };
       }
     }
+  }
+
+  private getMemorySyncStrategy(): 'selective' | 'nightly_full' {
+    const meta = this.currentRunMetadata;
+    const raw = meta && typeof meta.memorySync === 'object' && meta.memorySync ? (meta.memorySync as Record<string, unknown>) : null;
+    const strategy = raw && typeof raw.strategy === 'string' ? raw.strategy : 'selective';
+    return strategy === 'nightly_full' ? 'nightly_full' : 'selective';
+  }
+
+  private async syncSharedContextSelective(
+    workerId: string,
+    subtask: SubTask,
+    result: TaskResult
+  ): Promise<void> {
+    if (!this.sessionManager) return;
+    if (this.getMemorySyncStrategy() !== 'selective') return;
+
+    const shared = await this.sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return;
+
+    const actions = await this.sessionManager.readActionLogs(workerId, 200).catch(() => []);
+    const modifiedFiles = this.extractModifiedFilesFromActions(actions, subtask.id);
+
+    const decisions = await this.sessionManager.readDecisions(200).catch(() => []);
+    const decisionSummary = this.extractDecisionSummary(decisions, workerId, subtask.id);
+
+    const outputText = this.extractResultText(result);
+
+    const nextData = {
+      ...(shared.sharedKnowledge?.data ?? {}),
+    };
+
+    const syncLog = Array.isArray(nextData.syncLog) ? nextData.syncLog.slice(-19) : [];
+
+    syncLog.push({
+      subtaskId: subtask.id,
+      workerId,
+      objective: subtask.objective,
+      updatedAt: Date.now(),
+      ...(modifiedFiles.length > 0 && { modifiedFiles }),
+      ...(decisionSummary.length > 0 && { decisions: decisionSummary }),
+      ...(outputText && { output: outputText }),
+    });
+
+    nextData.syncLog = syncLog;
+
+    await this.sessionManager.writeSharedContext({
+      objective: shared.objective,
+      constraints: shared.constraints,
+      sharedKnowledge: { data: nextData, updatedAt: Date.now() },
+      ...(shared.workspace && { workspace: shared.workspace }),
+    });
+  }
+
+  private extractModifiedFilesFromActions(actions: ActionRecord[], subtaskId: string): string[] {
+    const files = new Set<string>();
+    for (const a of actions) {
+      if (a.subtaskId !== subtaskId) continue;
+      if (!a.params || typeof a.params !== 'object') continue;
+      const tool = (a.params as Record<string, unknown>).tool;
+      if (tool !== 'apply_patch' && tool !== 'file_write') continue;
+      const input = (a.params as Record<string, unknown>).input;
+      if (!input || typeof input !== 'object') continue;
+      const path = (input as Record<string, unknown>).path;
+      if (typeof path === 'string' && path) files.add(path);
+    }
+    return Array.from(files);
+  }
+
+  private extractDecisionSummary(
+    decisions: DecisionRecord[],
+    workerId: string,
+    subtaskId: string
+  ): Array<{ type: string; reason: string; approved?: boolean }> {
+    return decisions
+      .filter((d) => d.workerId === workerId && d.subtaskId === subtaskId)
+      .slice(-20)
+      .map((d) => ({
+        type: d.type,
+        reason: d.decision.reason,
+        ...(d.decision.approved !== undefined && { approved: d.decision.approved }),
+      }));
+  }
+
+  private extractResultText(result: TaskResult): string | undefined {
+    const out = result.output as unknown;
+    if (!out || typeof out !== 'object') return undefined;
+    const text = (out as Record<string, unknown>).text;
+    if (typeof text === 'string' && text.trim()) return text.trim().slice(0, 800);
+    const message = (out as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 800);
+    return undefined;
   }
 
   /**
@@ -1361,11 +1528,6 @@ Is this a genuine deviation? Answer YES or NO only.`,
     timeout: number,
     retryPolicy: RetryPolicy
   ): Promise<AssignmentResult> {
-    // 注册 Worker（如果池为空）
-    if (this.workerPool.workerCount === 0) {
-      await this.registerDefaultWorkers();
-    }
-
     return this.workerPool.assign(subtask, timeout, retryPolicy);
   }
 
@@ -1382,18 +1544,92 @@ Is this a genuine deviation? Answer YES or NO only.`,
       this.orchestratorConfig.workerPool.maxWorkers
     );
 
+    const llm = this.extractLLMFromMetadata();
+    const workDir = this.extractWorkDirFromMetadata();
+    const canUseRealWorkerAgent = !!(llm && llm.apiKey);
+
     for (let i = 0; i < workerCount; i++) {
+      const workerId = `worker-${i}`;
+      const agent = canUseRealWorkerAgent
+        ? new WorkerAgent(
+            workerId,
+            {
+              provider: llm?.provider ?? this.config.provider,
+              model: llm?.model ?? this.config.model,
+              maxTokens: this.config.maxTokens,
+              ...(this.config.temperature !== undefined && { temperature: this.config.temperature }),
+            },
+            {
+              ...(workDir !== undefined && { workDir }),
+              ...(this.sessionManager && { sessionManager: this.sessionManager }),
+              backendConfig: {
+                ...(llm?.apiKey && { apiKey: llm.apiKey }),
+                ...(llm?.baseUrl && { baseUrl: llm.baseUrl }),
+              },
+            }
+          )
+        : {
+            id: workerId,
+            type: 'worker' as const,
+            config: { provider: 'mock', model: 'mock', maxTokens: 0 },
+            run: async (t: Task): Promise<TaskResult> => ({
+              taskId: t.id,
+              status: 'success',
+              output: { objective: t.objective, message: 'mock worker' },
+              artifacts: [],
+              metrics: {
+                startTime: Date.now(),
+                endTime: Date.now(),
+                duration: 0,
+                tokensUsed: 0,
+                toolCallCount: 0,
+                retryCount: 0,
+              },
+              trace: {
+                traceId: generateTimestampId('trace'),
+                spanId: generateTimestampId('span'),
+                operation: `mock-worker.${workerId}.run`,
+                attributes: {},
+                events: [],
+                duration: 0,
+              },
+            }),
+            stop: async () => undefined,
+          };
+
       this.workerPool.register({
-        id: `worker-${i}`,
+        id: workerId,
         status: 'idle',
         capabilities: ['general'],
+        agent,
       });
 
       // 注册到 SessionManager
       if (this.sessionManager) {
-        await this.sessionManager.registerWorker(`worker-${i}`);
+        await this.sessionManager.registerWorker(workerId);
       }
     }
+  }
+
+  private extractWorkDirFromMetadata(): string | undefined {
+    const meta = this.currentRunMetadata;
+    const workDir = meta && typeof meta.workDir === 'string' ? meta.workDir : undefined;
+    return workDir ?? undefined;
+  }
+
+  private extractLLMFromMetadata(): { provider: string; model: string; apiKey?: string; baseUrl?: string } | null {
+    const meta = this.currentRunMetadata;
+    const llm = meta && typeof meta.llm === 'object' && meta.llm ? (meta.llm as Record<string, unknown>) : null;
+    if (!llm) return null;
+    const provider = typeof llm.provider === 'string' ? llm.provider : undefined;
+    const model = typeof llm.model === 'string' ? llm.model : undefined;
+    if (!provider || !model) return null;
+    return {
+      provider,
+      model,
+      ...(typeof llm.apiKey === 'string' && llm.apiKey ? { apiKey: llm.apiKey } : {}),
+      ...(typeof llm.baseUrl === 'string' && llm.baseUrl ? { baseUrl: llm.baseUrl } : {}),
+    };
   }
 
   /**
@@ -1418,34 +1654,61 @@ Is this a genuine deviation? Answer YES or NO only.`,
    */
   private async waitForWorkerCompletion(
     subtask: SubTask,
-    _workerId: string,
-    _timeout: number,
-    _signal?: AbortSignal
+    workerId: string,
+    timeout: number,
+    signal?: AbortSignal
   ): Promise<TaskResult> {
-    // 当前为占位实现，直接返回成功结果
-    // 真实实现应监控 Worker 状态文件并处理各种情况
-    return {
-      taskId: subtask.id,
-      status: 'success',
-      output: { completed: true, objective: subtask.objective },
-      artifacts: [],
-      metrics: {
-        startTime: Date.now(),
-        endTime: Date.now(),
-        duration: 0,
-        tokensUsed: 0,
-        toolCallCount: 0,
-        retryCount: 0,
-      },
-      trace: {
-        traceId: generateTimestampId('trace'),
-        spanId: generateTimestampId('span'),
-        operation: `subtask.${subtask.id}`,
-        attributes: {},
-        events: [],
-        duration: 0,
-      },
+    const worker = this.workerPool.getWorker(workerId);
+    const agent = worker?.agent;
+    if (!agent) {
+      throw new Error(`Worker ${workerId} has no bound agent`);
+    }
+
+    const abortOnSignal = () => {
+      if (signal?.aborted) {
+        void agent.interrupt?.().catch(() => undefined);
+      }
     };
+    abortOnSignal();
+    signal?.addEventListener('abort', abortOnSignal, { once: true });
+
+    // 额外超时兜底：WorkerPool 会负责 timeout 事件与 cancelTask，这里只做 best-effort 中断
+    let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    if (timeout > 0) {
+      timeoutTimer = setTimeout(() => {
+        void agent.interrupt?.().catch(() => undefined);
+      }, timeout + 1000);
+    }
+
+    try {
+      const workerTask: Task = {
+        id: subtask.id,
+        type: 'atomic',
+        objective: subtask.objective,
+        constraints: subtask.constraints,
+        ...(subtask.outputSchema !== undefined && { outputSchema: subtask.outputSchema }),
+        context: {
+          parentTaskId: subtask.parentId,
+          ...(this.currentSessionId && { sessionId: this.currentSessionId }),
+          ...(this.currentTask?.context?.traceId && { traceId: this.currentTask.context.traceId }),
+          metadata: {
+            workerId,
+          },
+        },
+      };
+
+      const result = await agent.run(workerTask);
+
+      if (result.status !== 'success') {
+        const err = (result.output as { error?: string } | undefined)?.error ?? 'Worker execution failed';
+        throw new Error(err);
+      }
+
+      return result;
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+      this.workerPool.completeTask(subtask.id);
+    }
   }
 
   // ============================================================================

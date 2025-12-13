@@ -28,7 +28,7 @@ export class RedisMemoryProvider implements MemoryProvider {
   private redis: Redis;
   private embeddingService: EmbeddingService;
   private keyPrefix: string;
-  private ttlSeconds?: number;
+  private ttlSeconds: number | undefined;
 
   constructor(
     redisUrl: string,

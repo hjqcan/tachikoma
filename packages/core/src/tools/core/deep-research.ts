@@ -81,11 +81,17 @@ function validateInput(input: unknown): {
     valid: true,
     data: {
       input: obj.input.trim(),
-      agent: (obj.agent as string | undefined)?.trim(),
-      agentConfig: obj.agentConfig as Record<string, unknown> | undefined,
-      previousInteractionId: (obj.previousInteractionId as string | undefined)?.trim(),
-      timeoutMs: obj.timeoutMs as number | undefined,
-      pollIntervalMs: obj.pollIntervalMs as number | undefined,
+      ...(typeof obj.agent === 'string' && obj.agent.trim()
+        ? { agent: obj.agent.trim() }
+        : {}),
+      ...(obj.agentConfig !== undefined
+        ? { agentConfig: obj.agentConfig as Record<string, unknown> }
+        : {}),
+      ...(typeof obj.previousInteractionId === 'string' && obj.previousInteractionId.trim()
+        ? { previousInteractionId: obj.previousInteractionId.trim() }
+        : {}),
+      ...(typeof obj.timeoutMs === 'number' ? { timeoutMs: obj.timeoutMs } : {}),
+      ...(typeof obj.pollIntervalMs === 'number' ? { pollIntervalMs: obj.pollIntervalMs } : {}),
     },
   };
 }
@@ -329,45 +335,48 @@ export const deepResearchTool: Tool = {
         const errMsg =
           (current.error as string | undefined) ??
           'Deep research failed (unknown error)';
+        const output: DeepResearchOutput = {
+          interactionId,
+          status,
+          raw: current,
+          latencyMs,
+          ...(report !== undefined ? { report } : {}),
+          ...(citations !== undefined ? { citations } : {}),
+        };
         return {
           success: false,
           error: errMsg,
-          data: {
-            interactionId,
-            status,
-            report,
-            citations,
-            raw: current,
-            latencyMs,
-          },
+          data: output,
         };
       }
 
       if (status !== 'completed') {
+        const output: DeepResearchOutput = {
+          interactionId,
+          status,
+          raw: current,
+          latencyMs,
+          ...(report !== undefined ? { report } : {}),
+          ...(citations !== undefined ? { citations } : {}),
+        };
         return {
           success: false,
           error: `Deep research timed out (last status: ${status})`,
-          data: {
-            interactionId,
-            status,
-            report,
-            citations,
-            raw: current,
-            latencyMs,
-          },
+          data: output,
         };
       }
 
+      const output: DeepResearchOutput = {
+        interactionId,
+        status,
+        raw: current,
+        latencyMs,
+        ...(report !== undefined ? { report } : {}),
+        ...(citations !== undefined ? { citations } : {}),
+      };
       return {
         success: true,
-        data: {
-          interactionId,
-          status,
-          report,
-          citations,
-          raw: current,
-          latencyMs,
-        },
+        data: output,
       };
     } catch (error) {
       const err = error as Error;

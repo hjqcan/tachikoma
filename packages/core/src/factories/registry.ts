@@ -48,7 +48,7 @@ export interface AgentFactoryOptions {
   planner?: Planner;
   workerPool?: IWorkerPool;
   sessionManager?: ISessionFileManager;
-  config?: Partial<OrchestratorConfig>;
+  orchestratorConfig?: Partial<OrchestratorConfig>;
 
   // === WorkerAgent 注入（可选）===
   workDir?: string;
@@ -311,3 +311,4 @@ export const defaultRegistry = new FactoryRegistry({
   allowOverride: true,
   useStubFallback: true,
 });
+

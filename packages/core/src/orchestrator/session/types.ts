@@ -367,6 +367,27 @@ export interface InterventionFile {
 // ============================================================================
 
 /**
+ * selective sync 写入 sharedKnowledge 的单条记录
+ */
+export interface SyncLogEntry {
+  subtaskId: string;
+  workerId: string;
+  objective: string;
+  updatedAt: number;
+  modifiedFiles?: string[];
+  decisions?: Array<{ type: string; reason: string; approved?: boolean }>;
+  output?: string;
+}
+
+/**
+ * 共享知识数据（允许扩展字段）
+ */
+export interface SharedKnowledgeData {
+  syncLog?: SyncLogEntry[];
+  [key: string]: unknown;
+}
+
+/**
  * 共享上下文文件内容 (context.json)
  */
 export interface SharedContextFile {
@@ -379,7 +400,7 @@ export interface SharedContextFile {
   /** 共享知识 */
   sharedKnowledge: {
     /** 键值对存储 */
-    data: Record<string, unknown>;
+    data: SharedKnowledgeData;
     /** 最后更新时间 */
     updatedAt: number;
   };
@@ -1040,4 +1061,3 @@ export interface ISessionFileManager {
    */
   close(): Promise<void>;
 }
-

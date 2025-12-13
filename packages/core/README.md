@@ -10,32 +10,29 @@ bun add @tachikoma/core
 
 ## 模块
 
-| 模块           | 描述                            | 状态      |
-| -------------- | ------------------------------- | --------- |
-| `types`        | 核心类型定义                    | ✅ 完成   |
-| `config`       | 配置管理与环境覆盖              | ✅ 完成   |
-| `factories`    | 工厂函数与依赖注入              | ✅ 完成   |
-| `abstracts`    | 抽象基类实现                    | ✅ 完成   |
-| `planner`      | LLM 规划器（任务分解与委托）    | ✅ 完成   |
-| `orchestrator` | 统筹者（plan→assign→aggregate） | ✅ 完成   |
-| `session`      | 共享文件系统协调机制            | ✅ 完成   |
-| `checkpoint`   | 检查点与任务恢复                | ✅ 完成   |
-| `worker`       | Worker 后端（混合架构）         | ✅ 完成   |
-| `prompt`       | Prompt 上下文工程（内部能力）   | ✅ 完成   |
-| `sandbox`      | 沙盒管理（隔离执行）            | ✅ 完成   |
-| `agents`       | 智能体实现（工作者等）          | ✅ 完成   |
-| `tools`        | 工具系统（MCP兼容）             | ✅ 完成   |
-| `mcp`          | MCP 集成                        | 🚧 待实现 |
+| 模块           | 描述                            | 状态    |
+| -------------- | ------------------------------- | ------- |
+| `types`        | 核心类型定义                    | ✅ 完成 |
+| `config`       | 配置管理与环境覆盖              | ✅ 完成 |
+| `factories`    | 工厂函数与依赖注入              | ✅ 完成 |
+| `abstracts`    | 抽象基类实现                    | ✅ 完成 |
+| `planner`      | LLM 规划器（任务分解与委托）    | ✅ 完成 |
+| `orchestrator` | 统筹者（plan→assign→aggregate） | ✅ 完成 |
+| `session`      | 共享文件系统协调机制            | ✅ 完成 |
+| `checkpoint`   | 检查点与任务恢复                | ✅ 完成 |
+| `worker`       | Worker 后端（混合架构）         | ✅ 完成 |
+| `prompt`       | Prompt 上下文工程（内部能力）   | ✅ 完成 |
+| `sandbox`      | 沙盒管理（隔离执行）            | ✅ 完成 |
+| `agents`       | 智能体实现（工作者等）          | ✅ 完成 |
+| `tools`        | 工具系统（MCP兼容）             | ✅ 完成 |
+| `mcp`          | MCP 集成（客户端/发现/路由）    | ✅ 完成 |
 
-## MVP 已知限制
+## 已知限制
 
-- Claude Agent
-  SDK 模式下，Tachikoma 自有工具的 MCP 桥接尚未实现，必要时请强制使用通用后端或接受工具不可用。
 - 沙盒隔离仅对 `isCommandBased: true` 的工具通过 `sandbox.runCommand`
   生效；非命令型 JS 工具在沙盒降级/不可用时仍在宿主进程执行，可开启 `strictSandbox` 拒绝此类工具。
 - 可观测性为轻量 Console/内存实现，未接 OTLP/Prometheus；traceId 主要在 WorkerExecutor 生成，跨层追踪需后续透传。
 - 审批文件协议需 Orchestrator 写入/清理，未配置回调时按默认决策超时处理。
-- MCP 能力、工具库与具体 Agents 仍在建设中，属于后续迭代范围。
 
 ## 核心流程：plan → assign → monitor → aggregate
 
