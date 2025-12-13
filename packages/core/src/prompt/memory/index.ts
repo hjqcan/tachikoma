@@ -50,3 +50,23 @@ export {
   type ContextSnapshot,
 } from './working-memory';
 
+// ============================================================================
+// 向量存储
+// ============================================================================
+
+export type {
+  Embedding,
+  VectorEntry,
+  VectorSearchResult,
+  IEmbeddingProvider,
+  IVectorStore,
+  InMemoryVectorStoreConfig,
+} from './vector-store';
+
+export {
+  InMemoryVectorStore,
+  SimpleEmbeddingProvider,
+  DEFAULT_VECTOR_STORE_CONFIG,
+  createInMemoryVectorStore,
+  createSimpleEmbeddingProvider,
+} from './vector-store';
