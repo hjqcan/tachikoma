@@ -5,8 +5,6 @@
  * 通过 LLMClient + Sandbox 实现工具调用循环
  */
 
-import { basename } from 'node:path';
-
 import type {
   IWorkerBackend,
   WorkerBackendType,
@@ -42,7 +40,6 @@ import {
   type ContextMessage,
   type PromptContextEngineDependencies,
   // 项目上下文注入
-  type ProjectContext,
   type ProjectContextInjector,
   createProjectContextInjector,
 } from '../../prompt';
@@ -798,17 +795,12 @@ export class GenericAgentBackend implements IWorkerBackend {
     // 注入项目上下文（TACHIKOMA.md 等）
     // 注意：必须在 addMessage(user) 之前调用，确保 system 消息在前
     try {
-      const projectContext = await this.projectContextInjector.getProjectContext(workDir);
+      // 每个任务开始都重新加载（避免缓存导致上下文变更不生效）
+      this.projectContextInjector.clearCache();
 
-      if (projectContext.merged) {
-        // 直接添加 system 消息，确保顺序正确
-        const projectMessage: ContextMessage = {
-          id: 'project-context',
-          role: 'system',
-          content: this.formatProjectContext(projectContext),
-          timestamp: Date.now(),
-          format: 'full',
-        };
+      const injected = await this.projectContextInjector.injectProjectContext([], workDir);
+      const projectMessage = injected.find((m) => m.id === 'project-context');
+      if (projectMessage) {
         context.addMessage(projectMessage);
         console.debug('[GenericAgentBackend] Injected project context from:', workDir);
       }
@@ -1723,29 +1715,6 @@ When the task is complete, provide a final summary of what was accomplished.`));
   Input schema: ${schemaStr}`;
       })
       .join('\n\n');
-  }
-
-  /**
-   * 格式化项目上下文为 system 消息内容
-   */
-  private formatProjectContext(context: ProjectContext): string {
-    const parts = ['## Project Context'];
-
-    if (context.metadata.projectLevel) {
-      parts.push(`\n_Loaded from: ${basename(context.metadata.projectLevel)}_`);
-    }
-
-    if (context.metadata.parentLevels > 0) {
-      parts.push(`\n_Includes ${context.metadata.parentLevels} parent config(s)_`);
-    }
-
-    if (context.metadata.hasGlobal) {
-      parts.push('\n_Includes global config_');
-    }
-
-    parts.push('\n' + context.merged);
-
-    return parts.join('\n');
   }
 
   /**

@@ -124,7 +124,7 @@ export interface InMemoryVectorStoreConfig {
    *
    * - cosine: 余弦相似度 (0-1)，最常用
    * - euclidean: 欧几里得距离转换为相似度 (0-1)
-   * - dot: 点积，要求输入向量已归一化，否则分数语义不确定
+   * - dot: 点积相似度（内部会先做归一化再映射到 0-1）
    */
   similarityMethod: 'cosine' | 'euclidean' | 'dot';
 
@@ -260,14 +260,21 @@ export class InMemoryVectorStore implements IVectorStore {
     if (a.length !== b.length) return 0;
 
     let product = 0;
+    let normA = 0;
+    let normB = 0;
     for (let i = 0; i < a.length; i++) {
-      product += (a[i] ?? 0) * (b[i] ?? 0);
+      const av = a[i] ?? 0;
+      const bv = b[i] ?? 0;
+      product += av * bv;
+      normA += av * av;
+      normB += bv * bv;
     }
 
-    // 注意：此方法假定向量已归一化，结果在 [-1, 1] 范围
-    // 将其映射到 [0, 1] 以保持与其他方法一致的接口
-    // 如果向量未归一化，分数可能被 clamp 到 0 或 1
-    return Math.max(0, Math.min(1, (product + 1) / 2));
+    // 先归一化到 cosine，再映射到 [0, 1]，以保持与其他方法一致的接口
+    const denom = Math.sqrt(normA) * Math.sqrt(normB);
+    if (denom === 0) return 0;
+    const cosine = product / denom; // [-1, 1] ideally
+    return Math.max(0, Math.min(1, (cosine + 1) / 2));
   }
 }
 
