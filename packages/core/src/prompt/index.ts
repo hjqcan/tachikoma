@@ -102,11 +102,50 @@ export {
 // 缓存优化
 // ============================================================================
 
+// 缓存类型
+export type {
+  ProviderCacheCapability,
+  CacheControlType,
+  CachedMessage,
+  ICacheStrategy,
+  LocalCacheConfig,
+  CacheEntry,
+  CacheMetrics,
+} from './cache';
+
+// 缓存配置和工具
 export {
+  DEFAULT_LOCAL_CACHE_CONFIG,
+  createEmptyCacheMetrics,
+  PROVIDER_CACHE_CAPABILITIES,
+  getProviderCacheCapability,
+  inferProviderFromModel,
+  adaptMessages,
+  LocalPromptCache,
+  createLocalPromptCache,
+  DefaultCacheStrategy,
+  SmartCacheStrategy,
+  createDefaultCacheStrategy,
+  createSmartCacheStrategy,
+  // 向后兼容
   PrefixOptimizer,
   createPrefixOptimizer,
   CACHE_BREAKPOINT_MARKER,
 } from './cache';
+
+// ============================================================================
+// 自动上下文管理
+// ============================================================================
+
+export {
+  AutoContextManager,
+  SmartCompactionDecider,
+  createAutoContextManager,
+  createSmartCompactionDecider,
+  DEFAULT_AUTO_CONTEXT_CONFIG,
+  type AutoContextConfig,
+  type AutoContextMetrics,
+} from './auto-manager';
 
 // ============================================================================
 // 记忆系统
@@ -128,3 +167,24 @@ export {
   defaultTokenEstimator,
   estimateTokens,
 } from './token-estimator';
+
+// ============================================================================
+// 项目上下文
+// ============================================================================
+
+export {
+  // 类型
+  PROJECT_CONTEXT_FILES,
+  type ContextLevel,
+  type ProjectContextFile,
+  type ProjectContext,
+  type ProjectContextMetadata,
+  type ProjectContextLoaderConfig,
+  DEFAULT_PROJECT_CONTEXT_CONFIG,
+  // 类
+  ProjectContextLoader,
+  ProjectContextInjector,
+  // 工厂函数
+  createProjectContextLoader,
+  createProjectContextInjector,
+} from './project';
