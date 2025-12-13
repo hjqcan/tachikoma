@@ -10,15 +10,14 @@ import {
   DuplicateRegistrationError,
   createAgent,
   createSandbox,
-  createRegisteredContextManager,
-  createContextManager,
+  createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
   createPlanner,
   createMemoryAgent,
   StubAgent,
   StubSandbox,
-  StubContextManager,
+  StubConversationContextManager,
   setGlobalConfig,
   resetGlobalConfig,
 } from '../src/factories';
@@ -119,14 +118,14 @@ describe('FactoryRegistry', () => {
     });
   });
 
-  describe('ContextManager 注册', () => {
-    it('应正确注册 ContextManager 工厂', () => {
+  describe('ConversationContextManager 注册', () => {
+    it('应正确注册 ConversationContextManager 工厂', () => {
       const factory = (sessionId: string) =>
-        new StubContextManager(sessionId, DEFAULT_CONFIG.context);
+        new StubConversationContextManager(sessionId, DEFAULT_CONFIG.context);
 
-      registry.registerContextManager(factory);
+      registry.registerConversationContextManager(factory);
 
-      expect(registry.hasContextManager()).toBe(true);
+      expect(registry.hasConversationContextManager()).toBe(true);
     });
   });
 
@@ -137,17 +136,17 @@ describe('FactoryRegistry', () => {
       const sandboxFactory = (id: string) =>
         new StubSandbox(id, DEFAULT_CONFIG.sandbox);
       const contextFactory = (sessionId: string) =>
-        new StubContextManager(sessionId, DEFAULT_CONFIG.context);
+        new StubConversationContextManager(sessionId, DEFAULT_CONFIG.context);
 
       registry.registerAgent('worker', agentFactory);
       registry.registerSandbox(sandboxFactory);
-      registry.registerContextManager(contextFactory);
+      registry.registerConversationContextManager(contextFactory);
 
       registry.clear();
 
       expect(registry.hasAgent('worker')).toBe(false);
       expect(registry.hasSandbox()).toBe(false);
-      expect(registry.hasContextManager()).toBe(false);
+      expect(registry.hasConversationContextManager()).toBe(false);
     });
 
     it('getStatus 应返回正确状态', () => {
@@ -159,7 +158,7 @@ describe('FactoryRegistry', () => {
       const status = registry.getStatus();
       expect(status.agents).toContain('worker');
       expect(status.hasSandbox).toBe(false);
-      expect(status.hasContextManager).toBe(false);
+      expect(status.hasConversationContextManager).toBe(false);
     });
   });
 });
@@ -235,38 +234,23 @@ describe('createSandbox', () => {
   });
 });
 
-describe('createRegisteredContextManager', () => {
+describe('createRegisteredConversationContextManager', () => {
   beforeEach(() => {
     resetGlobalConfig();
     defaultRegistry.clear();
   });
 
-  it('应创建 Stub ContextManager（显式启用 stub）', () => {
-    const contextManager = createRegisteredContextManager({ useStub: true });
+  it('应创建 Stub ConversationContextManager（显式启用 stub）', () => {
+    const contextManager = createRegisteredConversationContextManager({ useStub: true });
 
-    expect(contextManager).toBeInstanceOf(StubContextManager);
+    expect(contextManager).toBeInstanceOf(StubConversationContextManager);
   });
 
   it('应使用自定义会话 ID', () => {
-    const contextManager = createRegisteredContextManager({ sessionId: 'session-123', useStub: true });
+    const contextManager = createRegisteredConversationContextManager({ sessionId: 'session-123', useStub: true });
     const context = contextManager.getContext();
 
     expect(context.sessionId).toBe('session-123');
-  });
-});
-
-describe('createContextManager (alias)', () => {
-  beforeEach(() => {
-    resetGlobalConfig();
-    defaultRegistry.clear();
-  });
-
-  it('应作为 createRegisteredContextManager 的兼容别名', () => {
-    const ctxFromAlias = createContextManager({ useStub: true, sessionId: 'alias-1' });
-    const ctxFromRegistered = createRegisteredContextManager({ useStub: true, sessionId: 'alias-1' });
-
-    expect(ctxFromAlias.getContext().sessionId).toBe('alias-1');
-    expect(ctxFromAlias.constructor).toBe(ctxFromRegistered.constructor);
   });
 });
 
@@ -408,9 +392,9 @@ describe('StubSandbox', () => {
   });
 });
 
-describe('StubContextManager', () => {
+describe('StubConversationContextManager', () => {
   it('应正确添加消息', () => {
-    const contextManager = new StubContextManager(
+    const contextManager = new StubConversationContextManager(
       'session-1',
       DEFAULT_CONFIG.context
     );
@@ -429,7 +413,7 @@ describe('StubContextManager', () => {
   });
 
   it('应正确计算 token 数量', () => {
-    const contextManager = new StubContextManager(
+    const contextManager = new StubConversationContextManager(
       'session-1',
       DEFAULT_CONFIG.context
     );
@@ -447,7 +431,7 @@ describe('StubContextManager', () => {
   });
 
   it('compact 应移除旧消息', () => {
-    const contextManager = new StubContextManager(
+    const contextManager = new StubConversationContextManager(
       'session-1',
       DEFAULT_CONFIG.context
     );
@@ -471,7 +455,7 @@ describe('StubContextManager', () => {
   });
 
   it('summarize 应返回摘要', () => {
-    const contextManager = new StubContextManager(
+    const contextManager = new StubConversationContextManager(
       'session-1',
       DEFAULT_CONFIG.context
     );
@@ -520,4 +504,3 @@ describe('全局配置', () => {
     expect(agent.config.model).toBe('claude-opus-4');
   });
 });
-

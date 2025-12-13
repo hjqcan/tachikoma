@@ -14,13 +14,13 @@
       "import": "./dist/agents/index.js",
       "types": "./dist/agents/index.d.ts"
     },
-    "./context": {
-      "import": "./dist/context/index.js",
-      "types": "./dist/context/index.d.ts"
-    },
     "./tools": {
       "import": "./dist/tools/index.js",
       "types": "./dist/tools/index.d.ts"
+    },
+    "./tools/browser": {
+      "import": "./dist/tools/browser.js",
+      "types": "./dist/tools/browser.d.ts"
     },
     "./sandbox": {
       "import": "./dist/sandbox/index.js",
@@ -33,6 +33,10 @@
     "./memory": {
       "import": "./dist/memory/index.js",
       "types": "./dist/memory/index.d.ts"
+    },
+    "./internal/prompt": {
+      "import": "./dist/internal/prompt/index.js",
+      "types": "./dist/internal/prompt/index.d.ts"
     }
   },
   "scripts": {

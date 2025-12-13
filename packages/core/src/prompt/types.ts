@@ -376,13 +376,13 @@ export interface AgentNotes {
 }
 
 // ============================================================================
-// 上下文管理器接口
+// Prompt 上下文工程配置与接口（内部模块）
 // ============================================================================
 
 /**
- * 上下文管理器配置
+ * Prompt 上下文工程配置
  */
-export interface ContextManagerConfig {
+export interface PromptContextConfig {
   /** 阈值配置 */
   thresholds: ContextThresholds;
   /** 压缩配置 */
@@ -402,9 +402,9 @@ export interface ContextManagerConfig {
 }
 
 /**
- * 上下文管理器接口
+ * Prompt 上下文工程接口
  */
-export interface IContextManager {
+export interface IPromptContextEngine {
   // ========================================
   // 消息管理
   // ========================================
@@ -666,13 +666,13 @@ export function validateThresholds(thresholds: ContextThresholds): void {
 }
 
 /**
- * 创建默认上下文管理器配置
+ * 创建默认 Prompt 上下文工程配置
  * 
  * 注意：返回新创建的配置对象副本，修改不会影响默认值
  */
-export function createDefaultContextConfig(
+export function createDefaultPromptConfig(
   workDir: string
-): ContextManagerConfig {
+): PromptContextConfig {
   return {
     thresholds: { ...DEFAULT_THRESHOLDS },
     compaction: { ...DEFAULT_COMPACTION_CONFIG },
@@ -691,7 +691,7 @@ export function createDefaultContextConfig(
 }
 
 /**
- * 创建模型感知的上下文管理器配置
+ * 创建模型感知的 Prompt 上下文工程配置
  * 
  * 自动根据模型的上下文窗口大小计算 hardLimit
  * 
@@ -703,23 +703,23 @@ export function createDefaultContextConfig(
  * @example
  * ```ts
  * // 创建 Claude 配置（hardLimit = 200K × 0.8 = 160K）
- * const config = createModelAwareConfig('claude-3-sonnet', '/tmp/workspace');
+ * const config = createModelAwarePromptConfig('claude-3-sonnet', '/tmp/workspace');
  * 
  * // 创建 GPT-4 配置（hardLimit = 128K × 0.8 = 102K）
- * const config = createModelAwareConfig('gpt-4o', '/tmp/workspace');
+ * const config = createModelAwarePromptConfig('gpt-4o', '/tmp/workspace');
  * 
  * // 使用自定义阈值
- * const config = createModelAwareConfig('gemini-1.5-pro', '/tmp/workspace', {
+ * const config = createModelAwarePromptConfig('gemini-1.5-pro', '/tmp/workspace', {
  *   softLimit: 500_000,
  *   hardLimit: 800_000,
  * });
  * ```
  */
-export function createModelAwareConfig(
+export function createModelAwarePromptConfig(
   modelId: string,
   workDir: string,
   thresholdOverrides?: Partial<ContextThresholds>
-): ContextManagerConfig {
+): PromptContextConfig {
   const thresholds = computeModelAwareThresholds(modelId, thresholdOverrides);
   
   // 验证配置

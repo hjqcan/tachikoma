@@ -1,5 +1,5 @@
 /**
- * Context 模块集成测试
+ * Prompt 模块集成测试（内部）
  *
  * 测试 Task 8 的上下文工程功能：
  * - 阈值配置与模型感知
@@ -10,9 +10,9 @@
 
 import { describe, test, expect } from 'bun:test';
 import {
-  createContextManager,
-  createDefaultContextConfig,
-  createModelAwareConfig,
+  createPromptContextEngine,
+  createDefaultPromptConfig,
+  createModelAwarePromptConfig,
   computeModelAwareThresholds,
   validateThresholds,
   getModelContextLimit,
@@ -21,7 +21,7 @@ import {
   createTokenEstimator,
   estimateTokens,
   type ContextMessage,
-} from '../src/context';
+} from '../src/prompt';
 
 // ============================================================================
 // 8.2 阈值配置与模型感知测试
@@ -93,8 +93,8 @@ describe('阈值配置与模型感知', () => {
     })).toThrow();
   });
 
-  test('createModelAwareConfig 应创建完整配置', () => {
-    const config = createModelAwareConfig('claude-3-sonnet', '/tmp/test');
+  test('createModelAwarePromptConfig 应创建完整配置', () => {
+    const config = createModelAwarePromptConfig('claude-3-sonnet', '/tmp/test');
     
     expect(config.thresholds).toBeDefined();
     expect(config.compaction).toBeDefined();
@@ -148,18 +148,18 @@ describe('Token 估算器', () => {
 // 8.4 GenericAgentBackend 集成测试（基础）
 // ============================================================================
 
-describe('ContextManager 基础功能', () => {
-  test('createContextManager 应创建实例', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+describe('PromptContextEngine 基础功能', () => {
+  test('createPromptContextEngine 应创建实例', () => {
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     expect(manager).toBeDefined();
     expect(manager.getContext()).toEqual([]);
   });
 
   test('addMessage 应正确添加消息', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     const message: ContextMessage = {
       id: 'test-1',
@@ -177,12 +177,12 @@ describe('ContextManager 基础功能', () => {
   });
 
   test('needsReduction 应基于阈值判断', () => {
-    const config = createDefaultContextConfig('/tmp');
+    const config = createDefaultPromptConfig('/tmp');
     // 设置很低的阈值以便测试
     config.thresholds.softLimit = 10;
     config.thresholds.hardLimit = 20;
     
-    const manager = createContextManager(config);
+    const manager = createPromptContextEngine(config);
     
     // 初始应该不需要压缩
     expect(manager.needsReduction()).toBe(false);
@@ -200,8 +200,8 @@ describe('ContextManager 基础功能', () => {
   });
 
   test('笔记系统应工作', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     // 添加待办
     manager.addTodo('Complete the task');
@@ -216,11 +216,11 @@ describe('ContextManager 基础功能', () => {
   });
 
   test('自定义 tokenEstimator 应生效', () => {
-    const config = createDefaultContextConfig('/tmp');
+    const config = createDefaultPromptConfig('/tmp');
     // 添加自定义估算器（固定返回 1）
     config.tokenEstimator = () => 1;
     
-    const manager = createContextManager(config);
+    const manager = createPromptContextEngine(config);
     
     // 任何内容都应该估算为 1 token
     const tokens = manager.estimateTokens('This is a long text');
@@ -234,8 +234,8 @@ describe('ContextManager 基础功能', () => {
 
 describe('Memory 系统接口', () => {
   test('shouldRetrieveMemories 无 memoryProvider 应返回 false', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     // 没有配置 memoryProvider，始终返回 false
     expect(manager.shouldRetrieveMemories()).toBe(false);
@@ -253,8 +253,8 @@ describe('Memory 系统接口', () => {
   });
 
   test('getRetrievalContext 应返回检索上下文', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     manager.addMessage({
       id: 'user-1',
@@ -269,8 +269,8 @@ describe('Memory 系统接口', () => {
   });
 
   test('injectRetrievedMemories 应注入记忆', () => {
-    const config = createDefaultContextConfig('/tmp');
-    const manager = createContextManager(config);
+    const config = createDefaultPromptConfig('/tmp');
+    const manager = createPromptContextEngine(config);
     
     manager.injectRetrievedMemories([
       {

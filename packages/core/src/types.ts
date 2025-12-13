@@ -504,9 +504,12 @@ export interface ConversationContext {
 }
 
 /**
- * 上下文管理器接口
+ * 对话上下文管理器接口（对外 API）
+ *
+ * 管理“对话消息 + 工具调用记录 + token 估算 + 压缩/摘要”。
+ * 注意：这是会话/对话层的容器，不包含 prompt 级别的上下文工程策略。
  */
-export interface ContextManager {
+export interface ConversationContextManager {
   /** 获取当前上下文 */
   getContext(): ConversationContext;
   /** 添加消息 */
@@ -604,7 +607,7 @@ export interface ModelConfig {
 /**
  * 上下文阈值配置
  */
-export interface ContextThresholds {
+export interface ConversationContextThresholds {
   /** 硬性上限 */
   hardLimit: number;
   /** 腐烂前阈值 */
@@ -722,8 +725,8 @@ export interface Config {
     worker: ModelConfig;
     planner: ModelConfig;
   };
-  /** 上下文配置 */
-  context: ContextThresholds;
+  /** 对话上下文阈值配置 */
+  context: ConversationContextThresholds;
   /** 沙盒配置 */
   sandbox: SandboxConfig;
   /** AgentOps 配置 */

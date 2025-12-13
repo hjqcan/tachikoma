@@ -15,7 +15,7 @@ import { createObservability } from '../observability';
 import { SessionStore } from './session-store';
 import { IntentAnalyzer } from './intent-analyzer';
 import { FeedbackLoop } from './feedback-loop';
-import { ConversationContextManager } from './context-manager';
+import { ConversationPromptBuilder } from './prompt-builder';
 import {
   UserIntent,
   FeedbackAction,
@@ -38,7 +38,7 @@ export class ConversationalRunner {
   private readonly sessionStore: SessionStore;
   private readonly intentAnalyzer: IntentAnalyzer;
   private readonly feedbackLoop: FeedbackLoop;
-  private readonly contextManager: ConversationContextManager;
+  private readonly promptBuilder: ConversationPromptBuilder;
   private executor: WorkerExecutor | null = null;
 
   constructor(config: ConversationalRunnerConfig) {
@@ -46,7 +46,7 @@ export class ConversationalRunner {
     this.sessionStore = new SessionStore(config.sessionDir);
     this.intentAnalyzer = new IntentAnalyzer();
     this.feedbackLoop = new FeedbackLoop();
-    this.contextManager = new ConversationContextManager(
+    this.promptBuilder = new ConversationPromptBuilder(
       config.maxHistoryMessages ? { maxMessages: config.maxHistoryMessages } : {}
     );
   }
@@ -241,7 +241,7 @@ export class ConversationalRunner {
     const target = entities.target as string | undefined;
     const newValue = entities.newValue as string | undefined;
 
-    const modifyPrompt = this.contextManager.buildModifyPrompt(
+    const modifyPrompt = this.promptBuilder.buildModifyPrompt(
       session,
       target,
       newValue
@@ -333,7 +333,7 @@ export class ConversationalRunner {
   private async *handleQuery(
     session: SessionState
   ): AsyncGenerator<StreamEvent> {
-    const context = this.contextManager.buildContext(session);
+    const context = this.promptBuilder.buildContext(session);
 
     yield {
       type: 'complete',

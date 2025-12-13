@@ -9,7 +9,7 @@ import type { Sandbox, SandboxConfig } from '../sandbox';
 import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
 import type { InterventionFile } from '../orchestrator/session/types';
-import type { ContextManagerConfig } from '../context';
+import type { PromptContextConfig } from '../prompt';
 import type { SkillDiscoveryConfig } from '../skills';
 import type { MemoryConfig } from '../memory';
 
@@ -553,12 +553,12 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
   /** 工作目录（用于上下文卸载等） */
   workDir?: string;
   /**
-   * 上下文管理器配置
+   * Prompt 上下文工程配置（内部能力）
    *
-   * 如果提供，将配置 ContextManager 的阈值、压缩策略等
+   * 如果提供，将配置 PromptContextEngine 的阈值、压缩策略等
    * 支持自动压缩/摘要、KV 缓存优化和笔记系统
    */
-  contextManagerConfig?: ContextManagerConfig;
+  promptConfig?: PromptContextConfig;
   /**
    * Skills 发现配置
    *

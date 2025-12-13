@@ -1,12 +1,12 @@
 /**
- * ContextManager 抽象基类
+ * ConversationContextManager 抽象基类
  *
- * 提供 ContextManager 接口的基础实现，处理通用字段和上下文管理逻辑
+ * 提供 ConversationContextManager 接口的基础实现，处理通用字段和上下文管理逻辑
  */
 
 import type {
-  ContextManager,
-  ContextThresholds,
+  ConversationContextManager,
+  ConversationContextThresholds,
   ConversationContext,
   ConversationSummary,
   Message,
@@ -20,9 +20,9 @@ import type {
 // ============================================================================
 
 /**
- * ContextManager 生命周期钩子
+ * ConversationContextManager 生命周期钩子
  */
-export interface ContextManagerHooks {
+export interface ConversationContextManagerHooks {
   /** 添加消息后调用 */
   onMessageAdded?(message: Message): void;
   /** 执行压缩前调用 */
@@ -36,9 +36,9 @@ export interface ContextManagerHooks {
 }
 
 /**
- * ContextManager 日志上下文
+ * ConversationContextManager 日志上下文
  */
-export interface ContextManagerLogContext {
+export interface ConversationContextManagerLogContext {
   sessionId: string;
   messageCount: number;
   tokenCount: number;
@@ -57,9 +57,9 @@ export interface ContextManagerLogContext {
 export type TokenEstimator = (text: string) => number;
 
 /**
- * ContextManager 选项
+ * ConversationContextManager 选项
  */
-export interface ContextManagerOptions {
+export interface ConversationContextManagerOptions {
   /** Token 估算函数（可选，默认使用 4字符/token 估算） */
   tokenEstimator?: TokenEstimator;
 }
@@ -86,7 +86,7 @@ export const defaultTokenEstimator: TokenEstimator = (text: string) => Math.ceil
 // ============================================================================
 
 /**
- * ContextManager 抽象基类
+ * ConversationContextManager 抽象基类
  *
  * 提供通用的上下文管理、消息存储和阈值监控
  *
@@ -96,17 +96,17 @@ export const defaultTokenEstimator: TokenEstimator = (text: string) => Math.ceil
  * import { encoding_for_model } from 'tiktoken';
  * 
  * const enc = encoding_for_model('gpt-4');
- * const manager = new SimpleContextManager('session-1', thresholds, {
+ * const manager = new SimpleConversationContextManager('session-1', thresholds, {
  *   tokenEstimator: (text) => enc.encode(text).length,
  * });
  * ```
  */
-export abstract class BaseContextManager implements ContextManager {
+export abstract class BaseConversationContextManager implements ConversationContextManager {
   /** 会话 ID */
   protected readonly sessionId: string;
 
   /** 阈值配置 */
-  protected readonly thresholds: ContextThresholds;
+  protected readonly thresholds: ConversationContextThresholds;
 
   /** Token 估算函数 */
   protected readonly tokenEstimator: TokenEstimator;
@@ -124,12 +124,12 @@ export abstract class BaseContextManager implements ContextManager {
   protected summary?: ConversationSummary;
 
   /** 生命周期钩子 */
-  protected hooks: ContextManagerHooks = {};
+  protected hooks: ConversationContextManagerHooks = {};
 
   constructor(
     sessionId: string,
-    thresholds: ContextThresholds,
-    options: ContextManagerOptions = {}
+    thresholds: ConversationContextThresholds,
+    options: ConversationContextManagerOptions = {}
   ) {
     this.sessionId = sessionId;
     this.thresholds = thresholds;
@@ -230,7 +230,7 @@ export abstract class BaseContextManager implements ContextManager {
   /**
    * 获取日志上下文
    */
-  getLogContext(): ContextManagerLogContext {
+  getLogContext(): ConversationContextManagerLogContext {
     return {
       sessionId: this.sessionId,
       messageCount: this.messages.length,
@@ -247,7 +247,7 @@ export abstract class BaseContextManager implements ContextManager {
   /**
    * 设置生命周期钩子
    */
-  setHooks(hooks: ContextManagerHooks): void {
+  setHooks(hooks: ConversationContextManagerHooks): void {
     this.hooks = { ...this.hooks, ...hooks };
   }
 
@@ -319,15 +319,15 @@ export abstract class BaseContextManager implements ContextManager {
 // ============================================================================
 
 /**
- * 简单的 ContextManager 实现
+ * 简单的 ConversationContextManager 实现
  *
  * 提供基础的压缩和摘要功能
  */
-export class SimpleContextManager extends BaseContextManager {
+export class SimpleConversationContextManager extends BaseConversationContextManager {
   constructor(
     sessionId: string,
-    thresholds: ContextThresholds,
-    options?: ContextManagerOptions
+    thresholds: ConversationContextThresholds,
+    options?: ConversationContextManagerOptions
   ) {
     super(sessionId, thresholds, options);
   }

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   BaseAgent,
   BaseSandbox,
-  SimpleContextManager,
+  SimpleConversationContextManager,
 } from '../src/abstracts';
 import { DEFAULT_CONFIG } from '../src/config';
 import type {
@@ -17,7 +17,7 @@ import type {
   ExecutionOptions,
   ExecutionResult,
   CommandResult,
-  ContextThresholds,
+  ConversationContextThresholds,
 } from '../src/types';
 
 // ============================================================================
@@ -471,15 +471,15 @@ describe('BaseSandbox', () => {
 });
 
 // ============================================================================
-// SimpleContextManager 测试
+// SimpleConversationContextManager 测试
 // ============================================================================
 
-describe('SimpleContextManager', () => {
-  const thresholds: ContextThresholds = DEFAULT_CONFIG.context;
+describe('SimpleConversationContextManager', () => {
+  const thresholds: ConversationContextThresholds = DEFAULT_CONFIG.context;
 
   describe('消息管理', () => {
     it('应正确添加消息', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       manager.addMessage({
         id: 'msg-1',
@@ -493,7 +493,7 @@ describe('SimpleContextManager', () => {
     });
 
     it('应为消息自动生成 ID', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       manager.addMessage({
         id: '',
@@ -511,7 +511,7 @@ describe('SimpleContextManager', () => {
 
   describe('Token 计数', () => {
     it('应正确计算 token 数量', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       // 100 字符 ≈ 25 tokens
       manager.addMessage({
@@ -527,7 +527,7 @@ describe('SimpleContextManager', () => {
 
   describe('压缩', () => {
     it('aggressive 压缩应保留 5 条消息', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       for (let i = 0; i < 20; i++) {
         manager.addMessage({
@@ -544,7 +544,7 @@ describe('SimpleContextManager', () => {
     });
 
     it('balanced 压缩应保留 10 条消息', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       for (let i = 0; i < 20; i++) {
         manager.addMessage({
@@ -561,7 +561,7 @@ describe('SimpleContextManager', () => {
     });
 
     it('应保留系统消息', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       manager.addMessage({
         id: 'system',
@@ -589,7 +589,7 @@ describe('SimpleContextManager', () => {
 
   describe('摘要', () => {
     it('应生成摘要', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       manager.addMessage({
         id: 'msg-1',
@@ -613,7 +613,7 @@ describe('SimpleContextManager', () => {
 
   describe('清空', () => {
     it('应清空所有数据', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
 
       manager.addMessage({
         id: 'msg-1',
@@ -632,7 +632,7 @@ describe('SimpleContextManager', () => {
 
   describe('生命周期钩子', () => {
     it('应调用 onMessageAdded 钩子', () => {
-      const manager = new SimpleContextManager('session-1', thresholds);
+      const manager = new SimpleConversationContextManager('session-1', thresholds);
       let messageContent = '';
 
       manager.setHooks({
@@ -653,11 +653,11 @@ describe('SimpleContextManager', () => {
 
     it('应调用 onThresholdReached 钩子', () => {
       // 使用较小的阈值进行测试
-      const smallThresholds: ContextThresholds = {
+      const smallThresholds: ConversationContextThresholds = {
         ...thresholds,
         compactionTrigger: 100,
       };
-      const manager = new SimpleContextManager('session-1', smallThresholds);
+      const manager = new SimpleConversationContextManager('session-1', smallThresholds);
       let thresholdType = '';
 
       manager.setHooks({
@@ -678,4 +678,3 @@ describe('SimpleContextManager', () => {
     });
   });
 });
-

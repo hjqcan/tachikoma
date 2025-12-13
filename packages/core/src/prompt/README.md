@@ -1,6 +1,8 @@
-# Context Engineering Module
+# Prompt Context Engineering (Internal)
 
-上下文工程模块，实现基于 Manus 最佳实践的智能上下文管理。
+Prompt 上下文工程模块：实现基于 Manus 最佳实践的上下文压缩/摘要/卸载、KV 缓存优化与笔记系统。
+
+注意：该模块属于内部 API，不作为 `@tachikoma/core` 的稳定对外 API；如需使用请从 `@tachikoma/core/internal/prompt` 导入。
 
 ## 核心功能
 
@@ -15,21 +17,21 @@
 
 ```typescript
 import {
-  createContextManager,
-  createDefaultContextConfig,
-  createModelAwareConfig,
-} from '@tachikoma/core';
+  createPromptContextEngine,
+  createDefaultPromptConfig,
+  createModelAwarePromptConfig,
+} from '@tachikoma/core/internal/prompt';
 
 // 方式 1：使用默认配置
-const config = createDefaultContextConfig('/path/to/work');
-const manager = createContextManager(config);
+const config = createDefaultPromptConfig('/path/to/work');
+const engine = createPromptContextEngine(config);
 
 // 方式 2：使用模型感知配置
-const config = createModelAwareConfig('claude-3-sonnet', '/path/to/work');
-const manager = createContextManager(config);
+const config2 = createModelAwarePromptConfig('claude-3-sonnet', '/path/to/work');
+const engine2 = createPromptContextEngine(config2);
 
 // 添加消息
-manager.addMessage({
+engine.addMessage({
   id: '1',
   role: 'user',
   content: '...',
@@ -38,18 +40,18 @@ manager.addMessage({
 });
 
 // 检查是否需要缩减
-if (manager.needsReduction()) {
-  await manager.autoReduce();
+if (engine.needsReduction()) {
+  await engine.autoReduce();
 }
 
 // 获取优化后的上下文
-const context = manager.getContext();
+const context = engine.getContext();
 ```
 
 ## 阈值配置
 
 ```typescript
-import { DEFAULT_THRESHOLDS, computeModelAwareThresholds } from '@tachikoma/core';
+import { DEFAULT_THRESHOLDS, computeModelAwareThresholds } from '@tachikoma/core/internal/prompt';
 
 // 默认阈值（Manus 推荐）
 // softLimit: 100,000 tokens - 触发压缩
@@ -64,7 +66,7 @@ const thresholds = computeModelAwareThresholds('claude-3-sonnet');
 ## Token 估算
 
 ```typescript
-import { createTokenEstimator } from '@tachikoma/core';
+import { createTokenEstimator } from '@tachikoma/core/internal/prompt';
 
 // 简单估算器
 const simple = createTokenEstimator('simple');
@@ -73,7 +75,7 @@ const simple = createTokenEstimator('simple');
 const charBased = createTokenEstimator('character-based');
 
 // 自定义估算器
-const config = createDefaultContextConfig('/path');
+const config = createDefaultPromptConfig('/path');
 config.tokenEstimator = (content) => myEstimator(content);
 ```
 
@@ -81,26 +83,27 @@ config.tokenEstimator = (content) => myEstimator(content);
 
 ```typescript
 // 添加待办
-manager.addTodo('完成用户认证模块');
+engine.addTodo('完成用户认证模块');
 
 // 添加发现
-manager.addFinding('发现性能瓶颈在数据库查询');
+engine.addFinding('发现性能瓶颈在数据库查询');
 
 // 获取笔记
-const notes = manager.getNotes();
+const notes = engine.getNotes();
 
 // 注入状态提醒到上下文
-manager.injectStatusReminder();
+engine.injectStatusReminder();
 ```
 
 ## 与 GenericAgentBackend 集成
 
 ```typescript
 import { GenericAgentBackend } from '@tachikoma/core';
+import { createModelAwarePromptConfig } from '@tachikoma/core/internal/prompt';
 
 const backend = new GenericAgentBackend({
   llmClient,
-  contextManagerConfig: createModelAwareConfig('claude-3-sonnet', workDir),
+  promptConfig: createModelAwarePromptConfig('claude-3-sonnet', workDir),
   workDir: '/path/to/work',
 });
 
@@ -113,10 +116,10 @@ const backend = new GenericAgentBackend({
 ## 目录结构
 
 ```
-context/
+prompt/
 ├── index.ts              # 模块入口
 ├── types.ts              # 类型定义
-├── context-manager.ts    # 核心管理器
+├── prompt-engine.ts      # 核心引擎
 ├── token-estimator.ts    # Token 估算器
 ├── strategies/
 │   ├── compaction.ts     # 压缩策略
@@ -130,15 +133,15 @@ context/
 
 ## API 参考
 
-### createContextManager(config, deps?)
+### createPromptContextEngine(config, deps?)
 
-创建上下文管理器实例。
+创建 PromptContextEngine 实例。
 
-### createDefaultContextConfig(workDir)
+### createDefaultPromptConfig(workDir)
 
 创建默认配置。
 
-### createModelAwareConfig(modelId, workDir)
+### createModelAwarePromptConfig(modelId, workDir)
 
 创建模型感知配置。
 

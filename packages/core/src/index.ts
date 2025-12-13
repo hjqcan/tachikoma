@@ -54,12 +54,12 @@ export {
   type AgentFactory,
   type AgentFactoryOptions,
   type SandboxFactory,
-  type ContextManagerFactory,
+  type ConversationContextManagerFactory,
   type RegistryConfig,
   // 创建函数
   createAgent,
   createSandbox,
-  createRegisteredContextManager,
+  createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
   createPlanner,
@@ -68,14 +68,14 @@ export {
   resetGlobalConfig,
   type CreateAgentOptions,
   type CreateSandboxOptions,
-  type CreateContextManagerOptions,
+  type CreateConversationContextManagerOptions,
   // Stub 实现
   StubAgent,
   StubSandbox,
-  StubContextManager,
+  StubConversationContextManager,
   createStubAgent,
   createStubSandbox,
-  createStubContextManager,
+  createStubConversationContextManager,
 } from './factories';
 
 // ============================================================================
@@ -92,11 +92,11 @@ export {
   BaseSandbox,
   type SandboxLifecycleHooks,
   type SandboxLogContext,
-  // ContextManager 基类
-  BaseContextManager,
-  SimpleContextManager,
-  type ContextManagerHooks,
-  type ContextManagerLogContext,
+  // ConversationContextManager 基类
+  BaseConversationContextManager,
+  SimpleConversationContextManager,
+  type ConversationContextManagerHooks,
+  type ConversationContextManagerLogContext,
 } from './abstracts';
 
 // ============================================================================
@@ -274,7 +274,7 @@ export {
   SessionStore,
   IntentAnalyzer,
   FeedbackLoop,
-  ConversationContextManager,
+  ConversationPromptBuilder,
   UserIntent,
   FeedbackAction,
 } from './conversation';
@@ -310,52 +310,11 @@ export {
 } from './mcp';
 
 // ============================================================================
-// 上下文工程模块 (Task 8)
+// Prompt 上下文工程模块
 // ============================================================================
-
-export * as context from './context';
-
-// 常用 Context 类型顶层导出
-export type {
-  ContextMessage,
-  ContextState,
-  ContextThresholds,
-  ContextManagerConfig,
-  IContextManager,
-  CompactionResult,
-  SummarizationResult,
-  StructuredSummary,
-  AgentNotes,
-} from './context';
-
-export {
-  // 上下文管理器核心类
-  ContextManager,
-  createContextManager,
-  createDefaultContextConfig,
-  createModelAwareConfig,
-  DEFAULT_THRESHOLDS,
-  DEFAULT_COMPACTION_CONFIG,
-  DEFAULT_SUMMARIZATION_CONFIG,
-  MODEL_CONTEXT_LIMITS,
-  getModelContextLimit,
-  computeModelAwareThresholds,
-  validateThresholds,
-  NoteManager,
-  createNoteManager,
-  PrefixOptimizer,
-  createPrefixOptimizer,
-  // Token 估算
-  SimpleTokenEstimator,
-  CharacterBasedEstimator,
-  CachedTokenEstimator,
-  createTokenEstimator,
-  defaultTokenEstimator,
-  estimateTokens,
-} from './context';
-
-// Token 估算类型导出
-export type { TokenEstimator, TokenEstimatorType } from './context';
+//
+// 该模块属于 Runtime 内部实现细节，不作为稳定公共 API 从 `@tachikoma/core` 顶层导出。
+// 如确有需要（高级用户/内部包），后续将通过 `@tachikoma/core/internal/prompt` 暴露。
 
 // ============================================================================
 // Skills 模块

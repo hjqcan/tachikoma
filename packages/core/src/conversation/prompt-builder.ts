@@ -1,7 +1,7 @@
 /**
- * Context Manager
+ * Conversation Prompt Builder
  *
- * 管理对话上下文，压缩历史避免超限
+ * 为 ConversationalRunner 构建 LLM Prompt 上下文，压缩历史避免超限
  */
 
 import type { SessionState, ConversationMessage } from './types';
@@ -14,16 +14,16 @@ const DEFAULT_MAX_MESSAGES = 20;
 const SUMMARY_THRESHOLD = 10;
 
 // =============================================================================
-// ContextManager 类
+// PromptBuilder 类
 // =============================================================================
 
 /**
- * 会话上下文管理器
+ * 会话 Prompt 构建器
  * 
  * 用于 ConversationalRunner，管理多轮对话上下文
- * 注意：这是一个轻量级的会话管理器，不要与 context 模块的 ContextManager 混淆
+ * 注意：这是 prompt 拼接器，不是对外暴露的 ConversationContextManager（对话容器）接口。
  */
-export class ConversationContextManager {
+export class ConversationPromptBuilder {
   private readonly maxMessages: number;
 
   constructor(options: { maxMessages?: number } = {}) {

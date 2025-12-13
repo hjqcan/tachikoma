@@ -207,7 +207,7 @@ export class OpenAILLMClient extends BaseLLMClient {
     } = request;
 
     // 过滤 system 消息（因为已经通过 system 参数传递）
-    // 注意：ContextManager 会将 tool 消息转换为 user 消息，因此这里不需要处理 tool 角色
+    // 注意：PromptContextEngine 会将 tool 消息转换为 user 消息，因此这里不需要处理 tool 角色
     const filteredMessages = messages.filter(
       (m) => m.role === 'user' || m.role === 'assistant'
     );

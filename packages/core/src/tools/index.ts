@@ -117,24 +117,13 @@ export { webSearchTool } from './core/web-search';
 export { deepResearchTool } from './core/deep-research';
 export { spawnSubagentTool } from './core/spawn-subagent';
 export { submitResultTool } from './core/submit-result';
-export {
-  browserNavigateTool,
-  browserClickTool,
-  browserInputTool,
-  browserScreenshotTool,
-  browserTools as browserToolsObj,
-} from './core/browser-tools';
+// Browser tools are intentionally NOT exported from the default tools surface.
+// Import from `@tachikoma/core/tools/browser` (or `../tools/browser` internally) when needed.
 
 import { webSearchTool } from './core/web-search';
 import { deepResearchTool } from './core/deep-research';
 import { spawnSubagentTool } from './core/spawn-subagent';
 import { submitResultTool } from './core/submit-result';
-import {
-  browserNavigateTool,
-  browserClickTool,
-  browserInputTool,
-  browserScreenshotTool,
-} from './core/browser-tools';
 
 // 6.8 MCP Layer 3
 export {
@@ -201,19 +190,6 @@ export const networkTools: Tool[] = [
 ];
 
 /**
- * 浏览器工具集（需要 Playwright）
- *
- * ⚠️ 需要安装：
- * bun add playwright && bunx playwright install chromium
- */
-export const browserToolsArray: Tool[] = [
-  browserNavigateTool,
-  browserClickTool,
-  browserInputTool,
-  browserScreenshotTool,
-];
-
-/**
  * MVP 核心工具集（默认导出）
  *
  * 只包含基础工具 + Agent工具，不包含网络/浏览器工具
@@ -225,18 +201,15 @@ export const coreTools: Tool[] = [
 ];
 
 /**
- * 完整工具集（包含所有工具）
+ * 完整工具集（包含基础 + Agent + 网络工具）
  *
- * ⚠️ 使用前请确保：
- * 1. 已安装 Playwright
- * 2. 已配置 SEARCH_API_KEY（如需搜索）
- * 3. 网络访问已启用
+ * ⚠️ 注意：
+ * - 浏览器工具（Playwright）属于可选依赖，请从 `@tachikoma/core/tools/browser` 显式导入并自行合并
  */
 export const allTools: Tool[] = [
   ...baseTools,
   ...agentTools,
   ...networkTools,
-  ...browserToolsArray,
 ];
 
 /**
@@ -244,7 +217,6 @@ export const allTools: Tool[] = [
  */
 export function getToolsByCapability(capabilities: {
   network?: boolean;
-  browser?: boolean;
   agent?: boolean;
 }): Tool[] {
   const tools = [...baseTools];
@@ -255,9 +227,8 @@ export function getToolsByCapability(capabilities: {
   if (capabilities.network) {
     tools.push(...networkTools);
   }
-  if (capabilities.browser) {
-    tools.push(...browserToolsArray);
-  }
+  // Browser tools are opt-in and live in a separate module to avoid pulling Playwright
+  // into bundles that don't need it (e.g. CLI single-run).
 
   return tools;
 }

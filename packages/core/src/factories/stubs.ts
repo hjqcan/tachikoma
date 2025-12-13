@@ -16,8 +16,8 @@ import type {
   ExecutionOptions,
   ExecutionResult,
   CommandResult,
-  ContextManager,
-  ContextThresholds,
+  ConversationContextManager,
+  ConversationContextThresholds,
   ConversationContext,
   ConversationSummary,
   Message,
@@ -219,20 +219,20 @@ export class StubSandbox implements Sandbox {
 }
 
 // ============================================================================
-// Stub ContextManager 实现
+// Stub ConversationContextManager 实现
 // ============================================================================
 
 /**
- * Stub ContextManager 实现
+ * Stub ConversationContextManager 实现
  *
  * 提供基础的上下文管理接口实现
  */
-export class StubContextManager implements ContextManager {
+export class StubConversationContextManager implements ConversationContextManager {
   private readonly sessionId: string;
   private messages: Message[] = [];
   private tokenCount = 0;
 
-  constructor(sessionId: string, _thresholds: ContextThresholds) {
+  constructor(sessionId: string, _thresholds: ConversationContextThresholds) {
     this.sessionId = sessionId;
   }
 
@@ -303,12 +303,11 @@ export function createStubSandbox(id: string, config: SandboxConfig): StubSandbo
 }
 
 /**
- * 创建 Stub ContextManager
+ * 创建 Stub ConversationContextManager
  */
-export function createStubContextManager(
+export function createStubConversationContextManager(
   sessionId: string,
-  thresholds: ContextThresholds
-): StubContextManager {
-  return new StubContextManager(sessionId, thresholds);
+  thresholds: ConversationContextThresholds
+): StubConversationContextManager {
+  return new StubConversationContextManager(sessionId, thresholds);
 }
-

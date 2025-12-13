@@ -1,16 +1,16 @@
 /**
- * 核心上下文管理器
+ * Prompt 上下文工程核心引擎（内部）
  *
  * 整合压缩、摘要、卸载和缓存优化策略
  *
- * @module context/context-manager
+ * @module prompt/prompt-engine
  */
 
 import type {
   ContextMessage,
   ContextState,
-  ContextManagerConfig,
-  IContextManager,
+  PromptContextConfig,
+  IPromptContextEngine,
   CompactionResult,
   SummarizationResult,
   OffloadResult,
@@ -29,13 +29,13 @@ import { PrefixOptimizer } from './cache/prefix-optimizer';
 import { NoteManager } from './memory/note-taking';
 
 // ============================================================================
-// 上下文管理器
+// PromptContextEngine
 // ============================================================================
 
 /**
- * 上下文管理器依赖
+ * Prompt 引擎依赖
  */
-export interface ContextManagerDependencies {
+export interface PromptContextEngineDependencies {
   /** LLM 客户端（用于摘要） */
   llmClient?: SummarizationLLMClient;
   /** 文件管理器（用于卸载） */
@@ -43,7 +43,7 @@ export interface ContextManagerDependencies {
   /**
    * 记忆提供者（任务9预留）
    *
-   * 如果提供，ContextManager 将支持：
+   * 如果提供，PromptContextEngine 将支持：
    * - 自动记忆检索
    * - 记忆注入到上下文
    */
@@ -57,7 +57,7 @@ export interface ContextManagerDependencies {
 }
 
 /**
- * 核心上下文管理器
+ * Prompt 上下文工程核心引擎
  *
  * 实现完整的上下文工程功能：
  * - 消息管理
@@ -66,9 +66,9 @@ export interface ContextManagerDependencies {
  * - 文件卸载
  * - KV 缓存优化
  */
-export class ContextManager implements IContextManager {
-  private readonly config: ContextManagerConfig;
-  private readonly deps: ContextManagerDependencies;
+export class PromptContextEngine implements IPromptContextEngine {
+  private readonly config: PromptContextConfig;
+  private readonly deps: PromptContextEngineDependencies;
 
   // 策略实例
   private readonly compactionStrategy: CompactionStrategy;
@@ -86,7 +86,7 @@ export class ContextManager implements IContextManager {
   /** 当前笔记（持久化） */
   private currentNotes: AgentNotes;
 
-  constructor(config: ContextManagerConfig, deps: ContextManagerDependencies = {}) {
+  constructor(config: PromptContextConfig, deps: PromptContextEngineDependencies = {}) {
     this.config = config;
     this.deps = deps;
 
@@ -628,11 +628,11 @@ export class ContextManager implements IContextManager {
 // ============================================================================
 
 /**
- * 创建上下文管理器
+ * 创建 PromptContextEngine
  */
-export function createContextManager(
-  config: ContextManagerConfig,
-  deps?: ContextManagerDependencies
-): ContextManager {
-  return new ContextManager(config, deps);
+export function createPromptContextEngine(
+  config: PromptContextConfig,
+  deps?: PromptContextEngineDependencies
+): PromptContextEngine {
+  return new PromptContextEngine(config, deps);
 }

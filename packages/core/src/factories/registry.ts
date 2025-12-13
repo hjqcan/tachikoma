@@ -10,8 +10,8 @@ import type {
   AgentConfig,
   Sandbox,
   SandboxConfig,
-  ContextManager,
-  ContextThresholds,
+  ConversationContextManager,
+  ConversationContextThresholds,
 } from '../types';
 
 // ============================================================================
@@ -32,7 +32,7 @@ export type AgentFactory = (
  */
 export interface AgentFactoryOptions {
   /** 上下文管理器 */
-  contextManager?: ContextManager;
+  conversationContextManager?: ConversationContextManager;
   /** 沙盒实例 */
   sandbox?: Sandbox;
   /** 额外选项 */
@@ -48,12 +48,12 @@ export type SandboxFactory = (
 ) => Sandbox;
 
 /**
- * ContextManager 创建函数类型
+ * ConversationContextManager 创建函数类型
  */
-export type ContextManagerFactory = (
+export type ConversationContextManagerFactory = (
   sessionId: string,
-  thresholds: ContextThresholds
-) => ContextManager;
+  thresholds: ConversationContextThresholds
+) => ConversationContextManager;
 
 /**
  * 注册表配置
@@ -106,12 +106,12 @@ export class DuplicateRegistrationError extends RegistryError {
 /**
  * 工厂注册表
  *
- * 管理 Agent、Sandbox、ContextManager 的工厂函数注册
+ * 管理 Agent、Sandbox、ConversationContextManager 的工厂函数注册
  */
 export class FactoryRegistry {
   private agentFactories = new Map<AgentType, AgentFactory>();
   private sandboxFactory: SandboxFactory | null = null;
-  private contextManagerFactory: ContextManagerFactory | null = null;
+  private conversationContextManagerFactory: ConversationContextManagerFactory | null = null;
   private config: RegistryConfig;
 
   constructor(config: RegistryConfig = {}) {
@@ -208,41 +208,41 @@ export class FactoryRegistry {
   }
 
   // ==========================================================================
-  // ContextManager 注册
+  // ConversationContextManager 注册
   // ==========================================================================
 
   /**
-   * 注册 ContextManager 工厂
+   * 注册 ConversationContextManager 工厂
    * @param factory - 创建函数
    */
-  registerContextManager(factory: ContextManagerFactory): void {
-    if (this.contextManagerFactory !== null && !this.config.allowOverride) {
-      throw new DuplicateRegistrationError('contextManager', 'ContextManager');
+  registerConversationContextManager(factory: ConversationContextManagerFactory): void {
+    if (this.conversationContextManagerFactory !== null && !this.config.allowOverride) {
+      throw new DuplicateRegistrationError('conversationContextManager', 'ConversationContextManager');
     }
-    this.contextManagerFactory = factory;
+    this.conversationContextManagerFactory = factory;
   }
 
   /**
-   * 注销 ContextManager 工厂
+   * 注销 ConversationContextManager 工厂
    */
-  unregisterContextManager(): boolean {
-    if (this.contextManagerFactory === null) return false;
-    this.contextManagerFactory = null;
+  unregisterConversationContextManager(): boolean {
+    if (this.conversationContextManagerFactory === null) return false;
+    this.conversationContextManagerFactory = null;
     return true;
   }
 
   /**
-   * 检查 ContextManager 工厂是否已注册
+   * 检查 ConversationContextManager 工厂是否已注册
    */
-  hasContextManager(): boolean {
-    return this.contextManagerFactory !== null;
+  hasConversationContextManager(): boolean {
+    return this.conversationContextManagerFactory !== null;
   }
 
   /**
-   * 获取 ContextManager 工厂
+   * 获取 ConversationContextManager 工厂
    */
-  getContextManagerFactory(): ContextManagerFactory | null {
-    return this.contextManagerFactory;
+  getConversationContextManagerFactory(): ConversationContextManagerFactory | null {
+    return this.conversationContextManagerFactory;
   }
 
   // ==========================================================================
@@ -255,7 +255,7 @@ export class FactoryRegistry {
   clear(): void {
     this.agentFactories.clear();
     this.sandboxFactory = null;
-    this.contextManagerFactory = null;
+    this.conversationContextManagerFactory = null;
   }
 
   /**
@@ -264,12 +264,12 @@ export class FactoryRegistry {
   getStatus(): {
     agents: AgentType[];
     hasSandbox: boolean;
-    hasContextManager: boolean;
+    hasConversationContextManager: boolean;
   } {
     return {
       agents: this.getRegisteredAgentTypes(),
       hasSandbox: this.hasSandbox(),
-      hasContextManager: this.hasContextManager(),
+      hasConversationContextManager: this.hasConversationContextManager(),
     };
   }
 }
@@ -285,4 +285,3 @@ export const defaultRegistry = new FactoryRegistry({
   allowOverride: true,
   useStubFallback: true,
 });
-

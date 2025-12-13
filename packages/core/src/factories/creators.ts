@@ -1,7 +1,7 @@
 /**
  * 工厂创建函数
  *
- * 提供 Agent、Sandbox、ContextManager 的创建方法
+ * 提供 Agent、Sandbox、ConversationContextManager 的创建方法
  */
 
 import type {
@@ -9,7 +9,7 @@ import type {
   AgentType,
   AgentConfig,
   Sandbox,
-  ContextManager,
+  ConversationContextManager,
   Config,
   ModelConfig,
 } from '../types';
@@ -23,7 +23,7 @@ import {
 import {
   createStubAgent,
   createStubSandbox,
-  createStubContextManager,
+  createStubConversationContextManager,
 } from './stubs';
 
 // ============================================================================
@@ -59,9 +59,9 @@ export interface CreateSandboxOptions {
 }
 
 /**
- * ContextManager 创建选项
+ * ConversationContextManager 创建选项
  */
-export interface CreateContextManagerOptions {
+export interface CreateConversationContextManagerOptions {
   /** 会话 ID（可选，默认自动生成） */
   sessionId?: string;
   /** 使用的配置（可选，默认使用全局配置） */
@@ -247,29 +247,29 @@ export function createSandbox(options: CreateSandboxOptions = {}): Sandbox {
 }
 
 /**
- * 创建上下文管理器（通过注册表）
+ * 创建对话上下文管理器（通过注册表）
  *
  * 注意：
- * - 这是基于注册表模式的工厂函数，用于创建 types.ContextManager 接口实现
- * - 如果需要上下文工程模块的 ContextManager，请使用 `context.createContextManager`
+ * - 这是基于注册表模式的工厂函数，用于创建 types.ConversationContextManager 接口实现
+ * - prompt 上下文工程属于 Runtime 内部能力，不作为稳定公共 API 暴露
  *
  * @param options - 创建选项
  * @returns 上下文管理器实例
  *
  * @example
  * ```ts
- * // 创建上下文管理器（推荐入口）
- * const contextManager = createRegisteredContextManager();
+ * // 创建对话上下文管理器（推荐入口）
+ * const contextManager = createRegisteredConversationContextManager();
  *
  * // 使用自定义会话 ID
- * const contextManager = createRegisteredContextManager({
+ * const contextManager = createRegisteredConversationContextManager({
  *   sessionId: 'session-123'
  * });
  * ```
  */
-export function createRegisteredContextManager(
-  options: CreateContextManagerOptions = {}
-): ContextManager {
+export function createRegisteredConversationContextManager(
+  options: CreateConversationContextManagerOptions = {}
+): ConversationContextManager {
   const {
     sessionId = generateId('session'),
     config = getGlobalConfig(),
@@ -278,7 +278,7 @@ export function createRegisteredContextManager(
   } = options;
 
   // 尝试从注册表获取工厂
-  const factory = registry.getContextManagerFactory();
+  const factory = registry.getConversationContextManagerFactory();
 
   if (factory) {
     return factory(sessionId, config.context);
@@ -286,23 +286,11 @@ export function createRegisteredContextManager(
 
   // 如果允许使用 stub，返回 stub 实现
   if (useStub) {
-    return createStubContextManager(sessionId, config.context);
+    return createStubConversationContextManager(sessionId, config.context);
   }
 
   // 否则抛出错误
-  throw new NotRegisteredError('contextManager', 'ContextManager');
-}
-
-/**
- * @deprecated 请使用 createRegisteredContextManager。
- *
- * 为兼容旧版 API，保留 createContextManager 别名，内部委托给
- * createRegisteredContextManager。
- */
-export function createContextManager(
-  options: CreateContextManagerOptions = {}
-): ContextManager {
-  return createRegisteredContextManager(options);
+  throw new NotRegisteredError('conversationContextManager', 'ConversationContextManager');
 }
 
 // ============================================================================
@@ -336,4 +324,3 @@ export function createPlanner(options?: Omit<CreateAgentOptions, 'type'>): Agent
 export function createMemoryAgent(options?: Omit<CreateAgentOptions, 'type'>): Agent {
   return createAgent('memory', options);
 }
-

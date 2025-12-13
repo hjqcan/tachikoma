@@ -34,8 +34,8 @@ export { IntentAnalyzer } from './intent-analyzer';
 // Feedback Loop
 export { FeedbackLoop } from './feedback-loop';
 
-// Context Manager
-export { ConversationContextManager } from './context-manager';
+// Prompt Builder
+export { ConversationPromptBuilder } from './prompt-builder';
 
 // Conversational Runner
 export { ConversationalRunner } from './conversational-runner';

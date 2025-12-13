@@ -1,5 +1,5 @@
 /**
- * 上下文工程模块
+ * Prompt 上下文工程模块（内部）
  *
  * 提供智能体上下文的管理、压缩、摘要和卸载功能
  *
@@ -10,7 +10,7 @@
  * - 缓存优化：提高 KV 缓存命中率
  * - 笔记系统：通过复述操控注意力
  *
- * @module context
+ * @module prompt
  */
 
 // ============================================================================
@@ -50,8 +50,8 @@ export type {
   AgentNotes,
 
   // 管理器类型
-  ContextManagerConfig,
-  IContextManager,
+  PromptContextConfig,
+  IPromptContextEngine,
 } from './types';
 
 // ============================================================================
@@ -63,8 +63,8 @@ export {
   DEFAULT_COMPACTION_CONFIG,
   DEFAULT_SUMMARIZATION_CONFIG,
   MODEL_CONTEXT_LIMITS,
-  createDefaultContextConfig,
-  createModelAwareConfig,
+  createDefaultPromptConfig,
+  createModelAwarePromptConfig,
   getModelContextLimit,
   computeModelAwareThresholds,
   validateThresholds,
@@ -75,10 +75,10 @@ export {
 // ============================================================================
 
 export {
-  ContextManager,
-  createContextManager,
-  type ContextManagerDependencies,
-} from './context-manager';
+  PromptContextEngine,
+  createPromptContextEngine,
+  type PromptContextEngineDependencies,
+} from './prompt-engine';
 
 // ============================================================================
 // 策略导出

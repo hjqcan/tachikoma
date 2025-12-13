@@ -7,7 +7,7 @@
 import type {
   Config,
   ModelConfig,
-  ContextThresholds,
+  ConversationContextThresholds,
   SandboxConfig,
   AgentOpsConfig,
   LogLevel,
@@ -234,9 +234,9 @@ function validateModelConfig(config: ModelConfig, name: string): void {
 }
 
 /**
- * 验证上下文阈值配置
+ * 验证对话上下文阈值配置
  */
-function validateContextThresholds(config: ContextThresholds): void {
+function validateConversationContextThresholds(config: ConversationContextThresholds): void {
   const fields = [
     'hardLimit',
     'rotThreshold',
@@ -327,8 +327,8 @@ export function validateConfig(config: Config): void {
   validateModelConfig(config.models.worker, 'models.worker');
   validateModelConfig(config.models.planner, 'models.planner');
 
-  // 验证上下文配置
-  validateContextThresholds(config.context);
+  // 验证对话上下文配置
+  validateConversationContextThresholds(config.context);
 
   // 验证沙盒配置
   validateSandboxConfig(config.sandbox);
@@ -514,7 +514,7 @@ export class ConfigBuilder {
   /**
    * 设置上下文阈值
    */
-  contextThresholds(config: Partial<ContextThresholds>): this {
+  contextThresholds(config: Partial<ConversationContextThresholds>): this {
     this.overrides.context = {
       ...this.overrides.context,
       ...config,
@@ -570,4 +570,3 @@ export class ConfigBuilder {
     });
   }
 }
-

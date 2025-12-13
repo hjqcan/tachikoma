@@ -4,7 +4,13 @@
  * 基于 PRD 6.4 配置管理定义
  */
 
-import type { Config, ModelConfig, ContextThresholds, SandboxConfig, AgentOpsConfig } from '../types';
+import type {
+  Config,
+  ModelConfig,
+  ConversationContextThresholds,
+  SandboxConfig,
+  AgentOpsConfig,
+} from '../types';
 
 /**
  * 默认模型配置 - 统筹者
@@ -36,7 +42,7 @@ export const DEFAULT_PLANNER_MODEL: ModelConfig = {
 /**
  * 默认上下文阈值配置
  */
-export const DEFAULT_CONTEXT_THRESHOLDS: ContextThresholds = {
+export const DEFAULT_CONTEXT_THRESHOLDS: ConversationContextThresholds = {
   // 硬性上限 (模型限制) - 1M tokens
   hardLimit: 1_000_000,
   // "腐烂前"阈值 (性能下降点) - 200k tokens
@@ -108,4 +114,3 @@ export const DEFAULT_CONFIG: Config = {
   sandbox: DEFAULT_SANDBOX_CONFIG,
   agentops: DEFAULT_AGENTOPS_CONFIG,
 };
-

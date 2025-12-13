@@ -1,7 +1,7 @@
 /**
  * 抽象基类模块入口
  *
- * 导出 Agent、Sandbox、ContextManager 的抽象基类
+ * 导出 Agent、Sandbox、ConversationContextManager 的抽象基类
  */
 
 // Agent 抽象基类
@@ -19,15 +19,14 @@ export {
   type SandboxLogContext,
 } from './base-sandbox';
 
-// ContextManager 抽象基类
+// ConversationContextManager 抽象基类
 export {
-  BaseContextManager,
-  SimpleContextManager,
+  BaseConversationContextManager,
+  SimpleConversationContextManager,
   defaultTokenEstimator,
-  type ContextManagerHooks,
-  type ContextManagerLogContext,
+  type ConversationContextManagerHooks,
+  type ConversationContextManagerLogContext,
   type TokenEstimator,
-  type ContextManagerOptions,
-} from './base-context-manager';
-
+  type ConversationContextManagerOptions,
+} from './base-conversation-context-manager';
 

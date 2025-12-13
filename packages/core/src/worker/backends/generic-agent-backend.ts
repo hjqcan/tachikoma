@@ -33,13 +33,13 @@ import {
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
 import { isKeyDecision } from '../key-decision';
-// Context Engineering 模块（Task 8）
+// Prompt 上下文工程模块（内部）
 import {
-  createContextManager,
-  createDefaultContextConfig,
+  createPromptContextEngine,
+  createDefaultPromptConfig,
   type ContextMessage,
-  type ContextManagerDependencies,
-} from '../../context';
+  type PromptContextEngineDependencies,
+} from '../../prompt';
 // Skills 模块
 import {
   loadSkills,
@@ -738,14 +738,14 @@ export class GenericAgentBackend implements IWorkerBackend {
       ...options.resourceLimits,
     };
 
-    // 创建上下文管理器（使用资源限制）
-    // Task 8: 直接使用 ContextManager，将 maxMessageWindow 映射到阈值
-    let contextConfig = this.config.contextManagerConfig 
-      ?? createDefaultContextConfig(this.config.workDir ?? '/tmp');
+    // 创建 PromptContextEngine（使用资源限制）
+    // 将 maxMessageWindow 映射到 PromptConfig 阈值
+    let contextConfig = this.config.promptConfig 
+      ?? createDefaultPromptConfig(this.config.workDir ?? '/tmp');
     
     // 如果没有显式配置，根据 maxMessageWindow 估算阈值
     // 假设平均每条消息 ~2000 tokens
-    if (!this.config.contextManagerConfig && limits.maxMessageWindow) {
+    if (!this.config.promptConfig && limits.maxMessageWindow) {
       const estimatedSoftLimit = limits.maxMessageWindow * 2000;
       contextConfig = {
         ...contextConfig,
@@ -757,13 +757,13 @@ export class GenericAgentBackend implements IWorkerBackend {
       };
     }
     
-    const contextDeps: ContextManagerDependencies = {};
+    const contextDeps: PromptContextEngineDependencies = {};
     if (this.memoryService) {
       contextDeps.memoryProvider = this.memoryService;
     }
-    const context = createContextManager(contextConfig, contextDeps);
+    const context = createPromptContextEngine(contextConfig, contextDeps);
     
-    // Token 使用追踪（独立于 ContextManager）
+    // Token 使用追踪（独立于 PromptContextEngine）
     let totalTokensUsed = 0;
     const maxTotalTokens = limits.maxTotalTokens;
     const recordTokenUsage = (input: number, output: number) => { totalTokensUsed += input + output; };
@@ -912,7 +912,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
             let memoryResult;
             
             if (queryStrategy === 'retrieval-context') {
-              // Use ContextManager's rich retrieval context
+              // Use PromptContextEngine's rich retrieval context
               const retrievalQuery = context.getRetrievalContext();
               // eslint-disable-next-line no-await-in-loop
               memoryResult = await this.memoryService.retrieve(retrievalQuery, topK);

@@ -2,7 +2,8 @@
  * Minimal ContextMessage shape for MemoryProvider.search()
  * 
  * This is a subset of context/types.ContextMessage to avoid circular imports.
- * The full ContextMessage type should be imported from @tachikoma/core/context.
+ * The full ContextMessage type lives in the internal prompt module:
+ * @tachikoma/core/internal/prompt
  */
 export interface ContextMessageMinimal {
   id: string;
@@ -228,7 +229,7 @@ export interface MemoryConfig {
    * Query strategy for memory search.
    * - 'last-message': Use only the last message content (simple, fast)
    * - 'user-assistant': Filter to user/assistant messages only, combine last N
-   * - 'retrieval-context': Use ContextManager.getRetrievalContext() for rich query (recommended)
+   * - 'retrieval-context': Use PromptContextEngine.getRetrievalContext() for rich query (recommended)
    * @default 'user-assistant'
    */
   queryStrategy?: 'last-message' | 'user-assistant' | 'retrieval-context';

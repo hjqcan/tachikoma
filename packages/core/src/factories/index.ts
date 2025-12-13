@@ -14,7 +14,7 @@ export {
   type AgentFactory,
   type AgentFactoryOptions,
   type SandboxFactory,
-  type ContextManagerFactory,
+  type ConversationContextManagerFactory,
   type RegistryConfig,
 } from './registry';
 
@@ -22,8 +22,7 @@ export {
 export {
   createAgent,
   createSandbox,
-  createRegisteredContextManager,
-  createContextManager,
+  createRegisteredConversationContextManager,
   createOrchestrator,
   createWorker,
   createPlanner,
@@ -32,16 +31,15 @@ export {
   resetGlobalConfig,
   type CreateAgentOptions,
   type CreateSandboxOptions,
-  type CreateContextManagerOptions,
+  type CreateConversationContextManagerOptions,
 } from './creators';
 
 // Stub 实现
 export {
   StubAgent,
   StubSandbox,
-  StubContextManager,
+  StubConversationContextManager,
   createStubAgent,
   createStubSandbox,
-  createStubContextManager,
+  createStubConversationContextManager,
 } from './stubs';
-
