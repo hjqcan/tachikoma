@@ -103,6 +103,11 @@ function getSearchDirs(config: SkillDiscoveryConfig, cwd?: string): string[] {
   if (cwd) {
     const projectDir = config.projectDir ?? path.join(cwd, DEFAULT_PROJECT_SKILLS_DIR_NAME);
     dirs.push(projectDir);
+    
+    // 根目录 skills/ (官方 Skills 库)
+    // 支持 Anthropic 推荐的 skills/ 顶级目录结构
+    const rootSkillsDir = path.join(cwd, 'skills');
+    dirs.push(rootSkillsDir);
   }
 
   // 额外目录

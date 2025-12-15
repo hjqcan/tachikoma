@@ -87,14 +87,14 @@ tachikoma/
 │   │   ├── src/conversation/# 多轮对话 runtime
 │   │   ├── src/prompt/      # Prompt 上下文工程（internal）
 │   │   ├── src/tools/       # 工具系统
-│   │   ├── src/sandbox/     # 沙盒管理
+│   │   ├── src/sandbox/     # 沙盒管理（驱动代码）
 │   │   └── src/mcp/         # MCP 集成
+│   ├── sandbox/             # 沙盒镜像配置（Dockerfile）
 │   ├── gateway/             # API 网关
 │   ├── agentops/            # 可观测性
 │   └── cli/                 # 命令行工具
-├── skills/                  # Skills 库
-├── servers/                 # MCP 服务器代理
-└── sandbox/                 # 沙盒环境配置
+├── skills/                  # 官方 Skills 库（Code Execution with MCP）
+└── servers/                 # MCP 服务器代理（Code Execution with MCP）
 ```
 
 ## 🎯 设计理念
