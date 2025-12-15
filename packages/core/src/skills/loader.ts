@@ -108,6 +108,11 @@ function getSearchDirs(config: SkillDiscoveryConfig, cwd?: string): string[] {
     // 支持 Anthropic 推荐的 skills/ 顶级目录结构
     const rootSkillsDir = path.join(cwd, 'skills');
     dirs.push(rootSkillsDir);
+    
+    // node_modules/@tachikoma/skills (npm 安装的官方 Skills)
+    // 用户通过 npm install @tachikoma/skills 安装后自动加载
+    const nodeModulesSkillsDir = path.join(cwd, 'node_modules', '@tachikoma', 'skills');
+    dirs.push(nodeModulesSkillsDir);
   }
 
   // 额外目录
