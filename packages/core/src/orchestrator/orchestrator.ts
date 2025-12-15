@@ -46,10 +46,22 @@ import {
   type DecisionRecord,
 } from './session';
 import { MemoryService } from '../memory';
+import { z } from 'zod';
 
 // ============================================================================
 // 类型定义
 // ============================================================================
+
+const PLANNER_METADATA_SCHEMA = z
+  .object({
+    mode: z.enum(['full', 'patch']).optional(),
+    maxSubtasks: z.number().finite().positive().optional(),
+    previousError: z.string().min(1).optional(),
+    previousFiles: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+type PlannerMetadata = z.infer<typeof PLANNER_METADATA_SCHEMA>;
 
 /**
  * Orchestrator 选项
@@ -186,6 +198,32 @@ export class Orchestrator extends BaseAgent {
 
   /** 当前运行上下文（从 task.context.metadata 派生） */
   private currentRunMetadata: Record<string, unknown> | null = null;
+
+  private getPlannerMetadata(): PlannerMetadata {
+    const meta = this.currentRunMetadata;
+    const planner =
+      meta && typeof meta.planner === 'object' && meta.planner
+        ? (meta.planner as Record<string, unknown>)
+        : {};
+    const parsed = PLANNER_METADATA_SCHEMA.safeParse(planner);
+    return parsed.success ? parsed.data : {};
+  }
+
+  private getPlannerMode(): 'full' | 'patch' {
+    return this.getPlannerMetadata().mode === 'patch' ? 'patch' : 'full';
+  }
+
+  private getPlannerMaxSubtasks(): number | undefined {
+    return this.getPlannerMetadata().maxSubtasks;
+  }
+
+  private getPlannerPreviousError(): string | undefined {
+    return this.getPlannerMetadata().previousError;
+  }
+
+  private getPlannerPreviousFiles(): string[] | undefined {
+    return this.getPlannerMetadata().previousFiles;
+  }
 
   constructor(id: string, options: OrchestratorOptions = {}) {
     const config = createOrchestratorConfig(options.config);
@@ -1101,12 +1139,94 @@ Is this a genuine deviation? Answer YES or NO only.`,
       };
     }
 
+    const maxSubtasks = this.getPlannerMaxSubtasks() ?? this.orchestratorConfig.planner.defaultMaxSubtasks;
     const input: PlannerInput = {
       task,
-      maxSubtasks: this.orchestratorConfig.planner.defaultMaxSubtasks,
+      maxSubtasks,
     };
 
-    return this.planner.plan(input);
+    if (this.getPlannerMode() !== 'patch') {
+      return this.planner.plan(input);
+    }
+
+    const previousContext = await this.buildPatchPreviousContext().catch(() => '');
+    return this.planner.planPatch(input, previousContext);
+  }
+
+  private async buildPatchPreviousContext(): Promise<string> {
+    if (!this.sessionManager) return '';
+
+    const parts: string[] = [];
+
+    const previousError = this.getPlannerPreviousError();
+    if (previousError) {
+      parts.push('### Previous error');
+      parts.push(previousError.slice(0, 500));
+    }
+
+    const previousFiles = this.getPlannerPreviousFiles();
+    if (Array.isArray(previousFiles) && previousFiles.length > 0) {
+      parts.push('\n### Previously affected files (hint)');
+      for (const f of previousFiles.slice(0, 20)) parts.push(`- ${f}`);
+    }
+
+    const plan = await this.sessionManager.readOrchestratorPlan().catch(() => null);
+    if (plan?.plannerOutput) {
+      const p = plan.plannerOutput;
+      parts.push('### Previous plan');
+      for (const st of p.subtasks.slice(0, 20)) {
+        parts.push(`- ${st.id}: ${st.objective}`);
+      }
+    }
+
+    const progress = await this.sessionManager.readProgress().catch(() => null);
+    if (progress) {
+      parts.push('\n### Previous execution status');
+      parts.push(`- status: ${progress.status}`);
+      parts.push(`- step: ${progress.currentStep}/${progress.totalSteps}`);
+      if (progress.completedSubtasks.length > 0) {
+        parts.push(`- completed: ${progress.completedSubtasks.slice(0, 10).join(', ')}${progress.completedSubtasks.length > 10 ? ', ...' : ''}`);
+      }
+      if (progress.failedSubtasks.length > 0) {
+        parts.push(`- failed: ${progress.failedSubtasks.slice(0, 10).join(', ')}${progress.failedSubtasks.length > 10 ? ', ...' : ''}`);
+      }
+      if (progress.runningSubtasks.length > 0) {
+        parts.push(`- running: ${progress.runningSubtasks.slice(0, 10).join(', ')}${progress.runningSubtasks.length > 10 ? ', ...' : ''}`);
+      }
+    }
+
+    const decisions = await this.sessionManager.readDecisions(10).catch(() => []);
+    if (decisions.length > 0) {
+      parts.push('\n### Recent orchestrator decisions');
+      for (const d of decisions.slice(-5)) {
+        const ref = [d.subtaskId, d.workerId].filter(Boolean).join(' / ');
+        const head = `[${d.type}]${ref ? ` ${ref}:` : ''}`;
+        const reason = d.decision?.reason ? String(d.decision.reason) : '';
+        parts.push(`- ${head} ${reason.slice(0, 200)}`.trim());
+      }
+    }
+
+    const shared = await this.sessionManager.readSharedContext().catch(() => null);
+    const syncLog = shared?.sharedKnowledge?.data?.syncLog;
+    if (Array.isArray(syncLog) && syncLog.length > 0) {
+      parts.push('\n### Recent syncLog (selective)');
+      for (const item of syncLog.slice(-5)) {
+        const decisionsSummary = Array.isArray(item.decisions) && item.decisions.length > 0
+          ? ` | decisions: ${item.decisions.slice(0, 3).map((d) => `${d.type}${d.approved === undefined ? '' : d.approved ? '(approved)' : '(rejected)'}:${d.reason}`).join('; ')}`
+          : '';
+        const outputSummary = typeof item.output === 'string' && item.output.trim()
+          ? ` | output: ${item.output.trim().slice(0, 200)}${item.output.length > 200 ? '...' : ''}`
+          : '';
+        parts.push(
+          `- ${item.subtaskId} (${item.workerId}): ${item.objective}` +
+            (item.modifiedFiles && item.modifiedFiles.length > 0 ? ` | files: ${item.modifiedFiles.join(', ')}` : '') +
+            decisionsSummary +
+            outputSummary
+        );
+      }
+    }
+
+    return parts.join('\n').trim();
   }
 
   // ============================================================================

@@ -19,7 +19,9 @@ import {
   LLMClientError,
   PlanningParser,
   PLANNING_SYSTEM_PROMPT,
+  PATCH_PLANNING_SYSTEM_PROMPT,
   generatePlanningUserPrompt,
+  generatePatchPlanningUserPrompt,
   convertToSubTasks,
   convertToExecutionPlan,
   type PlanningOutputFormat,
@@ -227,7 +229,102 @@ export class Planner {
     } catch (error) {
       // 处理可重试的错误，尝试降级
       if (error instanceof LLMClientError && error.retryable) {
-        const degradationResult = await this.tryDegradation(input, totalTokens, totalRetries);
+        const degradationResult = await this.tryDegradation(
+          { mode: 'full' },
+          input,
+          totalTokens,
+          totalRetries
+        );
+        if (degradationResult) {
+          return { ...degradationResult, degraded: true };
+        }
+      }
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        tokensUsed: totalTokens,
+        retryCount: totalRetries,
+        degraded,
+      };
+    }
+  }
+
+  /**
+   * 执行 Patch 规划（增量修改）
+   *
+   * @param input - 规划器输入
+   * @param previousContext - 之前计划/产出上下文摘要（可选）
+   * @returns 规划结果
+   */
+  async planPatch(input: PlannerInput, previousContext?: string): Promise<PlanResult> {
+    const { task, availableTools, contextConstraints, maxSubtasks, preferences } = input;
+
+    const totalTokens = { input: 0, output: 0 };
+    let totalRetries = 0;
+    const degraded = false;
+
+    try {
+      const additionalContext = await this.buildAdditionalContext(task, preferences);
+      const userPrompt = generatePatchPlanningUserPrompt({
+        objective: task.objective,
+        constraints: task.constraints,
+        availableTools,
+        maxSubtasks: maxSubtasks ?? this.config.defaultMaxSubtasks,
+        additionalContext,
+        previousContext,
+      });
+
+      const request: LLMRequest = {
+        systemPrompt: PATCH_PLANNING_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+        maxTokens: this.config.agent.maxTokens,
+        temperature: this.config.agent.temperature,
+      };
+
+      const response = await this.llmClient.complete(request);
+      totalTokens.input += response.usage.inputTokens;
+      totalTokens.output += response.usage.outputTokens;
+
+      const { result: parseResult, retryCount, totalTokens: retryTokens } =
+        await this.parser.parseWithRetry(response.content, request);
+
+      totalTokens.input += retryTokens.input;
+      totalTokens.output += retryTokens.output;
+      totalRetries = retryCount;
+
+      if (!parseResult.success || !parseResult.data) {
+        return {
+          success: false,
+          error: parseResult.error || 'Failed to parse planning output',
+          tokensUsed: totalTokens,
+          retryCount: totalRetries,
+          degraded,
+        };
+      }
+
+      const plannerOutput = this.buildPlannerOutput(
+        task,
+        parseResult.data,
+        contextConstraints,
+        preferences
+      );
+
+      return {
+        success: true,
+        output: plannerOutput,
+        tokensUsed: totalTokens,
+        retryCount: totalRetries,
+        degraded,
+      };
+    } catch (error) {
+      if (error instanceof LLMClientError && error.retryable) {
+        const degradationResult = await this.tryDegradation(
+          { mode: 'patch', previousContext },
+          input,
+          totalTokens,
+          totalRetries
+        );
         if (degradationResult) {
           return { ...degradationResult, degraded: true };
         }
@@ -362,7 +459,7 @@ export class Planner {
       subtasks,
       delegation,
       executionPlan,
-      reasoning: this.config.enableReasoning ? planningOutput.reasoning : undefined,
+      reasoning: this.config.enableReasoning ? (planningOutput.reasoning || '') : undefined,
       estimatedTotalDuration: planningOutput.estimatedTotalMinutes * 60 * 1000,
       estimatedTokens: this.estimateTokenUsage(subtasks),
     };
@@ -460,6 +557,7 @@ export class Planner {
    * 尝试降级策略
    */
   private async tryDegradation(
+    opts: { mode: 'full' } | { mode: 'patch'; previousContext?: string },
     input: PlannerInput,
     currentTokens: { input: number; output: number },
     currentRetries: number
@@ -485,8 +583,11 @@ export class Planner {
         },
       };
 
-      // 递归调用 plan，但标记为降级
-      const result = await this.plan(degradedInput);
+      // 保持调用模式一致：full/patch 都按原模式降级重试
+      const result =
+        opts.mode === 'patch'
+          ? await this.planPatch(degradedInput, opts.previousContext)
+          : await this.plan(degradedInput);
 
       // 累加 token 使用量
       result.tokensUsed.input += currentTokens.input;

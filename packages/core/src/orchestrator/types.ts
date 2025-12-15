@@ -146,7 +146,7 @@ export interface PlannerOutput {
   delegation: DelegationConfig;
   /** 执行计划（子任务执行顺序） */
   executionPlan: ExecutionPlan;
-  /** 规划推理（Chain-of-Thought） */
+  /** 规划依据（简要说明） */
   reasoning?: string | undefined;
   /** 预估总执行时间 */
   estimatedTotalDuration?: number | undefined;

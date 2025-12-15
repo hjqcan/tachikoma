@@ -17,6 +17,7 @@ import {
   type MockLLMConfig,
   // Prompt
   PLANNING_SYSTEM_PROMPT,
+  PATCH_PLANNING_SYSTEM_PROMPT,
   generatePlanningUserPrompt,
   generateErrorFeedbackPrompt,
   extractJsonFromResponse,
@@ -495,6 +496,15 @@ ${validPlanningOutputJson}
       expect(result.error).toContain('subtasks');
     });
 
+    it('允许缺省 reasoning（自动填充为空字符串）', () => {
+      const parsed = JSON.parse(validPlanningOutputJson) as Record<string, unknown>;
+      delete parsed.reasoning;
+      const result = parsePlanningOutput(JSON.stringify(parsed));
+
+      expect(result.success).toBe(true);
+      expect(result.data?.reasoning).toBe('');
+    });
+
     it('子任务缺少必需字段应返回失败', () => {
       const invalid = {
         ...validPlanningOutput,
@@ -619,6 +629,35 @@ ${validPlanningOutputJson}
       expect(retryCount).toBe(1);
       expect(totalTokens.input).toBe(100);
       expect(totalTokens.output).toBe(200);
+    });
+
+    it('重试时应沿用原始 systemPrompt（支持 patch planning）', async () => {
+      mockClient = new MockLLMClient({
+        provider: 'mock',
+        model: 'mock-model',
+        maxTokens: 2048,
+        responses: [
+          {
+            content: validPlanningOutputJson,
+            usage: { inputTokens: 100, outputTokens: 200 },
+            model: 'mock-model',
+          },
+        ],
+      } as MockLLMConfig);
+
+      const parser = new PlanningParser(mockClient);
+      const originalRequest: LLMRequest = {
+        systemPrompt: PATCH_PLANNING_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: 'patch planning please' }],
+      };
+
+      const { result, retryCount } = await parser.parseWithRetry('{ invalid }', originalRequest);
+      expect(result.success).toBe(true);
+      expect(retryCount).toBe(1);
+
+      const history = mockClient.getCallHistory();
+      expect(history).toHaveLength(1);
+      expect(history[0]?.systemPrompt).toBe(PATCH_PLANNING_SYSTEM_PROMPT);
     });
 
     it('达到最大重试次数后应返回失败', async () => {

@@ -4,7 +4,7 @@
  * 定义任务规划的 System Prompt 和 User Prompt 模板
  */
 
-import type { PromptVariables, ErrorFeedbackVariables } from './types';
+import type { PromptVariables, PatchPromptVariables, ErrorFeedbackVariables } from './types';
 import type { SubTask, ExecutionPlan } from '../orchestrator';
 
 // ============================================================================
@@ -15,7 +15,7 @@ import type { SubTask, ExecutionPlan } from '../orchestrator';
  * 规划输出格式 - 用于 LLM 结构化输出
  */
 export interface PlanningOutputFormat {
-  /** 推理过程（Chain-of-Thought） */
+  /** 简要说明（不要输出详细逐步推理） */
   reasoning: string;
   /** 子任务列表 */
   subtasks: {
@@ -89,7 +89,7 @@ export const PLANNING_SYSTEM_PROMPT = `你是一个任务规划专家。你的�
 
 ## 输出要求
 你必须以 JSON 格式输出，包含以下字段：
-- reasoning: 你的推理过程（Chain-of-Thought）
+- reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
 - subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
 - executionPlan: 执行计划，包含 isParallel、steps
 - estimatedTotalMinutes: 预估总执行时间
@@ -100,6 +100,39 @@ export const PLANNING_SYSTEM_PROMPT = `你是一个任务规划专家。你的�
 - 子任务 ID 格式为 subtask-1, subtask-2, ...
 - dependencies 数组包含依赖的子任务 ID
 - 执行步骤中，同一步骤的子任务可以并行执行`;
+
+/**
+ * Patch 规划 System Prompt
+ *
+ * 用于在已有产出基础上做“增量修改”，要求生成最小 delta 计划，避免重做已完成工作。
+ */
+export const PATCH_PLANNING_SYSTEM_PROMPT = `你是一个增量修改（patch）任务规划专家。你的职责是在已有工作成果基础上，生成最小的可执行变更计划。
+
+## 你的任务
+1. 理解用户提出的“修改/调整”目标
+2. 读取“之前的计划与产出上下文”，判断哪些已完成、哪些需要改
+3. 只生成必要的 delta 子任务（避免重做完整实现）
+4. 尽可能复用现有文件与结构，优先使用增量修改（apply_patch）而不是重写
+5. 输出可执行、可测试、可回滚的步骤
+
+## 分解原则（增量优先）
+- 默认不要创建新架构，除非修改目标明确要求
+- 优先修改最近受影响的文件/模块
+- 子任务数量尽量少：小改动通常 1-3 个子任务即可
+- 若需要大改动，仍遵循“大文件分阶段策略”，但只覆盖变更相关部分
+
+## 输出要求
+你必须以 JSON 格式输出，包含以下字段：
+- reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
+- subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
+- executionPlan: 执行计划，包含 isParallel、steps
+- estimatedTotalMinutes: 预估总执行时间
+- complexityScore: 复杂度评估（1-10）
+
+## 注意事项
+- 严格遵循 JSON 格式，不要添加额外的文本
+- 子任务 ID 格式为 subtask-1, subtask-2, ...
+- 只生成“必要的修改”相关子任务`;
 
 /**
  * 生成规划 User Prompt
@@ -142,7 +175,90 @@ ${additionalContext}
 请以 JSON 格式输出，不要包含任何其他文本。JSON 应该包含以下结构：
 \`\`\`json
 {
-  "reasoning": "你的推理过程...",
+  "reasoning": "简要说明你的拆解依据（1-3 句）...",
+  "subtasks": [
+    {
+      "id": "subtask-1",
+      "objective": "子任务目标",
+      "constraints": ["约束1", "约束2"],
+      "estimatedMinutes": 10,
+      "dependencies": []
+    }
+  ],
+  "executionPlan": {
+    "isParallel": false,
+    "steps": [
+      {
+        "order": 1,
+        "subtaskIds": ["subtask-1"],
+        "parallel": false
+      }
+    ]
+  },
+  "estimatedTotalMinutes": 30,
+  "complexityScore": 5
+}
+\`\`\``;
+
+  return prompt;
+}
+
+/**
+ * 生成 Patch 规划 User Prompt
+ */
+export function generatePatchPlanningUserPrompt(variables: PatchPromptVariables): string {
+  const {
+    objective,
+    constraints,
+    availableTools,
+    maxSubtasks,
+    additionalContext,
+    previousContext,
+  } = variables;
+
+  let prompt = `请基于已有工作成果，对以下修改请求生成最小的变更计划：
+
+## 修改目标
+${objective}
+
+## 约束条件
+${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : '无特殊约束'}
+`;
+
+  if (previousContext) {
+    prompt += `
+## 之前的计划与产出上下文（供参考）
+${previousContext}
+`;
+  }
+
+  if (availableTools && availableTools.length > 0) {
+    prompt += `
+## 可用工具
+${availableTools.map((t) => `- ${t}`).join('\n')}
+`;
+  }
+
+  if (maxSubtasks) {
+    prompt += `
+## 子任务数量限制
+最多生成 ${maxSubtasks} 个子任务（请尽量少）
+`;
+  }
+
+  if (additionalContext) {
+    prompt += `
+## 额外上下文
+${additionalContext}
+`;
+  }
+
+  prompt += `
+## 输出格式
+请以 JSON 格式输出，不要包含任何其他文本。JSON 应该包含以下结构：
+\`\`\`json
+{
+  "reasoning": "简要说明你的拆解依据（1-3 句）...",
   "subtasks": [
     {
       "id": "subtask-1",

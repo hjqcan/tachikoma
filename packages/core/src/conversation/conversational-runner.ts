@@ -177,7 +177,7 @@ export class ConversationalRunner {
       }
 
       // 2. 执行（对话驱动 → Orchestrator）
-      yield* this.runWithOrchestrator(session, task);
+      yield* this.runWithOrchestrator(session, task, { plannerMode: 'full' });
     } catch (error) {
       yield {
         type: 'error',
@@ -194,10 +194,23 @@ export class ConversationalRunner {
   private async *handleContinue(
     session: SessionState
   ): AsyncGenerator<StreamEvent> {
+    const lastObjective = session.variables.lastObjective;
+    const lastStatus = session.variables.lastRunStatus;
+
+    if (typeof lastObjective === 'string' && lastObjective.trim() && lastStatus !== 'success') {
+      const maxSubtasks = this.inferPatchMaxSubtasks(session, lastObjective);
+      yield* this.runWithOrchestrator(
+        session,
+        `继续上次任务：${lastObjective}`,
+        { plannerMode: 'patch', maxSubtasks }
+      );
+      return;
+    }
+
     yield {
       type: 'complete',
       success: true,
-      summary: session.currentPlan ? '当前会话没有挂起执行（已收敛为单次 Orchestrator 运行）' : '没有待执行的任务',
+      summary: session.currentPlan ? '当前会话没有挂起执行' : '没有待执行的任务',
       timestamp: Date.now(),
     };
   }
@@ -224,8 +237,34 @@ export class ConversationalRunner {
       timestamp: Date.now(),
     };
 
-    // 将修改请求作为新任务处理
-    yield* this.handleNewTask(session, modifyPrompt);
+    // 增量修改：走 patch-planning（基于已有计划/产出生成最小 delta 计划）
+    const maxSubtasks = this.inferPatchMaxSubtasks(session, modifyPrompt);
+    yield* this.runWithOrchestrator(session, modifyPrompt, {
+      plannerMode: 'patch',
+      maxSubtasks,
+    });
+  }
+
+  private inferPatchMaxSubtasks(session: SessionState, objective: string): number {
+    const lastFiles = session.variables.lastFilesAffected;
+    if (Array.isArray(lastFiles) && lastFiles.length >= 8) return 10;
+
+    const text = objective.toLowerCase();
+    const largeChangeKeywords = [
+      'refactor',
+      'migration',
+      'migrate',
+      'restructure',
+      'architecture',
+      '重构',
+      '迁移',
+      '架构',
+      '多文件',
+      '大量',
+    ];
+    if (largeChangeKeywords.some((k) => text.includes(k))) return 10;
+    if (objective.length >= 240) return 8;
+    return 5;
   }
 
   /**
@@ -382,7 +421,8 @@ export class ConversationalRunner {
    */
   private async *runWithOrchestrator(
     session: SessionState,
-    objective: string
+    objective: string,
+    options: { plannerMode: 'full' | 'patch'; maxSubtasks?: number } = { plannerMode: 'full' }
   ): AsyncGenerator<StreamEvent> {
     const orchestrator = this.getOrchestrator(session);
     const taskId = `task-${randomUUID().substring(0, 8)}`;
@@ -408,6 +448,16 @@ export class ConversationalRunner {
             apiKey: this.config.llm.apiKey,
             ...(this.config.llm.baseUrl && { baseUrl: this.config.llm.baseUrl }),
             model: this.config.llm.model ?? 'gpt-4o',
+          },
+          planner: {
+            mode: options.plannerMode,
+            ...(options.maxSubtasks !== undefined && { maxSubtasks: options.maxSubtasks }),
+            ...(typeof session.variables.lastRunError === 'string' && session.variables.lastRunError.trim()
+              ? { previousError: session.variables.lastRunError.trim() }
+              : {}),
+            ...(Array.isArray(session.variables.lastFilesAffected) && session.variables.lastFilesAffected.length > 0
+              ? { previousFiles: session.variables.lastFilesAffected.slice(0, 50) }
+              : {}),
           },
           memorySync: { strategy: 'selective' },
         },
@@ -529,6 +579,16 @@ export class ConversationalRunner {
       .then(async (result) => {
         // 更新变量
         session.variables.lastFilesAffected = filesAffected;
+        session.variables.lastObjective = objective;
+        session.variables.lastRunStatus = result.status;
+        if (result.status !== 'success') {
+          const out = result.output as unknown;
+          if (out && typeof out === 'object' && typeof (out as Record<string, unknown>).error === 'string') {
+            session.variables.lastRunError = (out as Record<string, unknown>).error;
+          }
+        } else {
+          delete session.variables.lastRunError;
+        }
         await this.sessionStore.saveSession(session);
 
         const summary: ExecutionSummary = {

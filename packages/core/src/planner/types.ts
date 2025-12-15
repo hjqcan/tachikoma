@@ -84,6 +84,34 @@ export interface LLMClientConfig extends AgentConfig {
   baseUrl?: string;
   /** 请求超时（毫秒） */
   timeout?: number;
+  /**
+   * 是否启用 Prompt Caching (P0)
+   *
+   * 当启用时，系统提示将被标记为 cache_control: ephemeral
+   * 可节省90%的输入token成本（Anthropic服务端缓存）
+   *
+   * @default true (Anthropic)
+   */
+  enablePromptCache?: boolean;
+  /**
+   * 是否启用 Extended Context Beta (P1)
+   *
+   * 当启用时， Claude 4/4.5 模型将支持最多 1M tokens
+   * 需要发送 anthropic-beta: extended-context 头部
+   *
+   * 出于兼容性考虑建议显式开启（beta 头部可能随时间变化）
+   *
+   * @default false
+   */
+  enableExtendedContext?: boolean;
+  /**
+   * Extended Context Beta Header 值（Anthropic）
+   *
+   * 仅在 enableExtendedContext=true 且模型匹配时生效。
+   *
+   * @default "extended-context-2025-04-14"
+   */
+  extendedContextBetaHeader?: string;
 }
 
 /**
@@ -155,6 +183,16 @@ export interface PromptVariables {
   outputSchema?: string | undefined;
   /** 额外上下文 */
   additionalContext?: string | undefined;
+}
+
+/**
+ * Patch 规划 Prompt 变量
+ *
+ * 用于“增量修改/补丁规划”：基于已有工作产出生成最小 delta 计划。
+ */
+export interface PatchPromptVariables extends PromptVariables {
+  /** 之前的计划/产出上下文（结构化摘要） */
+  previousContext?: string | undefined;
 }
 
 /**

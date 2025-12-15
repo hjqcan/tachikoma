@@ -24,6 +24,7 @@ export type {
   ParseRetryConfig,
   // Prompt 类型
   PromptVariables,
+  PatchPromptVariables,
   ErrorFeedbackVariables,
 } from './types';
 
@@ -53,7 +54,9 @@ export {
   type PlanningOutputFormat,
   // Prompt 模板
   PLANNING_SYSTEM_PROMPT,
+  PATCH_PLANNING_SYSTEM_PROMPT,
   generatePlanningUserPrompt,
+  generatePatchPlanningUserPrompt,
   generateErrorFeedbackPrompt,
   // 工具函数
   extractJsonFromResponse,

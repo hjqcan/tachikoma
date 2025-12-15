@@ -858,6 +858,76 @@ describe('Orchestrator 类', () => {
     });
   });
 
+  describe('patch previousContext', () => {
+    it('应包含错误/文件提示/进度/同步日志摘要', async () => {
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: createMockPlanner(),
+        workerPool: createMockWorkerPoolForTest(),
+      });
+
+      const fakeSessionManager = {
+        readOrchestratorPlan: async () => ({
+          plannerOutput: {
+            subtasks: [{ id: 'subtask-1', objective: 'Fix bug', constraints: [], estimatedDuration: 0, dependencies: [], status: 'pending' }],
+            delegation: { mode: 'communication', workerCount: 1, timeout: 1000, retryPolicy: DEFAULT_RETRY_POLICY },
+            executionPlan: { isParallel: false, steps: [{ order: 1, subtaskIds: ['subtask-1'], parallel: false }] },
+          },
+        }),
+        readProgress: async () => ({
+          status: 'failed',
+          currentStep: 1,
+          totalSteps: 2,
+          completedSubtasks: [],
+          failedSubtasks: ['subtask-1'],
+          runningSubtasks: [],
+        }),
+        readDecisions: async () => [
+          {
+            id: 'd1',
+            timestamp: Date.now(),
+            type: 'retry',
+            subtaskId: 'subtask-1',
+            decision: { reason: 'retry once' },
+          },
+        ],
+        readSharedContext: async () => ({
+          sharedKnowledge: {
+            data: {
+              syncLog: [
+                {
+                  subtaskId: 'subtask-1',
+                  workerId: 'worker-1',
+                  objective: 'Fix bug',
+                  updatedAt: Date.now(),
+                  modifiedFiles: ['a.ts'],
+                  decisions: [{ type: 'approval', reason: 'ok', approved: true }],
+                  output: 'changed a.ts to fix issue',
+                },
+              ],
+            },
+          },
+        }),
+      };
+
+      (orchestrator as unknown as Record<string, unknown>).sessionManager = fakeSessionManager;
+      (orchestrator as unknown as Record<string, unknown>).currentRunMetadata = {
+        planner: { previousError: 'boom', previousFiles: ['b.ts'] },
+      };
+
+      const ctx = await (orchestrator as unknown as { buildPatchPreviousContext: () => Promise<string> }).buildPatchPreviousContext();
+      expect(ctx).toContain('### Previous error');
+      expect(ctx).toContain('boom');
+      expect(ctx).toContain('### Previously affected files');
+      expect(ctx).toContain('b.ts');
+      expect(ctx).toContain('### Previous execution status');
+      expect(ctx).toContain('failed');
+      expect(ctx).toContain('### Recent syncLog');
+      expect(ctx).toContain('decisions:');
+      expect(ctx).toContain('output:');
+      expect(ctx).toContain('a.ts');
+    });
+  });
+
   describe('事件系统', () => {
     it('应支持添加和触发事件监听器', async () => {
       const mockPlanner = createMockPlanner();

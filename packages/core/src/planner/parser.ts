@@ -151,7 +151,10 @@ function validatePlanningOutput(data: unknown): asserts data is PlanningOutputFo
   const obj = data as Record<string, unknown>;
 
   // 验证 reasoning
-  if (typeof obj.reasoning !== 'string') {
+  // 允许缺省（用于提升鲁棒性），缺省时填充为空字符串
+  if (obj.reasoning === undefined) {
+    obj.reasoning = '';
+  } else if (typeof obj.reasoning !== 'string') {
     throw new ParseError('reasoning must be a string', 'reasoning');
   }
 
@@ -421,7 +424,8 @@ export class PlanningParser {
 
         // 发送重试请求
         const retryResponse = await this.client.complete({
-          systemPrompt: PLANNING_SYSTEM_PROMPT,
+          // 保持与原始请求一致的 system prompt（支持 patch planning 等不同模式）
+          systemPrompt: originalRequest?.systemPrompt ?? PLANNING_SYSTEM_PROMPT,
           messages: [
             // 包含原始请求上下文（如果有）
             ...(originalRequest?.messages || []),

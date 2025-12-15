@@ -69,14 +69,55 @@ export abstract class BaseLLMClient implements LLMClient {
 export class AnthropicLLMClient extends BaseLLMClient {
   readonly provider: LLMProvider = 'anthropic';
   private readonly anthropicProvider: ReturnType<typeof createAnthropic>;
+  private readonly anthropicProviderBase: ReturnType<typeof createAnthropic>;
+  private extendedContextEnabled: boolean;
 
   constructor(config: LLMClientConfig) {
     super(config);
-    // 创建 Anthropic provider 实例，使用条件展开避免 undefined 问题
-    this.anthropicProvider = createAnthropic({
+    
+    // 检测是否需要 Extended Context Beta Header (P1)
+    const needsExtendedContext =
+      config.enableExtendedContext === true && this.isExtendedContextModel(config.model);
+
+    const betaHeaderValue = config.extendedContextBetaHeader ?? 'extended-context-2025-04-14';
+
+    const baseProviderConfig = {
       ...(config.apiKey && { apiKey: config.apiKey }),
       ...(config.baseUrl && { baseURL: config.baseUrl }),
-    });
+    };
+
+    // 始终创建 base provider（无 beta header），用于降级重试
+    this.anthropicProviderBase = createAnthropic(baseProviderConfig);
+
+    // 创建可能带 beta header 的 provider
+    this.anthropicProvider = needsExtendedContext
+      ? createAnthropic({
+          ...baseProviderConfig,
+          headers: { 'anthropic-beta': betaHeaderValue },
+        })
+      : this.anthropicProviderBase;
+
+    this.extendedContextEnabled = needsExtendedContext;
+
+    if (needsExtendedContext) {
+      console.debug(
+        `[AnthropicLLMClient] Extended context beta enabled for ${config.model} (${betaHeaderValue})`
+      );
+    }
+  }
+  
+  /**
+   * 检查是否是支持 Extended Context 的模型
+   * Claude 4/4.5 系列支持 1M tokens
+   */
+  private isExtendedContextModel(model: string): boolean {
+    const lowerModel = model.toLowerCase();
+    return (
+      lowerModel.includes('claude-4') ||
+      lowerModel.includes('claude-4.5') ||
+      lowerModel.includes('claude-sonnet-4') ||
+      lowerModel.includes('claude-opus-4')
+    );
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -120,9 +161,11 @@ export class AnthropicLLMClient extends BaseLLMClient {
       abortSignal ??
       (this.config.timeout ? AbortSignal.timeout(this.config.timeout) : undefined);
 
-    try {
-      const result = await generateText({
-        model: this.anthropicProvider(this.config.model),
+    // P0: 检查是否启用 Prompt Caching
+    const enableCache = this.config.enablePromptCache !== false;
+
+    const buildRequest = (provider: ReturnType<typeof createAnthropic>) => ({
+      model: provider(this.config.model),
         system: systemPrompt,
         messages: filteredMessages.map((m) => ({
           role: m.role as 'user' | 'assistant',
@@ -133,22 +176,61 @@ export class AnthropicLLMClient extends BaseLLMClient {
         // 使用条件展开避免 undefined 问题
         ...(stopSequences && { stopSequences }),
         ...(effectiveAbortSignal && { abortSignal: effectiveAbortSignal }),
-      });
+        // P0: Prompt Caching via experimental_providerMetadata
+        ...(enableCache && {
+          experimental_providerMetadata: {
+            anthropic: {
+              cacheControl: { type: 'ephemeral' },
+            },
+          },
+        }),
+    });
 
+    const toResponse = (result: Awaited<ReturnType<typeof generateText>>): LLMResponse => ({
+      content: result.text,
+      usage: {
+        inputTokens: result.usage.inputTokens ?? 0,
+        outputTokens: result.usage.outputTokens ?? 0,
+      },
+      stopReason: result.finishReason,
+      model: this.config.model,
+    });
 
-      return {
-        content: result.text,
-        usage: {
-          inputTokens: result.usage.inputTokens ?? 0,
-          outputTokens: result.usage.outputTokens ?? 0,
-        },
-        stopReason: result.finishReason,
-        model: this.config.model,
-      };
+    try {
+      const result = await generateText(buildRequest(this.anthropicProvider));
+      return toResponse(result);
     } catch (error) {
-      // 处理 AI SDK 错误
       const err = error as Error & { status?: number; code?: string };
       const statusCode = err.status || 0;
+
+      // Beta header 不被支持/已过期时：自动降级重试一次（避免硬失败）
+      if (
+        this.extendedContextEnabled &&
+        statusCode >= 400 &&
+        statusCode < 500 &&
+        this.isLikelyExtendedContextBetaError(err)
+      ) {
+        this.extendedContextEnabled = false;
+        console.warn(
+          `[AnthropicLLMClient] Extended context beta rejected (HTTP ${statusCode}); retrying without beta header`
+        );
+        try {
+          const retryResult = await generateText(buildRequest(this.anthropicProviderBase));
+          return toResponse(retryResult);
+        } catch (fallbackError) {
+          const fallbackErr = fallbackError as Error & { status?: number; code?: string };
+          const fallbackStatus = fallbackErr.status || 0;
+          const fallbackRetryable = fallbackStatus >= 500 || fallbackStatus === 429;
+          throw new LLMClientError(
+            fallbackErr.message || 'Unknown error',
+            this.provider,
+            fallbackErr.code || `HTTP_${fallbackStatus}`,
+            fallbackRetryable
+          );
+        }
+      }
+
+      // 处理 AI SDK 错误
       const isRetryable = statusCode >= 500 || statusCode === 429;
 
       throw new LLMClientError(
@@ -158,6 +240,20 @@ export class AnthropicLLMClient extends BaseLLMClient {
         isRetryable
       );
     }
+  }
+
+  private isLikelyExtendedContextBetaError(
+    err: Error & { status?: number; code?: string }
+  ): boolean {
+    const message = (err.message || '').toLowerCase();
+    const code = (err.code || '').toLowerCase();
+    return (
+      message.includes('anthropic-beta') ||
+      message.includes('beta') ||
+      message.includes('extended-context') ||
+      code.includes('beta') ||
+      code.includes('anthropic')
+    );
   }
 }
 
