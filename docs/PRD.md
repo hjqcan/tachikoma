@@ -2,10 +2,10 @@
 
 ## 产品需求文档 (PRD)
 
-**版本**: v1.0  
-**日期**: 2025 年 12 月 4 日  
-**作者**: [Your Name]  
-**状态**: 草案
+**版本**: v2.0  
+**日期**: 2025 年 12 月 15 日  
+**作者**: Tachikoma Team  
+**状态**: 开发中 (Active Development)
 
 ---
 
@@ -195,41 +195,55 @@ interface OrchestratorTask {
 
 #### 3.4.1 分层式行为空间
 
-| 层级                    | 描述                          | 访问方式               | 效率优势               |
-| ----------------------- | ----------------------------- | ---------------------- | ---------------------- |
-| **Layer 1: 原子函数**   | 固定数量的原子工具 (10-20 个) | 直接函数调用           | 约束解码，Schema 安全  |
-| **Layer 2: 沙盒工具**   | 预装的命令行工具              | `execute_shell`        | 不占用函数调用上下文   |
-| **Layer 3: 软件包/API** | 预授权的外部 API              | TypeScript/Python 脚本 | 处理大量数据和内存计算 |
+| 层级                    | 描述                         | 访问方式               | 效率优势               |
+| ----------------------- | ---------------------------- | ---------------------- | ---------------------- |
+| **Layer 1: 原子函数**   | 20+ 核心工具 (✅ 已实现)     | 直接函数调用           | 约束解码，Schema 安全  |
+| **Layer 2: 沙盒工具**   | 预装的命令行工具 (✅ 已实现) | `shell_run`            | 不占用函数调用上下文   |
+| **Layer 3: 软件包/API** | MCP + 代码执行 (✅ 已实现)   | TypeScript/Python 脚本 | 处理大量数据和内存计算 |
 
 #### 3.4.2 原子函数清单 (Layer 1)
 
 ```typescript
-// 核心原子函数定义
-const ATOMIC_FUNCTIONS = {
+// ✅ 已实现的核心工具 (packages/core/src/tools/core/)
+const IMPLEMENTED_TOOLS = {
   // 文件操作
-  read_file: { description: '读取文件内容', params: ['path', 'encoding?'] },
-  write_file: { description: '写入文件内容', params: ['path', 'content'] },
-  glob_search: { description: 'Glob模式文件搜索', params: ['pattern', 'cwd?'] },
-  grep_search: {
-    description: '正则表达式内容搜索',
-    params: ['pattern', 'path?'],
+  file_read: { description: '读取文件内容', params: ['path', 'maxLines?', 'startLine?'] },
+  file_write: { description: '写入文件内容', params: ['path', 'content', 'append?'] },
+  file_list: { description: '列出目录内容', params: ['path', 'recursive?', 'excludes?'] },
+  file_patch: { description: '应用补丁修改', params: ['path', 'patches[]'] }, // apply_patch
+  file_replace_markers: {
+    description: '标记间内容替换',
+    params: ['path', 'startMarker', 'endMarker', 'content'],
   },
 
-  // Shell操作
-  execute_shell: { description: '执行Shell命令', params: ['command', 'cwd?'] },
+  // 代码搜索
+  code_search: { description: 'AST 语义搜索', params: ['query', 'path?', 'language?'] },
+  grep_search: { description: '正则表达式搜索', params: ['pattern', 'path?', 'includes?'] },
 
-  // 浏览器操作
-  browser_navigate: { description: '导航到URL', params: ['url'] },
+  // 执行
+  shell_run: { description: '执行 Shell 命令', params: ['command', 'cwd?', 'timeout?'] },
+  run_tests: { description: '运行测试套件', params: ['pattern?', 'framework?'] },
+  type_check: { description: 'TypeScript 类型检查', params: ['path?', 'strict?'] },
+
+  // 浏览器
+  browser_navigate: { description: '导航到 URL', params: ['url'] },
   browser_click: { description: '点击元素', params: ['selector'] },
   browser_input: { description: '输入文本', params: ['selector', 'text'] },
-  browser_screenshot: { description: '截取屏幕快照', params: ['fullPage?'] },
+  browser_screenshot: { description: '截取屏幕', params: ['fullPage?'] },
 
-  // 搜索操作
+  // 网络搜索
   web_search: { description: '网络搜索', params: ['query', 'limit?'] },
+  deep_research: { description: '深度研究', params: ['topic', 'depth?'] },
 
   // 智能体操作
   spawn_subagent: { description: '创建子智能体', params: ['task', 'config'] },
-  submit_result: { description: '提交结果', params: ['result', 'schema'] },
+  submit_result: { description: '提交最终结果', params: ['result', 'schema'] },
+  report_back: { description: '向父级报告进度', params: ['status', 'message'] },
+
+  // 辅助工具
+  env_get: { description: '获取环境变量', params: ['key'] },
+  package_info: { description: '获取包依赖信息', params: ['path?'] },
+  security_check: { description: '安全检查', params: ['path', 'type'] },
 };
 ```
 
@@ -476,7 +490,7 @@ interface AgentTracing {
 
 ### 4.1 核心功能 (P0)
 
-#### 4.1.1 F-001: 统筹者智能体
+#### 4.1.1 F-001: 统筹者智能体 ✅ 已实现
 
 | 属性         | 描述                                           |
 | ------------ | ---------------------------------------------- |
@@ -489,7 +503,7 @@ interface AgentTracing {
 
 > 作为开发者，我希望能够描述一个高层目标（如"添加用户认证功能"），系统能够自动分解任务并分配给合适的工作者执行。
 
-#### 4.1.2 F-002: 工作者智能体
+#### 4.1.2 F-002: 工作者智能体 ✅ 已实现
 
 | 属性         | 描述                                     |
 | ------------ | ---------------------------------------- |
@@ -498,7 +512,7 @@ interface AgentTracing {
 | **输出**     | 执行结果、生成的代码/文件、状态报告      |
 | **验收标准** | 能够在沙盒中安全执行代码，正确使用工具   |
 
-#### 4.1.3 F-003: 代码沙盒
+#### 4.1.3 F-003: 代码沙盒 ✅ 已实现
 
 | 属性         | 描述                                         |
 | ------------ | -------------------------------------------- |
@@ -507,7 +521,7 @@ interface AgentTracing {
 | **输出**     | 执行结果、日志、错误信息                     |
 | **验收标准** | 沙盒环境安全隔离，支持预装工具和 MCP CLI     |
 
-#### 4.1.4 F-004: MCP 集成
+#### 4.1.4 F-004: MCP 集成 ✅ 已实现
 
 | 属性         | 描述                                             |
 | ------------ | ------------------------------------------------ |
@@ -518,7 +532,7 @@ interface AgentTracing {
 
 ### 4.2 重要功能 (P1)
 
-#### 4.2.1 F-005: 上下文管理
+#### 4.2.1 F-005: 上下文管理 ✅ 已实现
 
 | 属性         | 描述                                     |
 | ------------ | ---------------------------------------- |
@@ -527,7 +541,7 @@ interface AgentTracing {
 | **输出**     | 优化后的上下文                           |
 | **验收标准** | 上下文保持在"腐烂前"阈值以下，信息无丢失 |
 
-#### 4.2.2 F-006: 长时任务支持
+#### 4.2.2 F-006: 长时任务支持 ✅ 已实现
 
 | 属性         | 描述                               |
 | ------------ | ---------------------------------- |
@@ -536,7 +550,7 @@ interface AgentTracing {
 | **输出**     | 增量进展、结构化更新               |
 | **验收标准** | 能够在新会话中恢复进度，保持连贯性 |
 
-#### 4.2.3 F-007: Skills 系统
+#### 4.2.3 F-007: Skills 系统 ✅ 已实现
 
 | 属性         | 描述                           |
 | ------------ | ------------------------------ |
@@ -547,7 +561,7 @@ interface AgentTracing {
 
 ### 4.3 可选功能 (P2)
 
-#### 4.3.1 F-008: 多智能体协作
+#### 4.3.1 F-008: 多智能体协作 ✅ 已实现
 
 | 属性         | 描述                          |
 | ------------ | ----------------------------- |
@@ -556,7 +570,7 @@ interface AgentTracing {
 | **输出**     | 聚合结果                      |
 | **验收标准** | 支持 3-5 个并行工作者，无冲突 |
 
-#### 4.3.2 F-009: 记忆系统
+#### 4.3.2 F-009: 记忆系统 ✅ 已实现
 
 | 属性         | 描述                   |
 | ------------ | ---------------------- |
@@ -635,68 +649,39 @@ interface AgentTracing {
 
 ```
 tachikoma/
-├── docs/                     # 文档
-│   ├── PRD.md               # 产品需求文档
-│   ├── architecture.md      # 架构文档
-│   └── references/          # 参考资料
+├── docs/                        # 文档
+│   ├── PRD.md                   # 产品需求文档
+│   └── references/              # 参考资料
 ├── packages/
-│   ├── core/                # 核心库
-│   │   ├── src/
-│   │   │   ├── agents/      # 智能体实现
-│   │   │   │   ├── orchestrator.ts
-│   │   │   │   ├── worker.ts
-│   │   │   │   └── base.ts
-│   │   │   ├── context/     # 上下文管理
-│   │   │   │   ├── compaction.ts
-│   │   │   │   ├── summarization.ts
-│   │   │   │   └── memory.ts
-│   │   │   ├── tools/       # 原子工具
-│   │   │   │   ├── filesystem.ts
-│   │   │   │   ├── shell.ts
-│   │   │   │   ├── browser.ts
-│   │   │   │   └── search.ts
-│   │   │   ├── sandbox/     # 沙盒管理
-│   │   │   │   ├── docker.ts
-│   │   │   │   └── executor.ts
-│   │   │   └── mcp/         # MCP 集成
-│   │   │       ├── client.ts
-│   │   │       └── code-gen.ts
-│   │   └── package.json
-│   ├── gateway/             # API 网关
-│   │   ├── src/
-│   │   │   ├── routes/
-│   │   │   ├── middleware/
-│   │   │   └── security/
-│   │   └── package.json
-│   ├── agentops/            # 可观测性
-│   │   ├── src/
-│   │   │   ├── tracing/
-│   │   │   ├── logging/
-│   │   │   ├── metrics/
-│   │   │   └── eval/
-│   │   └── package.json
-│   └── cli/                 # 命令行工具
-│       ├── src/
-│       └── package.json
-├── skills/                  # Skills 库
-│   ├── code-review/
-│   ├── data-analysis/
-│   └── ...
-├── servers/                 # MCP 服务器代理
-│   ├── google-drive/
-│   ├── github/
-│   └── ...
-├── sandbox/                 # 沙盒环境
-│   ├── Dockerfile
-│   └── tools/
-├── tests/                   # 测试
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-├── bunfig.toml             # Bun 配置
-├── package.json
-├── tsconfig.json
-└── README.md
+│   ├── core/                    # 核心库
+│   │   ├── bin/                 # CLI 入口
+│   │   │   └── tachikoma.ts     # 主命令行工具
+│   │   └── src/
+│   │       ├── abstracts/       # 抽象基类 (BaseAgent, BaseSandbox)
+│   │       ├── agents/          # 智能体实现 (WorkerAgent)
+│   │       ├── collaboration/   # 多智能体协作 (Registry, Broker, Blackboard)
+│   │       ├── config/          # 配置管理
+│   │       ├── conversation/    # 多轮对话运行时
+│   │       ├── factories/       # 工厂注册表
+│   │       ├── mcp/             # MCP 集成 (Client, Router, Discovery)
+│   │       ├── memory/          # 记忆系统 (MemoryService + 多后端)
+│   │       ├── observability/   # 可观测性 (Logger, Tracer, Metrics)
+│   │       ├── orchestrator/    # 统筹者 (Planner, WorkerPool, Session)
+│   │       ├── planner/         # 任务规划器 (LLM 驱动)
+│   │       ├── prompt/          # Prompt 上下文工程
+│   │       ├── rag/             # 检索增强生成
+│   │       ├── sandbox/         # 沙盒管理 (Docker/Local 驱动)
+│   │       ├── skills/          # Skills 加载与执行
+│   │       ├── speckit/         # SpecKit SDD 模块
+│   │       ├── tools/           # 工具系统 (20+ 核心工具)
+│   │       └── worker/          # 工作者 (Executor, Backend)
+│   ├── sandbox/                 # 沙盒镜像配置 (Dockerfile)
+│   ├── gateway/                 # API 网关
+│   ├── agentops/                # AgentOps 仪表板
+│   └── cli/                     # 独立 CLI 包
+├── skills/                      # 官方 Skills 库
+├── servers/                     # MCP 服务器代理
+└── tests/                       # 测试套件
 ```
 
 ### 6.3 核心接口定义
@@ -850,22 +835,22 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
      Layer 1               Layer 2               Layer 3               Layer 4               Layer 5
 ```
 
-### 7.2 Phase 1: 基础架构与安全网关层 (4 周)
+### 7.2 Phase 1: 基础架构与安全网关层 (4 周) ✅ 已完成
 
 #### Week 1-2: 项目初始化
 
-- [ ] 项目结构搭建
-- [ ] Bun + TypeScript 环境配置
-- [ ] 基础工具链设置 (ESLint, Prettier, Jest)
-- [ ] CI/CD 流水线配置
+- [x] 项目结构搭建
+- [x] Bun + TypeScript 环境配置
+- [x] 基础工具链设置 (ESLint, Prettier)
+- [x] CI/CD 流水线配置
 
 #### Week 3-4: 安全网关实现
 
-- [ ] HTTP 服务器 (Hono/Elysia)
-- [ ] 身份认证模块 (JWT)
-- [ ] 输入过滤 (提示注入检测)
-- [ ] 输出过滤 (PII 脱敏)
-- [ ] 分布式追踪初始化 (OpenTelemetry)
+- [x] HTTP 服务器 (Hono/Elysia)
+- [x] 身份认证模块 (JWT)
+- [x] 输入过滤 (提示注入检测)
+- [x] 输出过滤 (PII 脱敏)
+- [x] 分布式追踪初始化 (OpenTelemetry)
 
 **交付物**:
 
@@ -873,21 +858,21 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 - 安全中间件
 - 基础文档
 
-### 7.3 Phase 2: 统筹与规划层 (4 周)
+### 7.3 Phase 2: 统筹与规划层 (4 周) ✅ 已完成
 
 #### Week 5-6: 统筹者智能体
 
-- [ ] Agent 基类实现
-- [ ] 统筹者智能体核心逻辑
-- [ ] 任务分解算法
-- [ ] 委托机制
+- [x] Agent 基类实现 (BaseAgent, abstracts/)
+- [x] 统筹者智能体核心逻辑 (Orchestrator ~2600行)
+- [x] 任务分解算法 (Planner + DAG 生成)
+- [x] 委托机制 (WorkerPool)
 
 #### Week 7-8: 长时任务支持
 
-- [ ] 初始化智能体
-- [ ] 进度追踪系统
-- [ ] Git 集成
-- [ ] 会话恢复机制
+- [x] 初始化智能体
+- [x] 进度追踪系统 (SessionFileManager)
+- [x] Git 集成
+- [x] 会话恢复机制 (检查点恢复)
 
 **交付物**:
 
@@ -895,21 +880,21 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 - 长时任务 Harness
 - 单元测试
 
-### 7.4 Phase 3: 执行核心与工具层 (3 周)
+### 7.4 Phase 3: 执行核心与工具层 (3 周) ✅ 已完成
 
 #### Week 9-10: 沙盒与原子工具
 
-- [ ] Docker 沙盒管理
-- [ ] 文件系统工具
-- [ ] Shell 执行工具
-- [ ] 浏览器自动化工具
+- [x] Docker 沙盒管理 (sandbox/drivers/)
+- [x] 文件系统工具 (file_read/write/list/patch)
+- [x] Shell 执行工具 (shell_run, run_tests, type_check)
+- [x] 浏览器自动化工具 (browser-tools.ts)
 
 #### Week 11: MCP 集成
 
-- [ ] MCP 客户端
-- [ ] 代码生成模块
-- [ ] 工具发现机制
-- [ ] 分层式行为空间
+- [x] MCP 客户端 (MCPClientManager)
+- [x] 代码生成模块 (mcp/generator.ts)
+- [x] 工具发现机制 (ToolDiscovery)
+- [x] 分层式行为空间 (progressive-disclosure.ts)
 
 **交付物**:
 
@@ -917,21 +902,21 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 - 沙盒环境
 - MCP 集成
 
-### 7.5 Phase 4: 上下文与持久层 (3 周)
+### 7.5 Phase 4: 上下文与持久层 (3 周) ✅ 已完成
 
 #### Week 12-13: 上下文管理
 
-- [ ] 压缩算法
-- [ ] 摘要生成
-- [ ] 上下文卸载
-- [ ] 阈值管理
+- [x] 压缩算法 (prompt/strategies/)
+- [x] 摘要生成 (summarization)
+- [x] 上下文卸载 (prompt/memory/)
+- [x] 阈值管理 (PromptContextEngine)
 
 #### Week 14: 记忆与 Skills
 
-- [ ] 会话管理
-- [ ] 记忆系统
-- [ ] Skills 加载器
-- [ ] 渐进披露机制
+- [x] 会话管理 (conversation/session-store.ts)
+- [x] 记忆系统 (MemoryService + 多后端)
+- [x] Skills 加载器 (skills/)
+- [x] 渐进披露机制 (progressive-disclosure.ts)
 
 **交付物**:
 
@@ -939,13 +924,13 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 - 记忆系统
 - Skills 框架
 
-### 7.6 Phase 5: AgentOps 与治理层 (2 周)
+### 7.6 Phase 5: AgentOps 与治理层 (2 周) 🔄 进行中
 
 #### Week 15: 可观测性
 
-- [ ] 完整追踪集成
-- [ ] 结构化日志
-- [ ] Prometheus 指标
+- [x] 完整追踪集成 (Tracer)
+- [x] 结构化日志 (ConsoleLogger)
+- [x] Prometheus 指标 (MetricsCollector)
 - [ ] Grafana 仪表板
 
 #### Week 16: 评估与优化
@@ -953,7 +938,7 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 - [ ] 评估框架
 - [ ] LLM-as-Judge 集成
 - [ ] 质量飞轮机制
-- [ ] 文档完善
+- [x] 文档完善
 
 **交付物**:
 
@@ -1072,9 +1057,10 @@ Phase 1 (4周)          Phase 2 (4周)          Phase 3 (3周)          Phase 4 
 
 **文档历史**
 
-| 版本 | 日期       | 作者 | 变更说明 |
-| ---- | ---------- | ---- | -------- |
-| v1.0 | 2025-12-04 | -    | 初始版本 |
+| 版本 | 日期       | 作者           | 变更说明                                             |
+| ---- | ---------- | -------------- | ---------------------------------------------------- |
+| v1.0 | 2025-12-04 | -              | 初始版本                                             |
+| v2.0 | 2025-12-15 | Tachikoma Team | 更新开发进度，标记已完成功能，更新项目结构和工具列表 |
 
 ---
 
