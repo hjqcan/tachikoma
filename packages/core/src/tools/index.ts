@@ -6,6 +6,32 @@
 
 import type { Tool } from '../types';
 
+// 核心工具导入
+import {
+  fileReadTool,
+  fileWriteTool,
+  fileListTool,
+  shellRunTool,
+  codeSearchTool,
+  applyPatchTool,
+  replaceBetweenMarkersTool,
+  runTestsTool,
+  typeCheckTool,
+  packageInfoTool,
+  envGetTool,
+} from './core';
+
+// RAG 工具导入
+import { knowledgeRetrievalTool } from './rag';
+import { knowledgeUpsertTool } from './rag/upsert';
+
+// 网络/Agent 工具导入
+import { webSearchTool } from './core/web-search';
+import { deepResearchTool } from './core/deep-research';
+import { spawnSubagentTool } from './core/spawn-subagent';
+import { submitResultTool } from './core/submit-result';
+import { createSkillTool } from './core/create-skill';
+
 // 类型导出
 export type {
   // 工具结果类型
@@ -50,7 +76,6 @@ export type {
 export { ToolPermission, ToolLayer, ToolCategory } from './types';
 
 // 权限和注册表导出
-// 导出所有核心工具和管理类
 export { PermissionValidator } from './permission-validator';
 export { ToolRegistry, globalToolRegistry } from './registry';
 export { SandboxToolWrapper, sandboxToolWrapper } from './sandbox-wrapper';
@@ -91,39 +116,18 @@ export {
   detectPackageManager,
 } from './core';
 
-// 工具注册表
-import {
-  fileReadTool,
-  fileWriteTool,
-  fileListTool,
-  shellRunTool,
-  codeSearchTool,
-  applyPatchTool,
-  replaceBetweenMarkersTool,
-  runTestsTool,
-  typeCheckTool,
-  packageInfoTool,
-  envGetTool,
-} from './core';
-
-// RAG工具
+// RAG工具导出
 export { knowledgeRetrievalTool } from './rag';
 export { knowledgeUpsertTool } from './rag/upsert';
-import { knowledgeRetrievalTool } from './rag';
-import { knowledgeUpsertTool } from './rag/upsert';
 
-// 6.7 新增工具
-export { webSearchTool } from './core/web-search';
-export { deepResearchTool } from './core/deep-research';
-export { spawnSubagentTool } from './core/spawn-subagent';
-export { submitResultTool } from './core/submit-result';
-// Browser tools are intentionally NOT exported from the default tools surface.
-// Import from `@tachikoma/core/tools/browser` (or `../tools/browser` internally) when needed.
-
-import { webSearchTool } from './core/web-search';
-import { deepResearchTool } from './core/deep-research';
-import { spawnSubagentTool } from './core/spawn-subagent';
-import { submitResultTool } from './core/submit-result';
+// 新增工具导出 (使用已导入的变量)
+export {
+  webSearchTool,
+  deepResearchTool,
+  spawnSubagentTool,
+  submitResultTool,
+  createSkillTool,
+};
 
 // 6.8 MCP Layer 3
 export {
@@ -169,10 +173,12 @@ export const baseTools: Tool[] = [
  * 这些工具需要与 Orchestrator 配合使用
  * - spawn_subagent: 创建子任务到 subtasks 目录
  * - submit_result: 提交结果到 artifacts 目录
+ * - create_skill: 动态创建新技能
  */
 export const agentTools: Tool[] = [
   spawnSubagentTool,
   submitResultTool,
+  createSkillTool,
 ];
 
 /**

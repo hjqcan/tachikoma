@@ -22,6 +22,14 @@ export { envGetTool } from './env-get';
 export { spawnSubagentTool } from './spawn-subagent';
 export { reportBackTool } from './report-back';
 
+// 项目生成工具
+export { scaffoldProjectTool } from './scaffold-project';
+export { runLocalTool } from './run-local';
+export { dockerizeTool } from './dockerize';
+
+// 技能工具
+export { createSkillTool } from './create-skill';
+
 // 安全工具函数
 export {
   DEFAULT_ENV_WHITELIST,

@@ -28,6 +28,7 @@ import type { Sandbox, SandboxConfig } from '../../sandbox';
 import { createLLMClient } from '../../planner/llm-client';
 import { createLocalSandbox } from '../../sandbox/drivers/local';
 import { createSandboxConfig } from '../../sandbox/types';
+import { globalToolRegistry } from '../../tools/registry';
 import {
   createSandboxToolExecutor,
   type ISandboxToolExecutor,
@@ -1970,7 +1971,15 @@ When the task is complete, provide a final summary of what was accomplished.`));
     options: WorkerExecutionOptions
   ): Promise<{ success: boolean; output: unknown }> {
     // 查找工具
-    const tool = tools.find((t) => t.name === call.name);
+    let tool = tools.find((t) => t.name === call.name);
+
+    // Fallback: 尝试从全局注册表查找（用于动态创建的 Skill）
+    if (!tool) {
+      tool = globalToolRegistry.getByName(call.name);
+      if (tool) {
+        console.debug(`[GenericAgentBackend] Found dynamic tool in global registry: ${call.name}`);
+      }
+    }
 
     if (!tool) {
       return {
