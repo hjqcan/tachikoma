@@ -127,6 +127,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
     try {
       let nextUserMessage: string | null = task;
+      let lastExitCode = 0;
       while (nextUserMessage) {
         let needUserInputQuestion: string | null = null;
         let finalComplete: { success: boolean; summary: string } | null = null;
@@ -156,6 +157,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
               break;
             case 'complete':
               finalComplete = { success: evt.success, summary: evt.summary };
+              lastExitCode = evt.success ? 0 : 1;
               if (evt.success) {
                 logSuccess(evt.summary);
               } else {
@@ -170,17 +172,11 @@ ${colors.bold}${colors.cyan}╔════════════════�
         }
 
         if (lastError) {
-          logError('任务执行失败！');
-          process.exit(1);
-        }
-
-        if (finalComplete) {
-          if (!finalComplete.success) {
+          if (!rl) {
             logError('任务执行失败！');
             process.exit(1);
           }
-          logSuccess('任务执行完成！');
-          return;
+          logWarn('发生错误，你可以继续输入新的指令/补充信息，或输入 exit 退出。');
         }
 
         if (needUserInputQuestion) {
@@ -194,6 +190,23 @@ ${colors.bold}${colors.cyan}╔════════════════�
             process.exit(2);
           }
           nextUserMessage = answer;
+          continue;
+        }
+
+        if (finalComplete) {
+          if (!rl) {
+            if (!finalComplete.success) process.exit(1);
+            logSuccess('任务执行完成！');
+            return;
+          }
+
+          logInfo('请输入下一条指令/任务（或输入 exit 退出）');
+          const next = (await rl.question(`${colors.bold}> ${colors.reset}`)).trim();
+          if (!next || /^(exit|quit|q)$/i.test(next)) {
+            if (lastExitCode !== 0) process.exit(lastExitCode);
+            return;
+          }
+          nextUserMessage = next;
           continue;
         }
 
