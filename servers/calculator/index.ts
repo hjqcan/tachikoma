@@ -7,7 +7,7 @@
  * @module servers/calculator
  */
 
-import { createToolCaller } from '../';
+import { createToolCaller } from '..';
 
 // ============================================================================
 // 类型定义

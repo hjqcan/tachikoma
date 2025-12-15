@@ -547,8 +547,26 @@ export class DefaultWorkerPool implements IWorkerPool {
       };
     }
 
-    // 选择 Worker
-    const workerId = this.selectWorker();
+    // 选择 Worker（支持按能力/偏好路由）
+    const preferredWorkerId = context && typeof context.preferredWorkerId === 'string'
+      ? (context.preferredWorkerId as string)
+      : undefined;
+    const requiredCapabilities = context && Array.isArray(context.requiredCapabilities)
+      ? (context.requiredCapabilities as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
+      : undefined;
+
+    let workerId: string | undefined;
+    if (preferredWorkerId) {
+      const w = this.workers.get(preferredWorkerId);
+      if (w && w.status === 'idle') {
+        if (!requiredCapabilities || requiredCapabilities.every((cap) => (w.capabilities ?? []).includes(cap))) {
+          workerId = preferredWorkerId;
+        }
+      }
+    }
+    if (!workerId) {
+      workerId = this.selectWorker(requiredCapabilities);
+    }
     if (!workerId) {
       return {
         success: false,

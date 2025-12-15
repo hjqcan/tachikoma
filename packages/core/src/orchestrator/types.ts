@@ -48,6 +48,19 @@ export interface SubTask {
   objective: string;
   /** 约束条件 */
   constraints: string[];
+  /**
+   * 期望的执行角色（可选）
+   *
+   * 由 Planner 在“角色化规划”时生成，Orchestrator/WorkerPool 可据此路由到对应 Worker。
+   */
+  roleId?: string;
+  /**
+   * 需要的能力标签（可选）
+   *
+   * WorkerPool 在分配时会基于 capabilities 过滤可用 Worker。
+   * 建议使用稳定的能力字符串（如 "role:frontend" / "frontend" 等）。
+   */
+  requiredCapabilities?: string[];
   /** 预期输出 Schema */
   outputSchema?: JSONSchema;
   /** 预估执行时间（毫秒） */
@@ -62,6 +75,38 @@ export interface SubTask {
   assignedWorkerId?: string;
   /** 执行结果 */
   result?: TaskResult;
+}
+
+/**
+ * Planner 生成的角色定义（每个角色对应一个 Worker）
+ */
+export interface PlannerRole {
+  /** 角色 ID（稳定标识，用于 subtask.roleId 引用） */
+  id: string;
+  /** 角色名称（如 产品经理/前端/后端/测试 等） */
+  name: string;
+  /** 角色职责（简短，可作为约束注入到 Worker） */
+  responsibilities: string;
+  /** 能力标签（用于 WorkerPool capability 过滤） */
+  capabilities: string[];
+}
+
+/**
+ * 任务入口评估（开始执行前的“是否需要澄清”）
+ */
+export interface TaskIntakeAssessment {
+  /** 是否已具备开始执行的必要信息 */
+  ready: boolean;
+  /** 识别到的用户意图（可选，启发式/模型推断） */
+  userIntent?: string;
+  /** 情绪/语气（可选，启发式/模型推断） */
+  sentiment?: string;
+  /** 缺失信息点（ready=false 时常用） */
+  missingInfo?: string[];
+  /** 需要向用户澄清的问题（ready=false 时常用） */
+  questions?: string[];
+  /** 建议的角色集合（ready=true 时常用；每个角色≈一个 worker） */
+  roles?: PlannerRole[];
 }
 
 /**
@@ -146,6 +191,10 @@ export interface PlannerOutput {
   delegation: DelegationConfig;
   /** 执行计划（子任务执行顺序） */
   executionPlan: ExecutionPlan;
+  /** 任务入口评估（可选：用于澄清/角色化 worker） */
+  intake?: TaskIntakeAssessment;
+  /** 角色列表（可选：每个角色对应一个 Worker） */
+  roles?: PlannerRole[];
   /** 规划依据（简要说明） */
   reasoning?: string | undefined;
   /** 预估总执行时间 */

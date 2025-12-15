@@ -59,6 +59,30 @@ function validateSubtask(
     );
   }
 
+  if (st.roleId !== undefined && typeof st.roleId !== 'string') {
+    throw new ParseError(
+      `subtasks[${index}].roleId must be a string when provided`,
+      `subtasks[${index}].roleId`
+    );
+  }
+
+  if (st.requiredCapabilities !== undefined) {
+    if (!Array.isArray(st.requiredCapabilities)) {
+      throw new ParseError(
+        `subtasks[${index}].requiredCapabilities must be an array when provided`,
+        `subtasks[${index}].requiredCapabilities`
+      );
+    }
+    for (const cap of st.requiredCapabilities) {
+      if (typeof cap !== 'string' || !cap) {
+        throw new ParseError(
+          `subtasks[${index}].requiredCapabilities must contain non-empty strings`,
+          `subtasks[${index}].requiredCapabilities`
+        );
+      }
+    }
+  }
+
   if (!Array.isArray(st.constraints)) {
     throw new ParseError(
       `subtasks[${index}].constraints must be an array`,
@@ -150,6 +174,74 @@ function validatePlanningOutput(data: unknown): asserts data is PlanningOutputFo
 
   const obj = data as Record<string, unknown>;
 
+  // intake（可选）
+  if (obj.intake !== undefined) {
+    if (typeof obj.intake !== 'object' || obj.intake === null) {
+      throw new ParseError('intake must be an object when provided', 'intake');
+    }
+    const intake = obj.intake as Record<string, unknown>;
+    if (typeof intake.ready !== 'boolean') {
+      throw new ParseError('intake.ready must be a boolean', 'intake.ready');
+    }
+    if (intake.userIntent !== undefined && typeof intake.userIntent !== 'string') {
+      throw new ParseError('intake.userIntent must be a string when provided', 'intake.userIntent');
+    }
+    if (intake.sentiment !== undefined && typeof intake.sentiment !== 'string') {
+      throw new ParseError('intake.sentiment must be a string when provided', 'intake.sentiment');
+    }
+    if (intake.missingInfo !== undefined) {
+      if (!Array.isArray(intake.missingInfo)) {
+        throw new ParseError('intake.missingInfo must be an array when provided', 'intake.missingInfo');
+      }
+      for (const item of intake.missingInfo) {
+        if (typeof item !== 'string') {
+          throw new ParseError('intake.missingInfo must contain strings', 'intake.missingInfo');
+        }
+      }
+    }
+    if (intake.questions !== undefined) {
+      if (!Array.isArray(intake.questions)) {
+        throw new ParseError('intake.questions must be an array when provided', 'intake.questions');
+      }
+      for (const q of intake.questions) {
+        if (typeof q !== 'string') {
+          throw new ParseError('intake.questions must contain strings', 'intake.questions');
+        }
+      }
+    }
+  }
+
+  // roles（可选）
+  if (obj.roles !== undefined) {
+    if (!Array.isArray(obj.roles)) {
+      throw new ParseError('roles must be an array when provided', 'roles');
+    }
+    for (let i = 0; i < obj.roles.length; i++) {
+      const role = obj.roles[i];
+      if (typeof role !== 'object' || role === null) {
+        throw new ParseError(`roles[${i}] must be an object`, `roles[${i}]`);
+      }
+      const r = role as Record<string, unknown>;
+      if (typeof r.id !== 'string' || !r.id) {
+        throw new ParseError(`roles[${i}].id must be a non-empty string`, `roles[${i}].id`);
+      }
+      if (typeof r.name !== 'string' || !r.name) {
+        throw new ParseError(`roles[${i}].name must be a non-empty string`, `roles[${i}].name`);
+      }
+      if (typeof r.responsibilities !== 'string') {
+        throw new ParseError(`roles[${i}].responsibilities must be a string`, `roles[${i}].responsibilities`);
+      }
+      if (!Array.isArray(r.capabilities)) {
+        throw new ParseError(`roles[${i}].capabilities must be an array`, `roles[${i}].capabilities`);
+      }
+      for (const cap of r.capabilities) {
+        if (typeof cap !== 'string' || !cap) {
+          throw new ParseError(`roles[${i}].capabilities must contain non-empty strings`, `roles[${i}].capabilities`);
+        }
+      }
+    }
+  }
+
   // 验证 reasoning
   // 允许缺省（用于提升鲁棒性），缺省时填充为空字符串
   if (obj.reasoning === undefined) {
@@ -186,6 +278,9 @@ function validatePlanningOutput(data: unknown): asserts data is PlanningOutputFo
 
   // 验证子任务 ID 的一致性
   const subtaskIds = new Set(obj.subtasks.map((st) => (st as { id: string }).id));
+  const roleIds = new Set(
+    Array.isArray(obj.roles) ? (obj.roles as Array<{ id: string }>).map((r) => r.id) : []
+  );
   const stepsSubtaskIds = (obj.executionPlan as { steps: { subtaskIds: string[] }[] }).steps.flatMap(
     (s) => s.subtaskIds
   );
@@ -212,6 +307,20 @@ function validatePlanningOutput(data: unknown): asserts data is PlanningOutputFo
         throw new ParseError(
           `subtask ${st.id} cannot depend on itself`,
           `subtasks.${st.id}.dependencies`
+        );
+      }
+    }
+  }
+
+  // 如果提供了 roles，验证 roleId 引用的一致性
+  if (roleIds.size > 0) {
+    for (const st of obj.subtasks as Array<{ roleId?: unknown }>) {
+      if (st.roleId === undefined) continue;
+      if (typeof st.roleId !== 'string') continue;
+      if (!roleIds.has(st.roleId)) {
+        throw new ParseError(
+          `subtask references unknown roleId: ${st.roleId}`,
+          'subtasks.roleId'
         );
       }
     }

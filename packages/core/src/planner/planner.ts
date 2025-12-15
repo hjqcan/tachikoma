@@ -422,6 +422,25 @@ export class Planner {
     contextConstraints?: PlannerInput['contextConstraints'],
     _preferences?: PlannerInput['preferences'] // 保留用于将来扩展
   ): PlannerOutput {
+    const intake = planningOutput.intake
+      ? {
+          ready: planningOutput.intake.ready,
+          ...(planningOutput.intake.userIntent !== undefined && { userIntent: planningOutput.intake.userIntent }),
+          ...(planningOutput.intake.sentiment !== undefined && { sentiment: planningOutput.intake.sentiment }),
+          ...(Array.isArray(planningOutput.intake.missingInfo) && { missingInfo: planningOutput.intake.missingInfo }),
+          ...(Array.isArray(planningOutput.intake.questions) && { questions: planningOutput.intake.questions }),
+        }
+      : undefined;
+
+    const roles = Array.isArray(planningOutput.roles)
+      ? planningOutput.roles.map((r) => ({
+          id: r.id,
+          name: r.name,
+          responsibilities: r.responsibilities,
+          capabilities: r.capabilities,
+        }))
+      : undefined;
+
     // 转换子任务
     let subtasks = convertToSubTasks(planningOutput, task.id);
 
@@ -454,11 +473,18 @@ export class Planner {
       contextConstraints
     );
 
+    // 角色化规划：worker 数量由 roles 决定（每个角色≈一个 worker）
+    if (intake?.ready !== false && roles && roles.length > 0) {
+      delegation.workerCount = Math.max(1, roles.length);
+    }
+
     return {
       taskId: task.id,
       subtasks,
       delegation,
       executionPlan,
+      ...(intake && { intake: { ...intake, ...(roles && { roles }) } }),
+      ...(roles && { roles }),
       reasoning: this.config.enableReasoning ? (planningOutput.reasoning || '') : undefined,
       estimatedTotalDuration: planningOutput.estimatedTotalMinutes * 60 * 1000,
       estimatedTokens: this.estimateTokenUsage(subtasks),

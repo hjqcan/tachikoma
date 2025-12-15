@@ -296,7 +296,18 @@ export class ConversationalRunner {
       timestamp: Date.now(),
     };
 
-    // 当前版本不支持“中途提问后续跑”，按新任务处理
+    const pendingObjective = session.variables.pendingObjective;
+    if (typeof pendingObjective === 'string' && pendingObjective.trim()) {
+      delete session.variables.pendingObjective;
+      delete session.variables.pendingMissingInfo;
+      await this.sessionStore.saveSession(session);
+      yield* this.handleNewTask(
+        session,
+        `${pendingObjective}\n\n[用户补充信息]\n${answer}`
+      );
+      return;
+    }
+
     yield* this.handleNewTask(session, answer);
   }
 
@@ -591,12 +602,38 @@ export class ConversationalRunner {
     const runPromise = orchestrator
       .run(task)
       .then(async (result) => {
+        const out = result.output as unknown;
+        if (
+          result.status !== 'success' &&
+          out &&
+          typeof out === 'object' &&
+          (out as Record<string, unknown>).error === 'need_user_input' &&
+          typeof (out as Record<string, unknown>).question === 'string'
+        ) {
+          const question = (out as Record<string, unknown>).question as string;
+          const missingInfo = Array.isArray((out as Record<string, unknown>).missingInfo)
+            ? ((out as Record<string, unknown>).missingInfo as unknown[]).filter((x): x is string => typeof x === 'string')
+            : [];
+
+          session.waitingForUser = true;
+          session.pendingQuestion = question;
+          session.variables.pendingObjective = objective;
+          if (missingInfo.length > 0) session.variables.pendingMissingInfo = missingInfo;
+          await this.sessionStore.saveSession(session);
+
+          push({
+            type: 'need_user_input',
+            question,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
         // 更新变量
         session.variables.lastFilesAffected = filesAffected;
         session.variables.lastObjective = objective;
         session.variables.lastRunStatus = result.status;
         if (result.status !== 'success') {
-          const out = result.output as unknown;
           if (out && typeof out === 'object' && typeof (out as Record<string, unknown>).error === 'string') {
             session.variables.lastRunError = (out as Record<string, unknown>).error;
           }

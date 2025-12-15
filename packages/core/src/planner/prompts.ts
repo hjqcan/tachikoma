@@ -15,6 +15,30 @@ import type { SubTask, ExecutionPlan } from '../orchestrator';
  * 规划输出格式 - 用于 LLM 结构化输出
  */
 export interface PlanningOutputFormat {
+  /** 任务入口评估（可选：用于是否需要澄清/角色化规划） */
+  intake?: {
+    /** 是否已具备开始执行的必要信息 */
+    ready: boolean;
+    /** 识别到的用户意图（可选） */
+    userIntent?: string;
+    /** 情绪/语气（可选） */
+    sentiment?: string;
+    /** 缺失信息点（ready=false 时） */
+    missingInfo?: string[];
+    /** 需要向用户澄清的问题（ready=false 时） */
+    questions?: string[];
+  };
+  /** 建议的角色集合（可选：每个角色≈一个 worker） */
+  roles?: {
+    /** 角色 ID（用于 subtasks.roleId 引用） */
+    id: string;
+    /** 角色名称 */
+    name: string;
+    /** 角色职责 */
+    responsibilities: string;
+    /** 能力标签（用于 capability 过滤；建议包含稳定的 role:<id>） */
+    capabilities: string[];
+  }[];
   /** 简要说明（不要输出详细逐步推理） */
   reasoning: string;
   /** 子任务列表 */
@@ -23,6 +47,10 @@ export interface PlanningOutputFormat {
     id: string;
     /** 子任务目标 */
     objective: string;
+    /** 子任务角色（可选：从 roles 中选择一个 id） */
+    roleId?: string;
+    /** 子任务所需能力（可选：用于 WorkerPool 路由） */
+    requiredCapabilities?: string[];
     /** 约束条件 */
     constraints: string[];
     /** 预估执行时间（分钟） */
@@ -60,10 +88,10 @@ export interface PlanningOutputFormat {
 export const PLANNING_SYSTEM_PROMPT = `你是一个任务规划专家。你的职责是将高层任务分解为可执行的子任务，并制定详细的执行计划。
 
 ## 你的任务
-1. 分析给定的任务目标和约束条件
-2. 将任务分解为多个独立的、可执行的子任务
-3. 确定子任务之间的依赖关系
-4. 制定执行计划，明确执行顺序和并行可能性
+1. 在开始执行前，先判断用户提供的信息是否足够开始执行（必要时提出澄清问题）
+2. 如果信息足够，决定这个任务需要哪些“角色”（每个角色对应一个 Worker）
+3. 将任务分解为多个独立的、可执行的子任务，并为每个子任务分配合适的角色
+4. 确定子任务之间的依赖关系，并制定执行计划（明确哪些可并行、哪些必须等待）
 5. 估算每个子任务的执行时间
 
 ## 分解原则
@@ -89,11 +117,26 @@ export const PLANNING_SYSTEM_PROMPT = `你是一个任务规划专家。你的�
 
 ## 输出要求
 你必须以 JSON 格式输出，包含以下字段：
+- intake: 任务入口评估（可选，但建议输出；用于是否需要澄清）
+- roles: 角色列表（可选；每个角色对应一个 Worker）
 - reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
 - subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
 - executionPlan: 执行计划，包含 isParallel、steps
 - estimatedTotalMinutes: 预估总执行时间
 - complexityScore: 复杂度评估（1-10）
+
+## 澄清规则（非常重要）
+当且仅当你认为“无法在不猜测关键需求”的情况下开始执行时：
+1) 输出 intake.ready=false，并在 intake.questions 中给出 1-3 个最关键的澄清问题
+2) subtasks 输出空数组，executionPlan.steps 输出空数组，estimatedTotalMinutes=0，complexityScore=1
+3) roles 输出空数组（或不输出）
+
+当信息足够开始执行时：
+1) 输出 intake.ready=true
+2) 输出 roles：建议 2-5 个角色（例如：产品经理/架构师/前端/后端/测试）。每个角色必须有稳定 id。
+   - capabilities 建议包含 "role:<roleId>"（例如 role:frontend），用于路由到对应 worker
+3) 每个 subtask 必须指定 roleId，并在 requiredCapabilities 里至少包含对应的 "role:<roleId>"
+4) executionPlan 的并行步骤中，尽量让同一步骤的子任务属于不同 role（否则会因为同一角色只有一个 worker 而变相串行）
 
 ## 注意事项
 - 严格遵循 JSON 格式，不要添加额外的文本
@@ -123,6 +166,8 @@ export const PATCH_PLANNING_SYSTEM_PROMPT = `你是一个增量修改（patch）
 
 ## 输出要求
 你必须以 JSON 格式输出，包含以下字段：
+- intake: 任务入口评估（可选，但建议输出；用于是否需要澄清）
+- roles: 角色列表（可选；每个角色对应一个 Worker）
 - reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
 - subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
 - executionPlan: 执行计划，包含 isParallel、steps
@@ -175,11 +220,25 @@ ${additionalContext}
 请以 JSON 格式输出，不要包含任何其他文本。JSON 应该包含以下结构：
 \`\`\`json
 {
+  "intake": {
+    "ready": true,
+    "questions": []
+  },
+  "roles": [
+    {
+      "id": "frontend",
+      "name": "前端开发者",
+      "responsibilities": "实现 UI/交互与前端工程化",
+      "capabilities": ["role:frontend", "frontend", "react"]
+    }
+  ],
   "reasoning": "简要说明你的拆解依据（1-3 句）...",
   "subtasks": [
     {
       "id": "subtask-1",
       "objective": "子任务目标",
+      "roleId": "frontend",
+      "requiredCapabilities": ["role:frontend"],
       "constraints": ["约束1", "约束2"],
       "estimatedMinutes": 10,
       "dependencies": []
@@ -406,6 +465,10 @@ export function convertToSubTasks(
     id: st.id,
     parentId,
     objective: st.objective,
+    ...(st.roleId !== undefined && { roleId: st.roleId }),
+    ...(Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.length > 0
+      ? { requiredCapabilities: st.requiredCapabilities }
+      : {}),
     constraints: st.constraints,
     estimatedDuration: st.estimatedMinutes * 60 * 1000, // 转换为毫秒
     dependencies: st.dependencies,

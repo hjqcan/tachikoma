@@ -21,6 +21,7 @@ import type {
   OrchestratorEventHandler,
   ExecutionStep,
   ExecutionPlan,
+  PlannerRole,
 } from './types';
 import {
   calculateRetryDelay,
@@ -440,8 +441,12 @@ export class Orchestrator extends BaseAgent {
         .getAllWorkers()
         .filter((w) => !!w.agent);
       if (existingExecutableWorkers.length === 0) {
-        const workerCount = planData.plannerOutput.delegation?.workerCount ?? 3;
-        await this.registerDefaultWorkers(workerCount);
+        const roles = planData.plannerOutput.roles;
+        const workerCount =
+          (Array.isArray(roles) && roles.length > 0)
+            ? roles.length
+            : (planData.plannerOutput.delegation?.workerCount ?? 3);
+        await this.registerDefaultWorkers({ workerCount, roles });
       }
 
       // 5. 如果需要，可根据快照更新现有 WorkerPool 的状态（不创建新 worker）
@@ -546,6 +551,96 @@ export class Orchestrator extends BaseAgent {
         ...planOutput.executionPlan,
         steps: filteredSteps,
       },
+    };
+  }
+
+  private normalizePlanRoles(plan: PlannerOutput): PlannerOutput {
+    const roles = Array.isArray(plan.roles) ? plan.roles : [];
+    if (roles.length === 0) return plan;
+
+    const normalizeId = (raw: string): string => {
+      const s = raw.trim().toLowerCase();
+      const normalized = s
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return normalized || 'role';
+    };
+
+    const used = new Set<string>();
+    const idMap = new Map<string, string>();
+
+    const normalizedRoles: PlannerRole[] = roles.map((r, idx) => {
+      const base = normalizeId(r.id || `role-${idx + 1}`);
+      let candidate = base;
+      let n = 2;
+      while (used.has(candidate)) {
+        candidate = `${base}-${n++}`;
+      }
+      used.add(candidate);
+      idMap.set(r.id, candidate);
+
+      const caps = Array.isArray(r.capabilities)
+        ? r.capabilities.filter((c) => typeof c === 'string' && c.trim())
+        : [];
+      const stableCap = `role:${candidate}`;
+      const mergedCaps = Array.from(new Set([stableCap, ...caps]));
+
+      return {
+        id: candidate,
+        name: r.name,
+        responsibilities: r.responsibilities,
+        capabilities: mergedCaps,
+      };
+    });
+
+    const normalizedSubtasks = plan.subtasks.map((st) => {
+      const rawRoleId = st.roleId;
+      if (!rawRoleId) return st;
+
+      const mapped = idMap.get(rawRoleId) ?? normalizeId(rawRoleId);
+      const role = normalizedRoles.find((r) => r.id === mapped);
+      const roleExists = !!role;
+      if (!roleExists) {
+        return {
+          ...st,
+          roleId: undefined,
+          requiredCapabilities: undefined,
+        };
+      }
+
+      const stableCap = `role:${mapped}`;
+      const existing = Array.isArray(st.requiredCapabilities) ? st.requiredCapabilities : [];
+      const requiredCapabilities = Array.from(
+        new Set([stableCap, ...existing.filter((c) => typeof c === 'string' && c.trim())])
+      );
+
+      const roleConstraint = `你的角色：${role!.name}。职责：${role!.responsibilities}`.trim();
+      const constraints = Array.isArray(st.constraints) ? st.constraints : [];
+      const mergedConstraints = constraints.includes(roleConstraint)
+        ? constraints
+        : [roleConstraint, ...constraints];
+
+      return {
+        ...st,
+        roleId: mapped,
+        requiredCapabilities,
+        constraints: mergedConstraints,
+      };
+    });
+
+    const intake = plan.intake
+      ? {
+          ...plan.intake,
+          roles: normalizedRoles,
+        }
+      : undefined;
+
+    return {
+      ...plan,
+      roles: normalizedRoles,
+      ...(intake && { intake }),
+      subtasks: normalizedSubtasks,
     };
   }
 
@@ -685,20 +780,36 @@ export class Orchestrator extends BaseAgent {
       this.executionState.totalSteps = planResult.output.executionPlan.steps.length;
       this.executionState.totalTokens += planResult.tokensUsed.input + planResult.tokensUsed.output;
 
-      this.emit('plan:complete', task.id, { plan: planResult.output });
+      // 规范化角色/能力标识（用于 worker 路由与稳定 workerId）
+      const normalizedPlan = this.normalizePlanRoles(planResult.output);
+
+      this.emit('plan:complete', task.id, { plan: normalizedPlan });
 
       // 保存计划到会话文件
-      await this.savePlanToSession(task.id, planResult.output);
+      await this.savePlanToSession(task.id, normalizedPlan);
+
+      // 入口评估：信息不足时不执行，转为对话澄清
+      if (normalizedPlan.intake?.ready === false) {
+        const questions = normalizedPlan.intake.questions ?? [];
+        const missingInfo = normalizedPlan.intake.missingInfo ?? [];
+        const question = questions.length > 0
+          ? questions.map((q, i) => `${i + 1}. ${q}`).join('\n')
+          : '请补充关键需求信息后再继续。';
+        return this.createNeedUserInputResult(task.id, startTime, planResult.tokensUsed, question, missingInfo);
+      }
 
       // 确保 Worker 已注册（基于规划结果的 workerCount）
       if (this.workerPool.workerCount === 0) {
-        await this.registerDefaultWorkers(planResult.output.delegation.workerCount);
+        await this.registerDefaultWorkers({
+          workerCount: normalizedPlan.delegation.workerCount,
+          roles: normalizedPlan.roles,
+        });
       }
 
       // 阶段 2: 执行（分配与聚合）
       const aggregatedResult = await this.executeAssignPhase(
         task.id,
-        planResult.output,
+        normalizedPlan,
         signal
       );
 
@@ -1754,6 +1865,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
 
         const workerId = assignResult.workerId!;
+        subtask.assignedWorkerId = workerId;
 
         // 等待 Worker 完成（WorkerAgent 驱动）
         const result = await this.waitForWorkerCompletion(subtask, workerId, timeout, signal);
@@ -1998,7 +2110,15 @@ Is this a genuine deviation? Answer YES or NO only.`,
     timeout: number,
     retryPolicy: RetryPolicy
   ): Promise<AssignmentResult> {
-    return this.workerPool.assign(subtask, timeout, retryPolicy);
+    const requiredCapabilities = Array.isArray(subtask.requiredCapabilities) && subtask.requiredCapabilities.length > 0
+      ? subtask.requiredCapabilities
+      : undefined;
+    const preferredWorkerId = subtask.roleId ? `worker-${subtask.roleId}` : undefined;
+
+    return this.workerPool.assign(subtask, timeout, retryPolicy, {
+      ...(requiredCapabilities && { requiredCapabilities }),
+      ...(preferredWorkerId && { preferredWorkerId }),
+    });
   }
 
   /**
@@ -2006,20 +2126,26 @@ Is this a genuine deviation? Answer YES or NO only.`,
    *
    * @param planWorkerCount - 计划指定的 worker 数量（可选，默认使用配置值）
    */
-  private async registerDefaultWorkers(planWorkerCount?: number): Promise<void> {
-    // 优先使用计划指定的 workerCount，但不超过池上限
-    const requestedCount = planWorkerCount ?? this.orchestratorConfig.delegation.workerCount;
-    const workerCount = Math.min(
-      requestedCount,
-      this.orchestratorConfig.workerPool.maxWorkers
-    );
+  private async registerDefaultWorkers(opts?: {
+    workerCount?: number;
+    roles?: PlannerRole[];
+  }): Promise<void> {
+    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
+    const roles = Array.isArray(opts?.roles) && opts.roles.length > 0 ? opts.roles : null;
+
+    // 角色化 worker：每个角色对应一个 worker（超出上限则截断，并降级部分子任务为 general）
+    const workerCount = roles
+      ? Math.min(roles.length, maxWorkers)
+      : Math.min(opts?.workerCount ?? this.orchestratorConfig.delegation.workerCount, maxWorkers);
 
     const llm = this.extractLLMFromMetadata();
     const workDir = this.extractWorkDirFromMetadata();
     const canUseRealWorkerAgent = !!(llm && llm.apiKey);
 
     for (let i = 0; i < workerCount; i++) {
-      const workerId = `worker-${i}`;
+      const role = roles ? roles[i] : undefined;
+      const roleId = role?.id;
+      const workerId = roleId ? `worker-${roleId}` : `worker-${i}`;
       const agent = canUseRealWorkerAgent
         ? new WorkerAgent(
             workerId,
@@ -2067,10 +2193,18 @@ Is this a genuine deviation? Answer YES or NO only.`,
             stop: async () => undefined,
           };
 
+      const roleCapabilities = role?.capabilities ?? [];
+      const stableRoleCap = roleId ? `role:${roleId}` : undefined;
+      const capabilities = [
+        'general',
+        ...roleCapabilities,
+        ...(stableRoleCap && !roleCapabilities.includes(stableRoleCap) ? [stableRoleCap] : []),
+      ];
+
       this.workerPool.register({
         id: workerId,
         status: 'idle',
-        capabilities: ['general'],
+        capabilities,
         agent,
       });
 
@@ -2343,6 +2477,42 @@ Is this a genuine deviation? Answer YES or NO only.`,
         spanId: generateTimestampId('span'),
         operation: `orchestrator.${this.id}.run`,
         attributes: { taskId, error },
+        events: [],
+        duration: endTime - startTime,
+      },
+    };
+  }
+
+  private createNeedUserInputResult(
+    taskId: string,
+    startTime: number,
+    tokensUsed: { input: number; output: number },
+    question: string,
+    missingInfo: string[]
+  ): TaskResult {
+    const endTime = Date.now();
+    return {
+      taskId,
+      status: 'failure',
+      output: {
+        error: 'need_user_input',
+        question,
+        ...(missingInfo.length > 0 && { missingInfo }),
+      },
+      artifacts: [],
+      metrics: {
+        startTime,
+        endTime,
+        duration: endTime - startTime,
+        tokensUsed: tokensUsed.input + tokensUsed.output,
+        toolCallCount: 0,
+        retryCount: 0,
+      },
+      trace: {
+        traceId: generateTimestampId('trace'),
+        spanId: generateTimestampId('span'),
+        operation: `orchestrator.${this.id}.run`,
+        attributes: { taskId, needUserInput: true },
         events: [],
         duration: endTime - startTime,
       },
