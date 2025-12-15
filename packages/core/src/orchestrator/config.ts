@@ -275,6 +275,7 @@ export interface PartialOrchestratorConfig {
   approval?: Partial<ApprovalPolicy>;
   deviationDetection?: Partial<DeviationDetectionConfig>;
   memoryConfig?: MemoryConfig;
+  collaborationConfig?: OrchestratorConfig['collaborationConfig'];
 }
 
 /**
@@ -367,6 +368,9 @@ export function createOrchestratorConfig(
     },
     // memoryConfig 仅当定义时才包含
     ...(orchestratorMemoryConfig ? { memoryConfig: orchestratorMemoryConfig } : {}),
+    ...(overrides.collaborationConfig
+      ? { collaborationConfig: overrides.collaborationConfig }
+      : {}),
   };
 }
 

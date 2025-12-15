@@ -54,6 +54,7 @@ import {
   type CheckpointData,
 } from './session';
 import { MemoryService } from '../memory';
+import { CollaborationManager } from '../collaboration';
 import { z } from 'zod';
 
 // ============================================================================
@@ -220,6 +221,9 @@ export class Orchestrator extends BaseAgent {
   /** Memory 服务（跨会话记忆） */
   private memoryService?: MemoryService;
 
+  /** 协作管理器 */
+  private collaborationManager?: CollaborationManager;
+
   /** 当前运行上下文（从 task.context.metadata 派生） */
   private currentRunMetadata: Record<string, unknown> | null = null;
 
@@ -276,6 +280,16 @@ export class Orchestrator extends BaseAgent {
     if (config.memoryConfig?.enabled) {
       this.memoryService = new MemoryService(config.memoryConfig);
       console.debug('[Orchestrator] MemoryService initialized');
+    }
+
+    // 初始化协作管理器（如果配置启用）
+    if (config.collaborationConfig?.enabled) {
+      this.collaborationManager = new CollaborationManager({
+        backend: config.collaborationConfig.backend ?? 'file',
+        rootDir: config.session.rootDir,
+        ...(config.collaborationConfig.redis && { redis: config.collaborationConfig.redis }),
+      });
+      console.debug('[Orchestrator] CollaborationManager created');
     }
   }
 
@@ -941,6 +955,23 @@ export class Orchestrator extends BaseAgent {
 
     // 启动偏离检测定时器（如果配置启用）
     this.startDeviationDetection();
+
+    // 启动协作管理器（如果配置启用）- best-effort，不阻断主流程
+    if (this.collaborationManager && this.orchestratorConfig.collaborationConfig?.enabled) {
+      try {
+        await this.collaborationManager.start(`orchestrator-${this.id}`, {
+          sessionId: this.currentSessionId!,
+          type: 'orchestrator',
+          capabilities: ['planning', 'coordination'],
+          status: 'online',
+          priority: 10,
+        });
+        console.debug('[Orchestrator] Collaboration started');
+      } catch (error) {
+        console.warn('[Orchestrator] Failed to start collaboration (non-fatal):', error);
+        // 协作启动失败不影响主流程
+      }
+    }
   }
 
   /**
@@ -951,6 +982,11 @@ export class Orchestrator extends BaseAgent {
   private async closeSession(): Promise<void> {
     // 停止偏离检测定时器
     this.stopDeviationDetection();
+
+    // 停止协作管理器
+    if (this.collaborationManager) {
+      await this.collaborationManager.stop();
+    }
 
     // 取消审批事件监听
     if (this.sessionManager) {

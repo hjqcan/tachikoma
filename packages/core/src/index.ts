@@ -356,3 +356,39 @@ export {
   OpenRouterEmbeddingService,
   MockEmbeddingService,
 } from './memory';
+
+// ============================================================================
+// Collaboration 模块 (Multi-Agent 协作协议)
+// ============================================================================
+
+export * as collaboration from './collaboration';
+
+// 常用 Collaboration 类型顶层导出
+export type {
+  AgentType,
+  AgentStatus,
+  AgentRegistration,
+  AgentFilter,
+  CollaborationRequest,
+  CollaborationResponse,
+  CollaborationEvent,
+  BlackboardEntry,
+  CollaborationConfig,
+  IAgentRegistry,
+  IMessageBroker,
+  IPubSubHub,
+  IBlackboard,
+  ICollaborationManager,
+} from './collaboration';
+
+export {
+  CollaborationManager,
+  createCollaborationManager,
+  FileAgentRegistry,
+  FileMessageBroker,
+  FilePubSubHub,
+  FileBlackboard,
+  BUILTIN_TOPICS,
+  DEFAULT_COLLABORATION_CONFIG,
+} from './collaboration';
+

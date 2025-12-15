@@ -626,6 +626,18 @@ export interface OrchestratorConfig {
    * 并支持跨会话知识复用
    */
   memoryConfig?: MemoryConfig;
+  /**
+   * 协作配置
+   *
+   * 如果提供，Orchestrator 将启用 Multi-Agent 协作功能
+   * 会自动注册为 orchestrator 类型的 Agent
+   * 并协调 Worker 间的协作
+   */
+  collaborationConfig?: {
+    enabled: boolean;
+    backend?: 'file' | 'redis';
+    redis?: { url: string; prefix?: string };
+  };
 }
 
 /**

@@ -52,6 +52,9 @@ import {
 } from '../../skills';
 // Memory 模块
 import { MemoryService } from '../../memory';
+// Collaboration 模块
+import { CollaborationManager, createPeerAssistTool } from '../../collaboration';
+import type { Tool as CollaborationTool } from '../../types';
 
 // ============================================================================
 // 常量
@@ -780,6 +783,10 @@ export class GenericAgentBackend implements IWorkerBackend {
   // 项目上下文注入器（Task 8：自动加载 TACHIKOMA.md 等配置）
   private projectContextInjector: ProjectContextInjector;
 
+  // Collaboration 支持
+  private collaborationManager?: CollaborationManager;
+  private peerAssistTool?: CollaborationTool;
+
   constructor(config: GenericBackendConfig) {
     this.config = config;
     this.provider = config.provider;
@@ -834,6 +841,18 @@ export class GenericAgentBackend implements IWorkerBackend {
     // 初始化项目上下文注入器
     this.projectContextInjector = createProjectContextInjector();
     console.debug('[GenericAgentBackend] ProjectContextInjector initialized');
+
+    // 初始化协作管理器
+    if (config.collaborationConfig?.enabled) {
+      const collabConfig = config.collaborationConfig;
+      // 使用 .tachikoma 作为默认 rootDir，与 Orchestrator 保持一致
+      this.collaborationManager = new CollaborationManager({
+        backend: collabConfig.backend ?? 'file',
+        rootDir: collabConfig.rootDir ?? '.tachikoma',
+        ...(collabConfig.redis && { redis: collabConfig.redis }),
+      });
+      console.debug('[GenericAgentBackend] CollaborationManager created');
+    }
   }
 
   /**
@@ -875,11 +894,20 @@ export class GenericAgentBackend implements IWorkerBackend {
   }
 
   /**
+   * 清理 agentId，防止路径逃逸攻击
+   * 
+   * 仅保留 [a-zA-Z0-9_-]，其他字符替换为 _
+   */
+  private sanitizeAgentId(agentId: string): string {
+    return agentId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+  }
+
+  /**
    * 执行任务
    */
   async *execute(
     task: WorkerTask,
-    tools: Tool[],
+    providedTools: Tool[],
     options: WorkerExecutionOptions
   ): AsyncIterable<WorkerMessage> {
     // 创建 AbortController
@@ -892,6 +920,41 @@ export class GenericAgentBackend implements IWorkerBackend {
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
+
+    // 启动协作管理器并注入 peer-assist 工具（仅首次执行时启动）
+    let tools = providedTools;
+    if (this.collaborationManager && this.config.collaborationConfig?.enabled) {
+      // 只在未启动时启动，避免 "already started" 错误
+      if (!this.collaborationManager.isStarted()) {
+        const collabConfig = this.config.collaborationConfig;
+        // 使用 workerId（如果有）或静态 agentId，避免每次任务生成不同 ID
+        const agentId = this.sanitizeAgentId(
+          collabConfig.agentId ?? `worker-${this.provider}-${Date.now()}`
+        );
+        
+        try {
+          await this.collaborationManager.start(agentId, {
+            sessionId: collabConfig.sessionId ?? task.sessionId ?? 'default',
+            type: 'worker',
+            capabilities: collabConfig.capabilities ?? ['general'],
+            status: 'online',
+            priority: collabConfig.priority ?? 5,
+          });
+          console.debug('[GenericAgentBackend] Collaboration started');
+        } catch (error) {
+          console.warn('[GenericAgentBackend] Failed to start collaboration:', error);
+        }
+      }
+      
+      // 注入 peer-assist 工具（每次执行都注入，因为 tools 是参数）
+      if (this.collaborationManager.isStarted()) {
+        if (!this.peerAssistTool) {
+          this.peerAssistTool = createPeerAssistTool(this.collaborationManager);
+        }
+        tools = [...providedTools, this.peerAssistTool];
+      }
+    }
+
 
     // 发出初始化状态
     yield {
@@ -1861,6 +1924,10 @@ When the task is complete, provide a final summary of what was accomplished.`));
    */
   async dispose(): Promise<void> {
     await this.interrupt();
+    // 停止协作管理器
+    if (this.collaborationManager) {
+      await this.collaborationManager.stop();
+    }
     // 仅销毁自己创建的 sandbox
     if (this.sandbox && this.sandboxOwned) {
       await this.sandbox.destroy();

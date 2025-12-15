@@ -541,6 +541,30 @@ export interface ClaudeAgentSDKBackendConfig extends WorkerBackendBaseConfig {
 }
 
 /**
+ * 协作集成配置
+ *
+ * 用于在 Worker 中启用 Multi-Agent 协作功能
+ */
+export interface CollaborationIntegrationConfig {
+  /** 是否启用协作 */
+  enabled: boolean;
+  /** Agent ID（必须唯一） */
+  agentId?: string;
+  /** Session ID */
+  sessionId?: string;
+  /** Agent 能力列表 */
+  capabilities?: string[];
+  /** Agent 优先级（0-10） */
+  priority?: number;
+  /** 协作后端类型 */
+  backend?: 'file' | 'redis';
+  /** 协作根目录（file 后端使用） */
+  rootDir?: string;
+  /** Redis 配置（redis 后端使用） */
+  redis?: { url: string; prefix?: string };
+}
+
+/**
  * 通用后端配置
  */
 export interface GenericBackendConfig extends WorkerBackendBaseConfig {
@@ -572,6 +596,13 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
    * 如果提供，将支持跨会话记忆和自动检索
    */
   memoryConfig?: MemoryConfig;
+  /**
+   * 协作配置
+   *
+   * 如果提供，将启用 Multi-Agent 协作功能
+   * 会自动注入 request_peer_assist 工具
+   */
+  collaborationConfig?: CollaborationIntegrationConfig;
 }
 
 /**
