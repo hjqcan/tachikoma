@@ -113,6 +113,18 @@ export class ConversationalRunner {
       console.log(`[ConversationalRunner] Intent: ${intent.intent} (${intent.confidence})`);
     }
 
+    // 3.1 鲁棒性：新会话/无检查点时，避免把“包含回退语义的长任务描述”误判成撤销
+    // 例如：首次对话里出现“1:1还原样式”这类短语，不应触发 UNDO 分支。
+    if (intent.intent === UserIntent.UNDO && session.checkpoints.length === 0) {
+      const trimmed = userMessage.trim();
+      const startsWithUndo =
+        /^(撤销|回退|回滚|还原|恢复|undo|rollback|revert)\b/i.test(trimmed);
+      if (!startsWithUndo) {
+        yield* this.handleNewTask(session, userMessage);
+        return;
+      }
+    }
+
     // 4. 根据意图路由
     switch (intent.intent) {
       case UserIntent.NEW_TASK:
@@ -299,7 +311,9 @@ export class ConversationalRunner {
     if (checkpoints.length === 0) {
       yield {
         type: 'error',
-        error: '没有可撤销的检查点',
+        error: this.config.enableCheckpoints
+          ? '没有可撤销的检查点（当前会话尚未创建检查点，可能是首次对话）'
+          : '没有可撤销的检查点（当前未启用检查点 enableCheckpoints）',
         retryable: false,
         timestamp: Date.now(),
       };

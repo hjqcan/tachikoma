@@ -120,6 +120,9 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
     const session = await runner.createSession();
 
+    let finalComplete: { success: boolean; summary: string } | null = null;
+    let lastError: string | null = null;
+
     for await (const evt of runner.handleMessage(session.sessionId, task)) {
       switch (evt.type) {
         case 'thinking':
@@ -142,12 +145,33 @@ ${colors.bold}${colors.cyan}╔════════════════�
           logWarn(`需要用户输入: ${evt.question}`);
           break;
         case 'complete':
-          logSuccess(evt.summary);
+          finalComplete = { success: evt.success, summary: evt.summary };
+          if (evt.success) {
+            logSuccess(evt.summary);
+          } else {
+            logError(evt.summary);
+          }
           break;
         case 'error':
+          lastError = evt.error;
           logError(evt.error);
           break;
       }
+    }
+
+    if (finalComplete) {
+      if (finalComplete.success) {
+        logSuccess('任务执行完成！');
+      } else {
+        logError('任务执行失败！');
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (lastError) {
+      logError('任务执行失败！');
+      process.exit(1);
     }
 
     logSuccess('任务执行完成！');

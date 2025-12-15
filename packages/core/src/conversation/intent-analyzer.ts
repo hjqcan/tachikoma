@@ -52,15 +52,16 @@ const INTENT_PATTERNS: IntentPattern[] = [
   {
     intent: UserIntent.UNDO,
     patterns: [
-      /^撤销/,
-      /^回退/,
-      /^还原/,
-      /^恢复/,
+      /^撤销(?:\s*\d+\s*步)?/,
+      /^回退(?:\s*\d+\s*步)?/,
+      /^回滚(?:\s*\d+\s*步)?/,
+      /^还原(?:\s*(?:一下|\d+\s*步|到|回|上一步|上次|之前|检查点))/,
+      /^恢复(?:\s*(?:到|上一步|上次|之前|检查点))/,
       /^undo/i,
       /^rollback/i,
       /^revert/i,
     ],
-    keywords: ['撤销', '回退', '还原', '恢复到', 'undo', 'rollback', 'revert'],
+    keywords: ['撤销', '回退', '回滚', '撤销到', '回滚到', '恢复到', 'undo', 'rollback', 'revert'],
   },
   {
     intent: UserIntent.QUERY,
@@ -116,7 +117,11 @@ export class IntentAnalyzer {
 
       // 关键词匹配
       for (const keyword of pattern.keywords) {
-        if (trimmedMessage.toLowerCase().includes(keyword.toLowerCase())) {
+        const haystack = trimmedMessage.toLowerCase();
+        const needle = keyword.toLowerCase();
+        const matched =
+          pattern.intent === UserIntent.UNDO ? haystack.startsWith(needle) : haystack.includes(needle);
+        if (matched) {
           return {
             intent: pattern.intent,
             confidence: 0.7,
@@ -170,7 +175,7 @@ export class IntentAnalyzer {
 
       case UserIntent.UNDO: {
         // 尝试提取要撤销的步数
-        const undoMatch = message.match(/撤销(\d+)步/);
+        const undoMatch = message.match(/(?:撤销|回退|回滚|还原)\s*(\d+)\s*步/);
         if (undoMatch) {
           entities.steps = parseInt(undoMatch[1] ?? '1', 10);
         } else {
