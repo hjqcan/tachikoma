@@ -12,6 +12,7 @@ import { parseArgs } from 'util';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { ConversationalRunner } from '../src/conversation/conversational-runner';
+import { createSpecKitFileManager } from '../src/speckit';
 
 // =============================================================================
 // 类型定义
@@ -228,6 +229,75 @@ ${colors.bold}${colors.cyan}╔════════════════�
 }
 
 // =============================================================================
+// 命令: speckit
+// =============================================================================
+
+async function speckitCommand(args: string[]): Promise<void> {
+  const subcommand = args[0] ?? 'help';
+
+  if (subcommand === 'help' || subcommand === '--help') {
+    console.log(`
+${colors.bold}Tachikoma SpecKit${colors.reset} - 面向规范开发工具
+
+${colors.bold}用法:${colors.reset}
+  tachikoma speckit <subcommand> [options]
+
+${colors.bold}子命令:${colors.reset}
+  init          初始化 SpecKit 目录结构
+  help          显示帮助信息
+
+${colors.bold}选项 (init):${colors.reset}
+  --workdir, -w   工作目录 (默认: 当前目录)
+  --force, -f     强制覆盖已有结构
+
+${colors.bold}示例:${colors.reset}
+  tachikoma speckit init --workdir ./my-project
+`);
+    return;
+  }
+
+  if (subcommand === 'init') {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: {
+        workdir: { type: 'string', short: 'w', default: '.' },
+        force: { type: 'boolean', short: 'f', default: false },
+      },
+      strict: true,
+    });
+
+    const workDir = resolve(values.workdir ?? '.');
+    const fileManager = createSpecKitFileManager({ workDir });
+
+    const isInitialized = await fileManager.isInitialized();
+    if (isInitialized && !values.force) {
+      logWarn(`SpecKit 已在 ${workDir} 初始化。使用 --force 可强制重新初始化。`);
+      return;
+    }
+
+    if (isInitialized && values.force) {
+      logWarn(`--force 已启用：将清理并重置 ${fileManager.getRootPath()}`);
+      await fileManager.clean();
+    }
+
+    await fileManager.init();
+    logSuccess(`SpecKit 目录结构已初始化: ${fileManager.getRootPath()}`);
+    console.log(`
+${colors.dim}目录结构:
+  .tachikoma/speckit/
+  ├── memory/           # 项目宪法
+  ├── specs/            # 功能规范
+  └── templates/        # 模板文件
+${colors.reset}`);
+    return;
+  }
+
+  logError(`未知子命令: ${subcommand}`);
+  console.log('使用 tachikoma speckit help 查看帮助');
+  process.exit(1);
+}
+
+// =============================================================================
 // 命令: help
 // =============================================================================
 
@@ -240,6 +310,7 @@ ${colors.bold}用法:${colors.reset}
 
 ${colors.bold}命令:${colors.reset}
   run         执行任务
+  speckit     面向规范开发工具
   help        显示帮助信息
 
 ${colors.bold}选项 (run 命令):${colors.reset}
@@ -254,6 +325,8 @@ ${colors.bold}示例:${colors.reset}
   bun run packages/core/bin/tachikoma.ts run \\
     --task "帮我实现一个网易云音乐的网站" \\
     --workdir ./my-project
+
+  bun run packages/core/bin/tachikoma.ts speckit init --workdir ./my-project
 
 ${colors.bold}环境变量:${colors.reset}
   OPENROUTER_API_KEY      OpenRouter API Key (必需)
@@ -310,6 +383,8 @@ async function main(): Promise<void> {
       logError(`执行失败: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
+  } else if (command === 'speckit') {
+    await speckitCommand(args.slice(1));
   } else {
     logError(`未知命令: ${command}`);
     console.log('使用 --help 查看帮助');
