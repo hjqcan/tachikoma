@@ -17,14 +17,31 @@ import type { ContextMessage } from '../types';
 
 /**
  * 项目上下文文件名（按优先级）
+ * 
+ * 兼容 agents.md 规范 (https://agents.md):
+ * - AGENTS.md - agents.md 标准格式
+ * - CLAUDE.md - Claude Code / Anthropic
+ * - CURSOR.md / .cursorrules - Cursor
+ * - COPILOT.md - GitHub Copilot
  */
 export const PROJECT_CONTEXT_FILES = [
-  'TACHIKOMA.md', // Tachikoma 专用
-  'AGENT.md', // 通用 Agent 配置
-  'AGENTS.md', // 复数形式
-  'PROJECT.md', // 项目说明
-  '.agentrc.md', // 隐藏配置
-  '.tachikoma.md', // 隐藏 Tachikoma 配置
+  // Tachikoma 专用（最高优先级）
+  'TACHIKOMA.md',
+  '.tachikoma.md',
+  // agents.md 标准格式
+  'AGENTS.md',
+  'AGENT.md',
+  '.agentrc.md',
+  // Claude Code 兼容
+  'CLAUDE.md',
+  // Cursor 兼容
+  'CURSOR.md',
+  '.cursorrules',
+  // GitHub Copilot 兼容
+  'COPILOT.md',
+  '.github/copilot-instructions.md',
+  // 通用项目说明
+  'PROJECT.md',
 ];
 
 /**
