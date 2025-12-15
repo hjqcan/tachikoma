@@ -459,7 +459,7 @@ export class Orchestrator extends BaseAgent {
         const workerCount =
           (Array.isArray(roles) && roles.length > 0)
             ? roles.length
-            : (planData.plannerOutput.delegation?.workerCount ?? 3);
+            : (planData.plannerOutput.delegation?.workerCount ?? this.orchestratorConfig.delegation.workerCount);
         await this.registerDefaultWorkers({ workerCount, roles });
       }
 

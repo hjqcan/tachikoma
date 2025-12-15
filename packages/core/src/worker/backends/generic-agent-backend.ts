@@ -786,6 +786,7 @@ export class GenericAgentBackend implements IWorkerBackend {
   // Collaboration 支持
   private collaborationManager?: CollaborationManager;
   private peerAssistTool?: CollaborationTool;
+  private collaborationAgentId?: string;
 
   constructor(config: GenericBackendConfig) {
     this.config = config;
@@ -851,6 +852,10 @@ export class GenericAgentBackend implements IWorkerBackend {
         rootDir: collabConfig.rootDir ?? '.tachikoma',
         ...(collabConfig.redis && { redis: collabConfig.redis }),
       });
+      // 固定 agentId：避免每次任务启动生成不同 ID（影响 peer 发现与路由）
+      this.collaborationAgentId = this.sanitizeAgentId(
+        collabConfig.agentId ?? `worker-${this.provider}-${Date.now()}`
+      );
       console.debug('[GenericAgentBackend] CollaborationManager created');
     }
   }
@@ -927,8 +932,7 @@ export class GenericAgentBackend implements IWorkerBackend {
       // 只在未启动时启动，避免 "already started" 错误
       if (!this.collaborationManager.isStarted()) {
         const collabConfig = this.config.collaborationConfig;
-        // 使用 workerId（如果有）或静态 agentId，避免每次任务生成不同 ID
-        const agentId = this.sanitizeAgentId(
+        const agentId = this.collaborationAgentId ?? this.sanitizeAgentId(
           collabConfig.agentId ?? `worker-${this.provider}-${Date.now()}`
         );
         
@@ -951,7 +955,8 @@ export class GenericAgentBackend implements IWorkerBackend {
         if (!this.peerAssistTool) {
           this.peerAssistTool = createPeerAssistTool(this.collaborationManager);
         }
-        tools = [...providedTools, this.peerAssistTool];
+        const hasPeerAssist = providedTools.some((t) => t.name === this.peerAssistTool!.name);
+        tools = hasPeerAssist ? providedTools : [...providedTools, this.peerAssistTool];
       }
     }
 

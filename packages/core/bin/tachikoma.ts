@@ -10,6 +10,7 @@
 
 import { parseArgs } from 'util';
 import { resolve } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 import { ConversationalRunner } from '../src/conversation/conversational-runner';
 
 // =============================================================================
@@ -120,61 +121,90 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
     const session = await runner.createSession();
 
-    let finalComplete: { success: boolean; summary: string } | null = null;
-    let lastError: string | null = null;
+    const rl = process.stdin.isTTY
+      ? createInterface({ input: process.stdin, output: process.stdout })
+      : null;
 
-    for await (const evt of runner.handleMessage(session.sessionId, task)) {
-      switch (evt.type) {
-        case 'thinking':
-          logStep(compactLine(evt.content, 200));
-          break;
-        case 'tool_call':
-          console.log(`${colors.yellow}  [tool] ${evt.tool}${colors.reset}`);
-          break;
-        case 'tool_result':
-          console.log(
-            `${colors.dim}  [tool] ${evt.tool} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
-          );
-          break;
-        case 'subtask_complete':
-          console.log(
-            `${colors.dim}  [subtask] ${evt.subtaskId} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
-          );
-          break;
-        case 'need_user_input':
-          logWarn(`需要用户输入: ${evt.question}`);
-          break;
-        case 'complete':
-          finalComplete = { success: evt.success, summary: evt.summary };
-          if (evt.success) {
-            logSuccess(evt.summary);
-          } else {
-            logError(evt.summary);
+    try {
+      let nextUserMessage: string | null = task;
+      while (nextUserMessage) {
+        let needUserInputQuestion: string | null = null;
+        let finalComplete: { success: boolean; summary: string } | null = null;
+        let lastError: string | null = null;
+
+        for await (const evt of runner.handleMessage(session.sessionId, nextUserMessage)) {
+          switch (evt.type) {
+            case 'thinking':
+              logStep(compactLine(evt.content, 200));
+              break;
+            case 'tool_call':
+              console.log(`${colors.yellow}  [tool] ${evt.tool}${colors.reset}`);
+              break;
+            case 'tool_result':
+              console.log(
+                `${colors.dim}  [tool] ${evt.tool} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
+              );
+              break;
+            case 'subtask_complete':
+              console.log(
+                `${colors.dim}  [subtask] ${evt.subtaskId} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
+              );
+              break;
+            case 'need_user_input':
+              needUserInputQuestion = evt.question;
+              logWarn(`需要用户输入:\n${evt.question}`);
+              break;
+            case 'complete':
+              finalComplete = { success: evt.success, summary: evt.summary };
+              if (evt.success) {
+                logSuccess(evt.summary);
+              } else {
+                logError(evt.summary);
+              }
+              break;
+            case 'error':
+              lastError = evt.error;
+              logError(evt.error);
+              break;
           }
-          break;
-        case 'error':
-          lastError = evt.error;
-          logError(evt.error);
-          break;
-      }
-    }
+        }
 
-    if (finalComplete) {
-      if (finalComplete.success) {
+        if (lastError) {
+          logError('任务执行失败！');
+          process.exit(1);
+        }
+
+        if (finalComplete) {
+          if (!finalComplete.success) {
+            logError('任务执行失败！');
+            process.exit(1);
+          }
+          logSuccess('任务执行完成！');
+          return;
+        }
+
+        if (needUserInputQuestion) {
+          if (!rl) {
+            logError('当前环境非交互式，无法继续输入。请在交互式终端运行该命令后按提示回答问题。');
+            process.exit(2);
+          }
+          const answer = (await rl.question(`${colors.bold}> ${colors.reset}`)).trim();
+          if (!answer) {
+            logError('未提供回答，已退出。');
+            process.exit(2);
+          }
+          nextUserMessage = answer;
+          continue;
+        }
+
+        // 如果既没有 complete，也没有 need_user_input，也没有 error：
+        // 视为正常结束（例如上游未发 complete 事件的兼容情况）
         logSuccess('任务执行完成！');
-      } else {
-        logError('任务执行失败！');
-        process.exit(1);
+        return;
       }
-      return;
+    } finally {
+      rl?.close();
     }
-
-    if (lastError) {
-      logError('任务执行失败！');
-      process.exit(1);
-    }
-
-    logSuccess('任务执行完成！');
   } catch (error) {
     logError(`任务执行失败: ${error instanceof Error ? error.message : String(error)}`);
     if (verbose && error instanceof Error) {
