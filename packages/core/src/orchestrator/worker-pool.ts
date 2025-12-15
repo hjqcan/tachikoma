@@ -15,6 +15,7 @@ import type {
   WorkerPoolConfig,
   AssignPayload,
 } from './types';
+import type { WorkerSnapshot } from './session/types';
 
 // ============================================================================
 // Worker 池接口定义
@@ -175,6 +176,17 @@ export interface IWorkerPool {
    * @param handler - 事件处理器
    */
   off<T = unknown>(type: WorkerPoolEventType, handler: WorkerPoolEventHandler<T>): void;
+
+  /**
+   * 从快照重建 Worker 注册状态（用于检查点恢复）
+   * 
+   * 根据 WorkerSnapshot 列表重建 Worker 状态，用于从检查点恢复时
+   * 重建 WorkerPool 的注册状态。
+   * 
+   * @param snapshots - Worker 状态快照列表
+   * @returns 重建成功的 Worker 数量
+   */
+  rebuildFromSnapshots?(snapshots: WorkerSnapshot[]): number;
 
   /**
    * 关闭 Worker 池
@@ -742,6 +754,32 @@ export class DefaultWorkerPool implements IWorkerPool {
   // ============================================================================
   // 生命周期
   // ============================================================================
+
+  /**
+   * 从快照重建 Worker 注册状态
+   *
+   * 用于检查点恢复时重建 WorkerPool 中的 Worker 状态。
+   *
+   * 注意：WorkerSnapshot 属于 Session 文件系统的“观测状态”，并不包含可执行的 agent 绑定；
+   * 因此这里仅做 best-effort 的元信息对齐，避免把 Worker 误标成 busy 导致无法重新调度。
+   */
+  rebuildFromSnapshots(snapshots: WorkerSnapshot[]): number {
+    let updatedCount = 0;
+
+    for (const snapshot of snapshots) {
+      // 仅更新已存在的 Worker（WorkerPool 无法从快照中恢复 agent 绑定）
+      const existingWorker = this.workers.get(snapshot.workerId);
+      if (!existingWorker) continue;
+
+      existingWorker.status = 'idle';
+      existingWorker.lastHeartbeat = snapshot.lastHeartbeat;
+      existingWorker.currentTaskId = undefined;
+      updatedCount++;
+    }
+
+    console.debug(`[WorkerPool] Updated ${updatedCount} workers from snapshots`);
+    return updatedCount;
+  }
 
   async shutdown(): Promise<void> {
     this.isShutdown = true;

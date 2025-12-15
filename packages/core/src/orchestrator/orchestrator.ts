@@ -8,6 +8,7 @@
 import type { Task, TaskResult, Artifact, TaskMetrics, TraceData, RetryPolicy } from '../types';
 import { BaseAgent } from '../abstracts/base-agent';
 import { WorkerAgent } from '../agents/worker-agent';
+import { join } from 'node:path';
 import type {
   OrchestratorTask,
   SubTask,
@@ -35,6 +36,9 @@ import {
 import {
   createAndInitializeSessionFileManager,
   generateTimestampId,
+  CheckpointManager,
+  listDir,
+  fileExists,
   type ISessionFileManager,
   type ProgressFile,
   type PendingApprovalFile,
@@ -44,6 +48,9 @@ import {
   type ActionRecord,
   type InterventionFile,
   type DecisionRecord,
+  type CheckpointRestoreOptions,
+  type RecoveryStrategy,
+  type CheckpointData,
 } from './session';
 import { MemoryService } from '../memory';
 import { z } from 'zod';
@@ -75,6 +82,22 @@ export interface OrchestratorOptions {
   workerPool?: IWorkerPool;
   /** SessionFileManager 实例（可选，用于注入测试） */
   sessionManager?: ISessionFileManager;
+}
+
+/**
+ * 从检查点恢复选项
+ */
+export interface ResumeFromCheckpointOptions {
+  /** 恢复策略 */
+  strategy?: RecoveryStrategy;
+  /** 是否跳过失败的子任务 */
+  skipFailed?: boolean;
+  /** 是否重置重试计数 */
+  resetRetryCount?: boolean;
+  /** 超时时间（毫秒） */
+  timeout?: number;
+  /** 取消信号 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -298,6 +321,253 @@ export class Orchestrator extends BaseAgent {
       failedSubtasks: new Map(this.executionState.failedSubtasks),
       runningSubtasks: new Set(this.executionState.runningSubtasks),
     };
+  }
+
+  /**
+   * 从检查点恢复执行
+   *
+   * 加载指定检查点并从未完成的子任务继续执行
+   *
+   * @param checkpointId - 检查点 ID
+   * @param options - 恢复选项
+   * @returns 执行结果
+   *
+   * @example
+   * ```ts
+   * const result = await orchestrator.resumeFrom('ckpt-20251215-xxx', {
+   *   strategy: 'resume',
+   *   skipFailed: true,
+   * });
+   * ```
+   */
+  async resumeFrom(
+    checkpointId: string,
+    options: ResumeFromCheckpointOptions = {}
+  ): Promise<TaskResult> {
+    if (this.executionState || this.sessionManager) {
+      return this.createFailureResult(
+        'unknown',
+        'Cannot resume from checkpoint while orchestrator is already running',
+        Date.now(),
+        { input: 0, output: 0 }
+      );
+    }
+
+    const startTime = Date.now();
+    const signal =
+      options.signal ??
+      (options.timeout ? AbortSignal.timeout(options.timeout) : new AbortController().signal);
+
+    const rootDir = this.orchestratorConfig.session.rootDir;
+    const sessionId = await this.findSessionIdForCheckpoint(checkpointId, rootDir);
+    if (!sessionId) {
+      return this.createFailureResult(
+        'unknown',
+        `Checkpoint not found: ${checkpointId}`,
+        startTime,
+        { input: 0, output: 0 }
+      );
+    }
+
+    // 1. 绑定到检查点所属 session（只读恢复，不启用 watch，避免额外开销）
+    const sessionManager = await createAndInitializeSessionFileManager(sessionId, {
+      rootDir,
+      enableWatch: false,
+      autoCreateDirs: false,
+    });
+
+    // 2. 创建 CheckpointManager 并恢复
+    const checkpointManager = new CheckpointManager(
+      sessionId,
+      sessionManager,
+      {
+        rootDir,
+        autoSave: false,
+      }
+    );
+
+    const restoreOptions: Partial<CheckpointRestoreOptions> = {
+      strategy: options.strategy ?? 'resume',
+      skipFailed: options.skipFailed ?? false,
+      resetRetryCount: options.resetRetryCount ?? false,
+    };
+
+    const restoreResult = await checkpointManager.restoreFromCheckpoint(checkpointId, restoreOptions);
+
+    if (!restoreResult.success || !restoreResult.checkpoint) {
+      try {
+        await checkpointManager.close();
+      } finally {
+        await sessionManager.close();
+      }
+      return this.createFailureResult('unknown', `Checkpoint restore failed: ${restoreResult.error}`, startTime, {
+        input: 0,
+        output: 0,
+      });
+    }
+
+    const { checkpoint, workerSnapshots, planData, resumableSubtaskIds } = restoreResult;
+
+    if (!planData?.plannerOutput) {
+      try {
+        await checkpointManager.close();
+      } finally {
+        await sessionManager.close();
+      }
+      return this.createFailureResult(
+        checkpoint.taskId,
+        'Plan data not found in checkpoint session',
+        startTime,
+        { input: 0, output: 0 }
+      );
+    }
+
+    // 保存旧状态并临时切换到恢复 session（执行结束后恢复）
+    const prevSessionManager = this.sessionManager;
+    const prevSessionId = this.currentSessionId;
+    const prevExecutionState = this.executionState;
+    const prevRunMetadata = this.currentRunMetadata;
+
+    // 3. 设置当前 Session
+    this.sessionManager = sessionManager;
+    this.currentSessionId = sessionId;
+    // best-effort：恢复上下文数据（可能包含 workDir/llm 等）
+    this.currentRunMetadata = (checkpoint.contextData as Record<string, unknown> | undefined) ?? null;
+
+    try {
+      // 4. 确保 WorkerPool 有可执行的 agent 绑定
+      const existingExecutableWorkers = this.workerPool
+        .getAllWorkers()
+        .filter((w) => !!w.agent);
+      if (existingExecutableWorkers.length === 0) {
+        const workerCount = planData.plannerOutput.delegation?.workerCount ?? 3;
+        await this.registerDefaultWorkers(workerCount);
+      }
+
+      // 5. 如果需要，可根据快照更新现有 WorkerPool 的状态（不创建新 worker）
+      if (workerSnapshots && workerSnapshots.length > 0 && this.workerPool.rebuildFromSnapshots) {
+        this.workerPool.rebuildFromSnapshots(workerSnapshots);
+      }
+
+      // 6. 构建仅执行“可恢复子任务”的计划：保留全部 subtasks（用于统计/依赖），仅过滤 steps
+      const resumableSet = new Set(resumableSubtaskIds ?? []);
+      const resumePlan = this.filterPlanToResumableSubtasks(planData.plannerOutput, resumableSet);
+
+      // 7. 初始化执行状态（从检查点恢复）
+      const carriedFailed = checkpoint.failedSubtaskIds.filter((id) => !resumableSet.has(id));
+      const carriedRunning = checkpoint.runningSubtaskIds.filter((id) => !resumableSet.has(id));
+      const failedSubtasks = new Map<string, string>([
+        ...carriedFailed.map((id) => [id, 'Previously failed'] as const),
+        ...carriedRunning.map((id) => [id, 'Previously running'] as const),
+      ]);
+
+      const completedSubtasks = new Map<string, TaskResult>();
+      for (const id of checkpoint.completedSubtaskIds) {
+        const output = (checkpoint.completedResults as Record<string, unknown>)[id];
+        completedSubtasks.set(id, {
+          taskId: id,
+          status: 'success',
+          output,
+          artifacts: [],
+          metrics: {
+            startTime: checkpoint.createdAt,
+            endTime: checkpoint.createdAt,
+            duration: 0,
+            tokensUsed: 0,
+            toolCallCount: 0,
+            retryCount: 0,
+          },
+          trace: {
+            traceId: generateTimestampId('trace'),
+            spanId: generateTimestampId('span'),
+            operation: `orchestrator.${this.id}.resumeFrom.checkpoint`,
+            attributes: { restored: true, checkpointId },
+            events: [],
+            duration: 0,
+          },
+        });
+      }
+
+      this.executionState = {
+        currentStep: 0,
+        totalSteps: resumePlan.executionPlan.steps.length,
+        completedSubtasks,
+        failedSubtasks,
+        runningSubtasks: new Set(),
+        startTime,
+        totalTokens: checkpoint.totalTokens,
+        totalRetries: checkpoint.totalRetries,
+      };
+
+      this.emit('checkpoint:restored', checkpoint.taskId, {
+        checkpointId,
+        strategy: restoreOptions.strategy,
+        resumableCount: resumableSubtaskIds?.length ?? 0,
+      });
+
+      const aggregatedResult = await this.executeAssignPhase(checkpoint.taskId, resumePlan, signal);
+      return this.createFinalResult(checkpoint.taskId, aggregatedResult, startTime);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return this.createFailureResult(
+        checkpoint.taskId,
+        err.message,
+        startTime,
+        { input: 0, output: 0 }
+      );
+    } finally {
+      this.executionState = prevExecutionState;
+      this.currentRunMetadata = prevRunMetadata;
+      this.sessionManager = prevSessionManager;
+      this.currentSessionId = prevSessionId;
+      await checkpointManager.close().catch(() => undefined);
+      await sessionManager.close().catch(() => undefined);
+    }
+  }
+
+  /**
+   * 过滤计划只保留可恢复的子任务
+   */
+  private filterPlanToResumableSubtasks(
+    planOutput: PlannerOutput,
+    resumableIds: Set<string>
+  ): PlannerOutput {
+    // 过滤执行步骤
+    const filteredSteps = planOutput.executionPlan.steps
+      .map(step => ({
+        ...step,
+        subtaskIds: step.subtaskIds.filter(id => resumableIds.has(id)),
+      }))
+      .filter(step => step.subtaskIds.length > 0);
+
+    return {
+      ...planOutput,
+      executionPlan: {
+        ...planOutput.executionPlan,
+        steps: filteredSteps,
+      },
+    };
+  }
+
+  private async findSessionIdForCheckpoint(
+    checkpointId: string,
+    rootDir: string
+  ): Promise<string | null> {
+    const sessionsDir = join(rootDir, 'sessions');
+    const sessionIds = await listDir(sessionsDir).catch(() => []);
+
+    for (const sessionId of sessionIds) {
+      const p = join(
+        sessionsDir,
+        sessionId,
+        'orchestrator',
+        'checkpoints',
+        `${checkpointId}.json`
+      );
+      if (fileExists(p)) return sessionId;
+    }
+
+    return null;
   }
 
   // ============================================================================
@@ -1156,74 +1426,154 @@ Is this a genuine deviation? Answer YES or NO only.`,
   private async buildPatchPreviousContext(): Promise<string> {
     if (!this.sessionManager) return '';
 
+    const MAX_CHARS = 8000;
     const parts: string[] = [];
+    let used = 0;
+
+    const tryAppendLine = (line: string): boolean => {
+      const extra = (parts.length === 0 ? 0 : 1) + line.length;
+      if (used + extra > MAX_CHARS) return false;
+      parts.push(line);
+      used += extra;
+      return true;
+    };
+
+    const appendSection = (header: string, lines: string[]): void => {
+      if (lines.length === 0) return;
+      if (parts.length > 0) tryAppendLine('');
+      if (!tryAppendLine(header)) return;
+      for (const line of lines) {
+        if (!tryAppendLine(line)) {
+          tryAppendLine('... (truncated)');
+          return;
+        }
+      }
+    };
 
     const previousError = this.getPlannerPreviousError();
-    if (previousError) {
-      parts.push('### Previous error');
-      parts.push(previousError.slice(0, 500));
-    }
-
     const previousFiles = this.getPlannerPreviousFiles();
-    if (Array.isArray(previousFiles) && previousFiles.length > 0) {
-      parts.push('\n### Previously affected files (hint)');
-      for (const f of previousFiles.slice(0, 20)) parts.push(`- ${f}`);
+
+    const [plan, progress, decisions, shared] = await Promise.all([
+      this.sessionManager.readOrchestratorPlan().catch(() => null),
+      this.sessionManager.readProgress().catch(() => null),
+      this.sessionManager.readDecisions(10).catch(() => []),
+      this.sessionManager.readSharedContext().catch(() => null),
+    ]);
+
+    const syncLog = shared?.sharedKnowledge?.data?.syncLog;
+
+    // High priority: previousError + execution status (failed/running)
+    if (previousError) {
+      appendSection('### Previous error', [previousError.slice(0, 1500)]);
     }
 
-    const plan = await this.sessionManager.readOrchestratorPlan().catch(() => null);
-    if (plan?.plannerOutput) {
-      const p = plan.plannerOutput;
-      parts.push('### Previous plan');
-      for (const st of p.subtasks.slice(0, 20)) {
-        parts.push(`- ${st.id}: ${st.objective}`);
-      }
-    }
-
-    const progress = await this.sessionManager.readProgress().catch(() => null);
     if (progress) {
-      parts.push('\n### Previous execution status');
-      parts.push(`- status: ${progress.status}`);
-      parts.push(`- step: ${progress.currentStep}/${progress.totalSteps}`);
+      const lines: string[] = [];
+      lines.push(`- status: ${progress.status}`);
+      lines.push(`- step: ${progress.currentStep}/${progress.totalSteps}`);
       if (progress.completedSubtasks.length > 0) {
-        parts.push(`- completed: ${progress.completedSubtasks.slice(0, 10).join(', ')}${progress.completedSubtasks.length > 10 ? ', ...' : ''}`);
+        lines.push(
+          `- completed: ${progress.completedSubtasks.slice(0, 10).join(', ')}${
+            progress.completedSubtasks.length > 10 ? ', ...' : ''
+          }`
+        );
       }
       if (progress.failedSubtasks.length > 0) {
-        parts.push(`- failed: ${progress.failedSubtasks.slice(0, 10).join(', ')}${progress.failedSubtasks.length > 10 ? ', ...' : ''}`);
+        lines.push(
+          `- failed: ${progress.failedSubtasks.slice(0, 10).join(', ')}${
+            progress.failedSubtasks.length > 10 ? ', ...' : ''
+          }`
+        );
       }
       if (progress.runningSubtasks.length > 0) {
-        parts.push(`- running: ${progress.runningSubtasks.slice(0, 10).join(', ')}${progress.runningSubtasks.length > 10 ? ', ...' : ''}`);
+        lines.push(
+          `- running: ${progress.runningSubtasks.slice(0, 10).join(', ')}${
+            progress.runningSubtasks.length > 10 ? ', ...' : ''
+          }`
+        );
+      }
+      appendSection('### Previous execution status', lines);
+    }
+
+    // Medium priority: file hints (deduped) + plan summary + decisions
+    const fileHints: string[] = [];
+    const seenFiles = new Set<string>();
+
+    if (Array.isArray(previousFiles)) {
+      for (const f of previousFiles) {
+        if (!f || seenFiles.has(f)) continue;
+        seenFiles.add(f);
+        fileHints.push(f);
       }
     }
 
-    const decisions = await this.sessionManager.readDecisions(10).catch(() => []);
+    if (Array.isArray(syncLog)) {
+      for (const item of syncLog.slice(-10)) {
+        if (!item?.modifiedFiles || !Array.isArray(item.modifiedFiles)) continue;
+        for (const f of item.modifiedFiles) {
+          if (!f || seenFiles.has(f)) continue;
+          seenFiles.add(f);
+          fileHints.push(f);
+        }
+      }
+    }
+
+    if (fileHints.length > 0) {
+      appendSection(
+        '### Previously affected files (hint)',
+        fileHints.slice(0, 30).map((f) => `- ${f}`)
+      );
+    }
+
+    if (plan?.plannerOutput) {
+      const p = plan.plannerOutput;
+      appendSection(
+        '### Previous plan',
+        p.subtasks.slice(0, 20).map((st) => `- ${st.id}: ${st.objective}`)
+      );
+    }
+
     if (decisions.length > 0) {
-      parts.push('\n### Recent orchestrator decisions');
+      const lines: string[] = [];
       for (const d of decisions.slice(-5)) {
         const ref = [d.subtaskId, d.workerId].filter(Boolean).join(' / ');
         const head = `[${d.type}]${ref ? ` ${ref}:` : ''}`;
         const reason = d.decision?.reason ? String(d.decision.reason) : '';
-        parts.push(`- ${head} ${reason.slice(0, 200)}`.trim());
+        lines.push(`- ${head} ${reason.slice(0, 200)}`.trim());
       }
+      appendSection('### Recent orchestrator decisions', lines);
     }
 
-    const shared = await this.sessionManager.readSharedContext().catch(() => null);
-    const syncLog = shared?.sharedKnowledge?.data?.syncLog;
+    // Low priority: sync log summaries
     if (Array.isArray(syncLog) && syncLog.length > 0) {
-      parts.push('\n### Recent syncLog (selective)');
+      const lines: string[] = [];
       for (const item of syncLog.slice(-5)) {
-        const decisionsSummary = Array.isArray(item.decisions) && item.decisions.length > 0
-          ? ` | decisions: ${item.decisions.slice(0, 3).map((d) => `${d.type}${d.approved === undefined ? '' : d.approved ? '(approved)' : '(rejected)'}:${d.reason}`).join('; ')}`
-          : '';
-        const outputSummary = typeof item.output === 'string' && item.output.trim()
-          ? ` | output: ${item.output.trim().slice(0, 200)}${item.output.length > 200 ? '...' : ''}`
-          : '';
-        parts.push(
+        const decisionsSummary =
+          Array.isArray(item.decisions) && item.decisions.length > 0
+            ? ` | decisions: ${item.decisions
+                .slice(0, 3)
+                .map(
+                  (d) =>
+                    `${d.type}${
+                      d.approved === undefined ? '' : d.approved ? '(approved)' : '(rejected)'
+                    }:${d.reason}`
+                )
+                .join('; ')}`
+            : '';
+        const outputSummary =
+          typeof item.output === 'string' && item.output.trim()
+            ? ` | output: ${item.output.trim().slice(0, 200)}${item.output.length > 200 ? '...' : ''}`
+            : '';
+        lines.push(
           `- ${item.subtaskId} (${item.workerId}): ${item.objective}` +
-            (item.modifiedFiles && item.modifiedFiles.length > 0 ? ` | files: ${item.modifiedFiles.join(', ')}` : '') +
+            (item.modifiedFiles && item.modifiedFiles.length > 0
+              ? ` | files: ${item.modifiedFiles.join(', ')}`
+              : '') +
             decisionsSummary +
             outputSummary
         );
       }
+      appendSection('### Recent syncLog (selective)', lines);
     }
 
     return parts.join('\n').trim();

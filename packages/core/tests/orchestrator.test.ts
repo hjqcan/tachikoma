@@ -926,6 +926,78 @@ describe('Orchestrator 类', () => {
       expect(ctx).toContain('output:');
       expect(ctx).toContain('a.ts');
     });
+
+    it('应限制长度并优先保留高优先级信息', async () => {
+      const orchestrator = new Orchestrator('test-orch', {
+        planner: createMockPlanner(),
+        workerPool: createMockWorkerPoolForTest(),
+      });
+
+      const hugeObjective = 'x'.repeat(12_000);
+
+      const fakeSessionManager = {
+        readOrchestratorPlan: async () => ({
+          plannerOutput: {
+            subtasks: Array.from({ length: 200 }, (_, i) => ({
+              id: `subtask-${i + 1}`,
+              objective: `Objective ${i + 1}`,
+              constraints: [],
+              estimatedDuration: 0,
+              dependencies: [],
+              status: 'pending' as const,
+            })),
+            delegation: { mode: 'communication', workerCount: 1, timeout: 1000, retryPolicy: DEFAULT_RETRY_POLICY },
+            executionPlan: { isParallel: false, steps: [{ order: 1, subtaskIds: ['subtask-1'], parallel: false }] },
+          },
+        }),
+        readProgress: async () => ({
+          status: 'failed',
+          currentStep: 10,
+          totalSteps: 99,
+          completedSubtasks: Array.from({ length: 100 }, (_, i) => `c-${i}`),
+          failedSubtasks: ['subtask-1', 'subtask-2'],
+          runningSubtasks: ['subtask-3'],
+        }),
+        readDecisions: async () => [
+          {
+            id: 'd1',
+            timestamp: Date.now(),
+            type: 'retry',
+            subtaskId: 'subtask-1',
+            decision: { reason: 'retry once' },
+          },
+        ],
+        readSharedContext: async () => ({
+          sharedKnowledge: {
+            data: {
+              syncLog: Array.from({ length: 20 }, (_, i) => ({
+                subtaskId: `subtask-${i + 1}`,
+                workerId: `worker-${i + 1}`,
+                objective: `${i + 1} ${hugeObjective}`,
+                updatedAt: Date.now(),
+                modifiedFiles: [`file-${i + 1}.ts`],
+                decisions: [{ type: 'approval', reason: 'ok', approved: true }],
+                output: 'y'.repeat(10_000),
+              })),
+            },
+          },
+        }),
+      };
+
+      (orchestrator as unknown as Record<string, unknown>).sessionManager = fakeSessionManager;
+      (orchestrator as unknown as Record<string, unknown>).currentRunMetadata = {
+        planner: {
+          previousError: 'HIGH_PRIORITY_ERROR_MARKER ' + 'e'.repeat(10_000),
+          previousFiles: Array.from({ length: 100 }, (_, i) => `prev-${i}.ts`),
+        },
+      };
+
+      const ctx = await (orchestrator as unknown as { buildPatchPreviousContext: () => Promise<string> }).buildPatchPreviousContext();
+      expect(ctx.length).toBeLessThanOrEqual(8000);
+      expect(ctx).toContain('HIGH_PRIORITY_ERROR_MARKER');
+      expect(ctx).toContain('### Previous execution status');
+      expect(ctx).toContain('... (truncated)');
+    });
   });
 
   describe('事件系统', () => {
