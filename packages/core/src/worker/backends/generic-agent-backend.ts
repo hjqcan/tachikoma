@@ -228,7 +228,33 @@ interface RoundProgress {
   toolCallsParseFailed: boolean;  // 工具调用 XML 被截断
   outputHash: string;             // 输出内容 hash（检测重复）
   toolCallHash?: string;          // 工具调用内容 hash（检测重复调用）
+  toolNames?: string[];           // 本轮调用的工具名称列表
+  toolResultPatterns?: string[];  // 工具输出的模式指纹（前50字符 hash）
 }
+
+/**
+ * 进度追踪配置
+ */
+const PROGRESS_TRACKER_CONFIG = {
+  /** 连续调用同一工具的最大次数 */
+  maxConsecutiveSameTool: 8,
+  /** 同一失败模式的最大重复次数 */
+  maxSameResultPattern: 5,
+  /** 工具历史窗口大小 */
+  toolHistoryWindow: 15,
+  /** 触发降级的相似轮次阈值 */
+  similarRoundThreshold: 6,
+  /** 
+   * 允许重复调用的工具白名单
+   * 这些工具在批量操作中通常需要连续多次调用，不应被误判为死循环
+   */
+  repeatAllowedTools: [
+    'file_read',      // 批量读取文件
+    'file_list',      // 遍历目录
+    'apply_patch',    // 连续应用多个补丁
+    'file_write',     // 批量写入文件
+  ],
+};
 
 /**
  * 降级策略级别
@@ -240,6 +266,11 @@ type DegradationLevel = 0 | 1 | 2 | 3;
  * 
  * 追踪执行进度，检测死循环和无进展状态。
  * 当连续多轮没有实质进展时，触发策略降级。
+ * 
+ * 增强检测能力：
+ * 1. 工具名称频率检测 - 连续调用同一工具
+ * 2. 失败模式检测 - 相同的工具输出模式重复
+ * 3. 相似轮次检测 - 多轮调用相同类型的工具组合
  */
 class ProgressTracker {
   private history: RoundProgress[] = [];
@@ -249,11 +280,44 @@ class ProgressTracker {
   private toolCallHashHistory: string[] = [];  // 追踪最近的工具调用 hash
   private repeatToolCallCount = 0;             // 连续重复工具调用计数
   
+  // 增强检测状态
+  private toolNameHistory: string[] = [];              // 最近 N 轮的主要工具名称
+  private consecutiveSameToolCount = 0;                // 连续相同工具计数
+  private lastPrimaryTool = '';                        // 上一轮的主要工具
+  private resultPatternHistory = new Map<string, number>();  // 结果模式 -> 出现次数
+  
   /**
    * 记录一轮执行的进度
    */
   recordRound(progress: RoundProgress): void {
     this.history.push(progress);
+    
+    // 更新工具名称历史
+    if (progress.toolNames && progress.toolNames.length > 0) {
+      const primaryTool = progress.toolNames[0] as string;
+      this.toolNameHistory.push(primaryTool);
+      
+      // 保持窗口大小
+      if (this.toolNameHistory.length > PROGRESS_TRACKER_CONFIG.toolHistoryWindow) {
+        this.toolNameHistory.shift();
+      }
+      
+      // 检测连续相同工具
+      if (primaryTool === this.lastPrimaryTool) {
+        this.consecutiveSameToolCount++;
+      } else {
+        this.consecutiveSameToolCount = 1;
+        this.lastPrimaryTool = primaryTool;
+      }
+    }
+    
+    // 更新结果模式历史
+    if (progress.toolResultPatterns) {
+      for (const pattern of progress.toolResultPatterns) {
+        const count = this.resultPatternHistory.get(pattern) || 0;
+        this.resultPatternHistory.set(pattern, count + 1);
+      }
+    }
     
     if (this.hasProgress(progress)) {
       this.noProgressCount = 0;
@@ -263,7 +327,8 @@ class ProgressTracker {
       console.warn(
         `[ProgressTracker] No progress detected. Count: ${this.noProgressCount}. ` +
         `stopReason=${progress.stopReason}, toolCallsSucceeded=${progress.toolCallsSucceeded}, ` +
-        `toolCallsParseFailed=${progress.toolCallsParseFailed}`
+        `toolCallsParseFailed=${progress.toolCallsParseFailed}, ` +
+        `consecutiveSameTool=${this.consecutiveSameToolCount}`
       );
     }
     
@@ -279,7 +344,7 @@ class ProgressTracker {
       return true;
     }
     
-    // 检测重复的工具调用
+    // 检测重复的工具调用（完全相同的调用）
     if (progress.toolCallHash) {
       const lastHash = this.toolCallHashHistory[this.toolCallHashHistory.length - 1];
       if (lastHash === progress.toolCallHash) {
@@ -301,7 +366,53 @@ class ProgressTracker {
       }
     }
     
-    // 有成功的工具调用
+    // ========== 增强检测：工具频率限制 ==========
+    // 连续 N 次调用同一工具 = 可能陷入死循环
+    // 但白名单工具允许连续调用（如批量文件读取）
+    const isWhitelistedTool = PROGRESS_TRACKER_CONFIG.repeatAllowedTools.includes(this.lastPrimaryTool);
+    if (!isWhitelistedTool && 
+        this.consecutiveSameToolCount >= PROGRESS_TRACKER_CONFIG.maxConsecutiveSameTool) {
+      console.warn(
+        `[ProgressTracker] Tool frequency limit reached. ` +
+        `Tool "${this.lastPrimaryTool}" called ${this.consecutiveSameToolCount} times consecutively.`
+      );
+      return false;
+    }
+    
+    // ========== 增强检测：结果模式重复 ==========
+    // 同一结果模式出现太多次 = 工具执行无效
+    if (progress.toolResultPatterns) {
+      for (const pattern of progress.toolResultPatterns) {
+        const count = this.resultPatternHistory.get(pattern) || 0;
+        if (count >= PROGRESS_TRACKER_CONFIG.maxSameResultPattern) {
+          console.warn(
+            `[ProgressTracker] Result pattern repeated ${count} times. ` +
+            `Pattern: ${pattern.slice(0, 20)}...`
+          );
+          return false;
+        }
+      }
+    }
+    
+    // ========== 增强检测：相似轮次检测 ==========
+    // 检查最近 N 轮是否都是同一类工具
+    if (this.toolNameHistory.length >= PROGRESS_TRACKER_CONFIG.similarRoundThreshold) {
+      const recentTools = this.toolNameHistory.slice(-PROGRESS_TRACKER_CONFIG.similarRoundThreshold);
+      const uniqueTools = new Set(recentTools);
+      // 如果最近 N 轮只使用了 1 种工具，且不在白名单中，认为无进展
+      if (uniqueTools.size === 1) {
+        const singleTool = recentTools[0];
+        if (singleTool && !PROGRESS_TRACKER_CONFIG.repeatAllowedTools.includes(singleTool)) {
+          console.warn(
+            `[ProgressTracker] Similar rounds detected. ` +
+            `Last ${PROGRESS_TRACKER_CONFIG.similarRoundThreshold} rounds all used tool: ${singleTool}`
+          );
+          return false;
+        }
+      }
+    }
+    
+    // 有成功的工具调用（前提是通过了上述检测）
     if (progress.toolCallsSucceeded > 0) {
       return true;
     }
@@ -351,6 +462,21 @@ class ProgressTracker {
     this.lastInjectedLevel = level;
     
     if (level === 1) {
+      // 根据检测到的问题类型提供更具体的建议
+      const isToolLoop = this.consecutiveSameToolCount >= PROGRESS_TRACKER_CONFIG.maxConsecutiveSameTool / 2;
+      
+      if (isToolLoop) {
+        return `⚠️ 检测到你可能陷入死循环（连续 ${this.consecutiveSameToolCount} 次调用 ${this.lastPrimaryTool}）。
+
+请调整你的策略：
+1. 检查之前的工具调用是否真的成功了
+2. 如果命令失败，尝试不同的解决方案而不是重复同样的命令
+3. 如果遇到权限或环境问题，请报告并建议替代方案
+4. 考虑是否需要用户介入
+
+如果任务无法完成，请明确说明原因。`;
+      }
+      
       return `⚠️ 检测到你的输出被截断了（已连续 ${this.noProgressCount} 次无进展）。
 
 请调整你的策略：
@@ -367,7 +493,8 @@ class ProgressTracker {
 
 建议：
 - 简化你的输出，只完成最小可行版本
-- 如果任务太复杂，请说明并建议如何拆分`;
+- 如果任务太复杂，请说明并建议如何拆分
+- 如果遇到无法解决的问题，请明确报告`;
     }
     
     return null; // level 3 会直接终止，不需要消息
@@ -377,10 +504,41 @@ class ProgressTracker {
     return [...this.history];
   }
   
+  /**
+   * 获取调试诊断信息
+   */
+  getDiagnostics(): {
+    noProgressCount: number;
+    consecutiveSameToolCount: number;
+    lastPrimaryTool: string;
+    toolNameHistory: string[];
+    repeatPatternCount: number;
+  } {
+    let maxPatternCount = 0;
+    for (const count of this.resultPatternHistory.values()) {
+      maxPatternCount = Math.max(maxPatternCount, count);
+    }
+    
+    return {
+      noProgressCount: this.noProgressCount,
+      consecutiveSameToolCount: this.consecutiveSameToolCount,
+      lastPrimaryTool: this.lastPrimaryTool,
+      toolNameHistory: [...this.toolNameHistory],
+      repeatPatternCount: maxPatternCount,
+    };
+  }
+  
   reset(): void {
     this.history = [];
     this.noProgressCount = 0;
     this.lastOutputHash = '';
+    this.toolCallHashHistory = [];
+    this.repeatToolCallCount = 0;
+    this.toolNameHistory = [];
+    this.consecutiveSameToolCount = 0;
+    this.lastPrimaryTool = '';
+    this.resultPatternHistory.clear();
+    this.lastInjectedLevel = 0;
   }
 }
 
@@ -1359,6 +1517,18 @@ When the task is complete, provide a final summary of what was accomplished.`));
           ? simpleHash(toolCalls.map(c => `${c.name}:${JSON.stringify(c.input)}`).join('|'))
           : undefined;
         
+        // 收集工具名称列表（用于增强检测）
+        const toolNames = toolCalls.length > 0
+          ? toolCalls.map(c => c.name)
+          : undefined;
+        
+        // 收集工具结果模式（基于响应内容的前 50 字符 hash）
+        // 注意：这里使用 response.content 作为粗略的模式指纹
+        // 如果需要更精确，可以在工具执行时收集每个工具的输出
+        const toolResultPatterns = toolCalls.length > 0
+          ? [simpleHash(response.content.slice(0, 200))]
+          : undefined;
+        
         progressTracker.recordRound({
           round,
           stopReason: response.stopReason ?? 'unknown',
@@ -1367,6 +1537,8 @@ When the task is complete, provide a final summary of what was accomplished.`));
           toolCallsParseFailed,
           outputHash: simpleHash(response.content),
           ...(toolCallHash && { toolCallHash }),
+          ...(toolNames && { toolNames }),
+          ...(toolResultPatterns && { toolResultPatterns }),
         });
 
         // 检查是否需要降级策略
