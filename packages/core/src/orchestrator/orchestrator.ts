@@ -2337,7 +2337,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         },
       };
 
-      const result = await agent.run(workerTask);
+      const result = await agent.run(workerTask); //这里调用基类base-agent.ts的run方法，继而调用抽象方法executeTask，workerAgent继承baseAgent，实现executeTask，这里实际调用的就是workerAgent的executeTask方法
 
       if (result.status !== 'success') {
         const err = (result.output as { error?: string } | undefined)?.error ?? 'Worker execution failed';
