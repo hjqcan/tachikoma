@@ -17,13 +17,13 @@ import type { Tool, ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory, ToolPermission } from '../types';
 
-const DEFAULT_AGENT = 'deep-research-pro-preview-12-2025';
-const INTERACTIONS_BASE_URL =
+export const DEFAULT_AGENT = 'deep-research-pro-preview-12-2025';
+export const INTERACTIONS_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/interactions';
-const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
-const DEFAULT_POLL_INTERVAL_MS = 10_000;
+export const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+export const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
-interface DeepResearchInput {
+export interface DeepResearchInput {
   input: string;
   agent?: string;
   agentConfig?: Record<string, unknown>;
@@ -48,7 +48,38 @@ export interface DeepResearchOutput {
   latencyMs: number;
 }
 
-function validateInput(input: unknown): {
+/**
+ * Normalize interaction identifier into an ID segment suitable for
+ * `${INTERACTIONS_BASE_URL}/{id}`.
+ *
+ * The Interactions API may return either:
+ * - plain id: "123"
+ * - resource name: "interactions/123"
+ * - full resource path: "projects/.../locations/.../interactions/123"
+ */
+export function normalizeInteractionId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const raw = value.trim();
+  if (!raw) return undefined;
+  const parts = raw.split('/').filter(Boolean);
+  if (parts.length === 0) return undefined;
+  const idx = parts.lastIndexOf('interactions');
+  if (idx !== -1 && idx + 1 < parts.length) {
+    return parts[idx + 1];
+  }
+  return parts[parts.length - 1];
+}
+
+export function extractInteractionId(created: Record<string, unknown>): string | undefined {
+  return (
+    normalizeInteractionId(created.id) ||
+    normalizeInteractionId(created.interaction_id) ||
+    normalizeInteractionId(created.interactionId) ||
+    normalizeInteractionId(created.name)
+  );
+}
+
+export function validateInput(input: unknown): {
   valid: boolean;
   error?: string;
   data?: DeepResearchInput;
@@ -96,11 +127,11 @@ function validateInput(input: unknown): {
   };
 }
 
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function extractReport(raw: unknown): string | undefined {
+export function extractReport(raw: unknown): string | undefined {
   const r = raw as Record<string, unknown> | null;
   if (!r) return undefined;
 
@@ -134,7 +165,7 @@ function extractReport(raw: unknown): string | undefined {
   return undefined;
 }
 
-function extractCitations(raw: unknown): DeepResearchCitation[] | undefined {
+export function extractCitations(raw: unknown): DeepResearchCitation[] | undefined {
   const r = raw as Record<string, unknown> | null;
   if (!r) return undefined;
 
@@ -145,7 +176,7 @@ function extractCitations(raw: unknown): DeepResearchCitation[] | undefined {
   return undefined;
 }
 
-async function startInteraction(
+export async function startInteraction(
   input: DeepResearchInput,
   apiKey: string
 ): Promise<Record<string, unknown>> {
@@ -182,11 +213,16 @@ async function startInteraction(
   return (await response.json()) as Record<string, unknown>;
 }
 
-async function getInteraction(
+export async function getInteraction(
   interactionId: string,
   apiKey: string
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(`${INTERACTIONS_BASE_URL}/${interactionId}`, {
+  const normalized = normalizeInteractionId(interactionId);
+  if (!normalized) {
+    throw new Error('Invalid interactionId');
+  }
+
+  const response = await fetch(`${INTERACTIONS_BASE_URL}/${normalized}`, {
     method: 'GET',
     headers: {
       'x-goog-api-key': apiKey,
@@ -295,11 +331,7 @@ export const deepResearchTool: Tool = {
 
     try {
       const created = await startInteraction(validation.data, apiKey);
-      const interactionId =
-        (created.id as string | undefined) ??
-        (created.name as string | undefined) ??
-        (created.interaction_id as string | undefined) ??
-        (created.interactionId as string | undefined);
+      const interactionId = extractInteractionId(created);
 
       if (!interactionId) {
         return {
