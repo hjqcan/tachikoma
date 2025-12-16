@@ -27,6 +27,13 @@ interface RunOptions {
   model?: string | undefined;
 }
 
+interface IdeaContextOptions {
+  workdir: string;
+  apiKey?: string | undefined;
+  baseUrl?: string | undefined;
+  model?: string | undefined;
+}
+
 // =============================================================================
 // 颜色输出
 // =============================================================================
@@ -298,6 +305,225 @@ ${colors.reset}`);
 }
 
 // =============================================================================
+// 命令: idea (可选工作流，不扰动对话链)
+// =============================================================================
+
+function showIdeaHelp(): void {
+  console.log(`
+${colors.bold}Tachikoma CLI${colors.reset} - idea 工作流（可选，不走对话链）
+
+${colors.bold}用法:${colors.reset}
+  tachikoma idea <subcommand> [options]
+
+${colors.bold}子命令:${colors.reset}
+  spec        研究报告 → 生成 specs/ (PRD/架构/任务)
+  tasks       读取/更新 tasks.md
+  plan        基于 specs/ 生成实现计划（LLM）
+  help        显示帮助信息
+
+${colors.bold}示例:${colors.reset}
+  bun run packages/core/bin/tachikoma.ts idea spec \\
+    --report "./report.md" \\
+    --project-name "calculator" \\
+    --workdir ./my-project
+`);
+}
+
+function buildIdeaExecutionContext(opts: IdeaContextOptions) {
+  const workDir = resolve(opts.workdir);
+  const env = {
+    ...(process.env as Record<string, string>),
+  };
+  if (opts.apiKey) {
+    // 优先级：CLI 参数 > 环境变量
+    env.OPENROUTER_API_KEY = opts.apiKey;
+  }
+  if (opts.baseUrl) {
+    env.OPENROUTER_BASE_URL = opts.baseUrl;
+  }
+  if (opts.model) {
+    env.OPENROUTER_MODEL = opts.model;
+  }
+
+  return {
+    taskId: `idea-${Date.now()}`,
+    agentId: 'tachikoma-cli',
+    traceId: `trace-${Date.now()}`,
+    workDir,
+    env,
+  };
+}
+
+async function ideaCommand(args: string[]): Promise<void> {
+  const subcommand = args[0];
+  if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    showIdeaHelp();
+    return;
+  }
+
+  if (subcommand === 'spec') {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: {
+        report: { type: 'string' },
+        'project-name': { type: 'string' },
+        workdir: { type: 'string', short: 'w', default: './workspace' },
+        'output-dir': { type: 'string', default: 'specs' },
+        language: { type: 'string', default: 'zh-CN' },
+        'api-key': { type: 'string' },
+        'base-url': { type: 'string' },
+        model: { type: 'string' },
+      },
+      strict: true,
+    });
+
+    if (!values.report || !values['project-name']) {
+      logError('缺少 --report 或 --project-name 参数');
+      console.log('使用 tachikoma idea help 查看帮助');
+      process.exit(1);
+    }
+
+    const context = buildIdeaExecutionContext({
+      workdir: values.workdir ?? './workspace',
+      apiKey: values['api-key'],
+      baseUrl: values['base-url'],
+      model: values.model,
+    });
+
+    // 动态导入：避免把可选工作流工具打进默认对话链路
+    const { researchToSpecTool } = await import('../src/tools/core/research-to-spec');
+
+    const result = await researchToSpecTool.execute(
+      {
+        report: values.report,
+        projectName: values['project-name'],
+        outputDir: values['output-dir'],
+        language: values.language,
+        llm: {
+          provider: 'openai',
+          apiKey: context.env.OPENROUTER_API_KEY || context.env.OPENAI_API_KEY,
+          baseUrl: context.env.OPENROUTER_BASE_URL,
+          model: context.env.OPENROUTER_MODEL,
+        },
+      },
+      context as any
+    );
+
+    if (!result.success) {
+      logError(result.error ?? 'research_to_spec failed');
+      process.exit(1);
+    }
+
+    logSuccess(result.data?.summary ?? 'Generated specs');
+    if (result.data) {
+      console.log(`${colors.dim}Outputs:${colors.reset}
+  - ${result.data.specFile}
+  - ${result.data.archFile}
+  - ${result.data.taskFile}`);
+    }
+    return;
+  }
+
+  if (subcommand === 'tasks') {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: {
+        action: { type: 'string' },
+        workdir: { type: 'string', short: 'w', default: './workspace' },
+        'task-file': { type: 'string' },
+        'task-id': { type: 'string' },
+        'task-content': { type: 'string' },
+      },
+      strict: true,
+    });
+
+    const action = values.action as string | undefined;
+    if (!action) {
+      logError('缺少 --action 参数 (read_next|mark_complete|list_all|add_task)');
+      process.exit(1);
+    }
+
+    const context = buildIdeaExecutionContext({ workdir: values.workdir ?? './workspace' });
+    const { taskManagerTool } = await import('../src/tools/core/task-manager');
+
+    const taskId = values['task-id'] ? Number(values['task-id']) : undefined;
+    const result = await taskManagerTool.execute(
+      {
+        action,
+        taskFile: values['task-file'],
+        ...(taskId !== undefined && Number.isFinite(taskId) ? { taskId } : {}),
+        ...(values['task-content'] ? { taskContent: values['task-content'] } : {}),
+      },
+      context as any
+    );
+
+    if (!result.success) {
+      logError(result.error ?? 'task_manager failed');
+      process.exit(1);
+    }
+
+    console.log(result.data?.message ?? 'OK');
+    if (result.data?.task) console.log(result.data.task);
+    if (result.data?.tasks) console.log(result.data.tasks);
+    return;
+  }
+
+  if (subcommand === 'plan') {
+    const { values } = parseArgs({
+      args: args.slice(1),
+      options: {
+        task: { type: 'string' },
+        workdir: { type: 'string', short: 'w', default: './workspace' },
+        'context-dir': { type: 'string', default: 'specs' },
+        'api-key': { type: 'string' },
+        'base-url': { type: 'string' },
+        model: { type: 'string' },
+      },
+      strict: true,
+    });
+
+    if (!values.task) {
+      logError('缺少 --task 参数');
+      process.exit(1);
+    }
+
+    const context = buildIdeaExecutionContext({
+      workdir: values.workdir ?? './workspace',
+      apiKey: values['api-key'],
+      baseUrl: values['base-url'],
+      model: values.model,
+    });
+
+    const { codePlannerTool } = await import('../src/tools/core/code-planner');
+    const result = await codePlannerTool.execute(
+      {
+        task: values.task,
+        contextDir: values['context-dir'],
+        llm: {
+          provider: 'openai',
+          apiKey: context.env.OPENROUTER_API_KEY || context.env.OPENAI_API_KEY,
+          baseUrl: context.env.OPENROUTER_BASE_URL,
+          model: context.env.OPENROUTER_MODEL,
+        },
+      },
+      context as any
+    );
+
+    if (!result.success) {
+      logError(result.error ?? 'code_planner failed');
+      process.exit(1);
+    }
+
+    console.log(JSON.stringify(result.data?.plan, null, 2));
+    return;
+  }
+
+  logError(`未知 idea 子命令: ${subcommand}`);
+  console.log('使用 tachikoma idea help 查看帮助');
+  process.exit(1);
+}
+
+// =============================================================================
 // 命令: help
 // =============================================================================
 
@@ -311,6 +537,7 @@ ${colors.bold}用法:${colors.reset}
 ${colors.bold}命令:${colors.reset}
   run         执行任务
   speckit     面向规范开发工具
+  idea        idea 工作流（可选）
   help        显示帮助信息
 
 ${colors.bold}选项 (run 命令):${colors.reset}
@@ -327,6 +554,11 @@ ${colors.bold}示例:${colors.reset}
     --workdir ./my-project
 
   bun run packages/core/bin/tachikoma.ts speckit init --workdir ./my-project
+
+  bun run packages/core/bin/tachikoma.ts idea spec \\
+    --report "./report.md" \\
+    --project-name "calculator" \\
+    --workdir ./my-project
 
 ${colors.bold}环境变量:${colors.reset}
   OPENROUTER_API_KEY      OpenRouter API Key (必需)
@@ -385,6 +617,8 @@ async function main(): Promise<void> {
     }
   } else if (command === 'speckit') {
     await speckitCommand(args.slice(1));
+  } else if (command === 'idea') {
+    await ideaCommand(args.slice(1));
   } else {
     logError(`未知命令: ${command}`);
     console.log('使用 --help 查看帮助');

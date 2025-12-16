@@ -247,6 +247,15 @@ description: |-
 // ============================================================================
 
 describe('loadSkills', () => {
+  function loadSkillsIsolated(config: Parameters<typeof loadSkills>[0]) {
+    // Ensure tests are not affected by user's real global skills directory (~/.tachikoma/skills).
+    // Point globalDir to a temp path that doesn't exist so only additionalDirs are scanned.
+    return loadSkills({
+      globalDir: path.join(tempDir, '__global_skills__'),
+      ...config,
+    });
+  }
+
   test('discovers skills in directory', () => {
     createSkillFile(
       tempDir,
@@ -267,7 +276,7 @@ description: Second skill
 # B`
     );
 
-    const outcome = loadSkills({ additionalDirs: [tempDir], enabled: true });
+    const outcome = loadSkillsIsolated({ additionalDirs: [tempDir], enabled: true });
 
     expect(outcome.errors).toHaveLength(0);
     expect(outcome.skills).toHaveLength(2);
@@ -288,7 +297,7 @@ description: Should be skipped
 # Hidden`
     );
 
-    const outcome = loadSkills({ additionalDirs: [tempDir], enabled: true });
+    const outcome = loadSkillsIsolated({ additionalDirs: [tempDir], enabled: true });
 
     expect(outcome.skills).toHaveLength(0);
   });
@@ -307,7 +316,7 @@ description: A deeply nested skill
 # Deep`
     );
 
-    const outcome = loadSkills({ additionalDirs: [tempDir], enabled: true });
+    const outcome = loadSkillsIsolated({ additionalDirs: [tempDir], enabled: true });
 
     expect(outcome.skills).toHaveLength(1);
     expect(outcome.skills[0].name).toBe('deep-skill');
@@ -324,7 +333,7 @@ description: Test
 # Content`
     );
 
-    const outcome = loadSkills({ additionalDirs: [tempDir], enabled: false });
+    const outcome = loadSkillsIsolated({ additionalDirs: [tempDir], enabled: false });
 
     expect(outcome.skills).toHaveLength(0);
   });
@@ -337,7 +346,7 @@ description: Valid skill
 # Valid`);
     createSkillFile(tempDir, 'invalid', `no frontmatter here`);
 
-    const outcome = loadSkills({ additionalDirs: [tempDir], enabled: true });
+    const outcome = loadSkillsIsolated({ additionalDirs: [tempDir], enabled: true });
 
     expect(outcome.skills).toHaveLength(1);
     expect(outcome.errors).toHaveLength(1);
@@ -345,7 +354,7 @@ description: Valid skill
   });
 
   test('handles non-existent directory gracefully', () => {
-    const outcome = loadSkills({
+    const outcome = loadSkillsIsolated({
       additionalDirs: ['/non/existent/path'],
       enabled: true,
     });
