@@ -14,6 +14,7 @@ import type {
   OffloadConfig,
   OffloadResult,
 } from '../types';
+import type { LanguageCode } from '../language';
 
 // ============================================================================
 // 卸载策略
@@ -57,7 +58,8 @@ export class OffloadStrategy {
   async offload(
     messages: ContextMessage[],
     fileManager: OffloadFileManager,
-    estimateTokens: (content: string) => number
+    estimateTokens: (content: string) => number,
+    language: LanguageCode = 'zh'
   ): Promise<OffloadResult> {
     const messageIds: string[] = [];
     const filePaths: string[] = [];
@@ -85,7 +87,7 @@ export class OffloadStrategy {
       // 更新消息
       const originalContent = message.content;
       message.fullContent = originalContent;
-      message.content = this.createPlaceholder(message, filePath);
+      message.content = this.createPlaceholder(message, filePath, language);
       message.format = 'compact';
       message.recoveryRef = `file://${filePath}`;
 
@@ -227,23 +229,30 @@ export class OffloadStrategy {
     }
   }
 
-  private createPlaceholder(message: ContextMessage, filePath: string): string {
-    const roleLabel = this.getRoleLabel(message.role);
+  private createPlaceholder(
+    message: ContextMessage,
+    filePath: string,
+    language: LanguageCode
+  ): string {
+    const roleLabel = this.getRoleLabel(message.role, language);
+    if (language === 'en') {
+      return `[${roleLabel} content offloaded to: ${filePath}]`;
+    }
     return `[${roleLabel}内容已卸载到文件: ${filePath}]`;
   }
 
-  private getRoleLabel(role: string): string {
+  private getRoleLabel(role: string, language: LanguageCode): string {
     switch (role) {
       case 'user':
-        return '用户消息';
+        return language === 'en' ? 'User message' : '用户消息';
       case 'assistant':
-        return '助手响应';
+        return language === 'en' ? 'Assistant response' : '助手响应';
       case 'tool':
-        return '工具结果';
+        return language === 'en' ? 'Tool result' : '工具结果';
       case 'system':
-        return '系统消息';
+        return language === 'en' ? 'System message' : '系统消息';
       default:
-        return '消息';
+        return language === 'en' ? 'Message' : '消息';
     }
   }
 }

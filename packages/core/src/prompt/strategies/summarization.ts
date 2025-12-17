@@ -17,6 +17,7 @@ import type {
   SummarizationResult,
   StructuredSummary,
 } from '../types';
+import { detectUserLanguage, type LanguageCode } from '../language';
 
 // ============================================================================
 // 摘要策略
@@ -169,37 +170,103 @@ export class SummarizationStrategy {
     messages: ContextMessage[],
     llmClient: SummarizationLLMClient,
     estimateTokens: (content: string) => number,
-    offloadFn?: (content: string) => Promise<string>
+    offloadFn?: (content: string) => Promise<string>,
+    language: LanguageCode = detectUserLanguage(messages)
   ): Promise<SummarizationResult> {
     const beforeTokens = this.calculateTotalTokens(messages, estimateTokens);
 
     // 如果配置了摘要前卸载，先保存完整上下文
     let offloadedPath: string | undefined;
     if (this.config.offloadBeforeSummarize && offloadFn) {
-      const fullContext = this.serializeMessages(messages);
-      offloadedPath = await offloadFn(fullContext);
+      try {
+        const fullContext = this.serializeMessages(messages);
+        offloadedPath = await offloadFn(fullContext);
+      } catch (error) {
+        // Offload is best-effort; do not fail summarization due to logging issues.
+        this.logger.warn('[SummarizationStrategy] Pre-summarization offload failed (continuing):', error);
+      }
     }
 
     // 确定需要摘要的消息范围
     const summarizeUpTo = Math.max(0, messages.length - this.config.keepLastN);
-    const messagesToSummarize = messages.slice(0, summarizeUpTo);
+
+    // Nothing to summarize: avoid adding extra messages (would increase token count).
+    if (summarizeUpTo <= 0) {
+      this.logger.warn('[SummarizationStrategy] summarizeUpTo <= 0; skipping summarization');
+      return {
+        success: false,
+        summary: this.createDefaultSummary(
+          'Summarization skipped: no messages eligible for summarization.',
+          language
+        ),
+        beforeTokens,
+        afterTokens: beforeTokens,
+        ...(offloadedPath !== undefined && { offloadedPath }),
+      };
+    }
+    
+    // Pin task context to reduce the chance of losing critical requirements.
+    // NOTE: Keep the pinned content compact (avoid pinning tool lists, large logs, etc.).
+    const pinnedTask = this.findPinnedTaskContext(messages, summarizeUpTo, language);
+
+    // 构建待摘要列表（排除 pinned task context source + existing pinned message）
+    const messagesToSummarize = messages
+      .slice(0, summarizeUpTo)
+      .filter((m) => !pinnedTask?.excludedMessages.includes(m));
+      
     const messagesToKeep = messages.slice(summarizeUpTo);
+
+    // If the only eligible messages are excluded/pinned, do not generate a summary.
+    if (messagesToSummarize.length === 0) {
+      this.logger.warn('[SummarizationStrategy] No eligible messages to summarize after exclusions; skipping summarization');
+      return {
+        success: false,
+        summary: this.createDefaultSummary(
+          'Summarization skipped: no eligible messages to summarize after exclusions.',
+          language
+        ),
+        beforeTokens,
+        afterTokens: beforeTokens,
+        ...(offloadedPath !== undefined && { offloadedPath }),
+      };
+    }
 
     // 生成结构化摘要
     let summary: StructuredSummary;
-    if (this.config.mode === 'structured') {
-      summary = await llmClient.generateSummary(messagesToSummarize, this.schema);
-    } else {
-      // 自由形式摘要（转换为结构化格式）
-      summary = await this.generateFreeformSummary(messagesToSummarize, llmClient);
+    try {
+      if (this.config.mode === 'structured') {
+        summary = await llmClient.generateSummary(messagesToSummarize, this.schema);
+      } else {
+        // 自由形式摘要（转换为结构化格式）
+        summary = await this.generateFreeformSummary(messagesToSummarize, llmClient);
+      }
+    } catch (error) {
+      this.logger.warn('[SummarizationStrategy] Summarization LLM call failed:', error);
+      return {
+        success: false,
+        summary: this.createDefaultSummary(
+          `Summarization failed: ${(error as Error)?.message ?? String(error)}`,
+          language
+        ),
+        beforeTokens,
+        afterTokens: beforeTokens,
+        ...(offloadedPath !== undefined && { offloadedPath }),
+      };
     }
 
     // 创建摘要消息
-    const summaryMessage = this.createSummaryMessage(summary, offloadedPath);
+    const summaryMessage = this.createSummaryMessage(summary, offloadedPath, language);
 
     // 替换原消息列表
+    const rebuilt: ContextMessage[] = [];
+    // Rebuild: [Pinned Task Context] -> [Summary] -> [Recent]
+    if (pinnedTask?.pinnedMessage) {
+      rebuilt.push(pinnedTask.pinnedMessage);
+    }
+    rebuilt.push(summaryMessage, ...messagesToKeep);
+
     messages.length = 0;
-    messages.push(summaryMessage, ...messagesToKeep);
+    messages.push(...rebuilt);
 
     const afterTokens = this.calculateTotalTokens(messages, estimateTokens);
 
@@ -224,24 +291,25 @@ export class SummarizationStrategy {
       .map((f) => `- ${f}: ${this.schema.descriptions[f]}`)
       .join('\n');
 
-    return `请分析以下对话历史，并生成结构化摘要。
+    return `Analyze the following conversation history and produce a structured summary as JSON.
 
-## 对话历史
+## Conversation History
 
 ${conversationText}
 
-## 摘要格式
+## Output Schema
 
-请按以下字段结构输出 JSON：
+Return a JSON object with the following fields (use these exact keys):
 
 ${fieldsDescription}
 
-## 输出要求
+## Requirements
 
-1. 使用 JSON 格式输出
-2. 确保所有字段都有值（列表可以为空数组）
-3. 保持简洁但完整
-4. 重点保留关键信息，避免遗漏重要细节`;
+1. Output JSON only (no additional prose).
+2. Every field must be present (arrays may be empty).
+3. Be concise but complete.
+4. Preserve critical requirements/constraints from the user.
+5. Use the same language as the source messages for field values whenever possible.`;
   }
 
   /**
@@ -309,9 +377,10 @@ ${fieldsDescription}
 
   private createSummaryMessage(
     summary: StructuredSummary,
-    offloadedPath?: string
+    offloadedPath?: string,
+    language: LanguageCode = 'en'
   ): ContextMessage {
-    const content = this.formatSummaryAsContent(summary, offloadedPath);
+    const content = this.formatSummaryAsContent(summary, offloadedPath, language);
 
     return {
       id: `summary-${Date.now()}`,
@@ -324,49 +393,22 @@ ${fieldsDescription}
 
   private formatSummaryAsContent(
     summary: StructuredSummary,
-    offloadedPath?: string
+    offloadedPath?: string,
+    language: LanguageCode = 'en'
   ): string {
-    const sections: string[] = [];
-
-    sections.push('## 对话摘要\n');
-
-    if (summary.userGoal) {
-      sections.push(`### 用户目标\n${summary.userGoal}\n`);
-    }
-
-    if (summary.completedSteps.length > 0) {
-      sections.push(`### 已完成步骤\n${summary.completedSteps.map((s) => `- ${s}`).join('\n')}\n`);
-    }
-
-    if (summary.keyFindings.length > 0) {
-      sections.push(`### 关键发现\n${summary.keyFindings.map((f) => `- ${f}`).join('\n')}\n`);
-    }
-
-    if (summary.modifiedFiles.length > 0) {
-      sections.push(`### 修改的文件\n${summary.modifiedFiles.map((f) => `- ${f}`).join('\n')}\n`);
-    }
-
-    if (summary.currentProgress) {
-      sections.push(`### 当前进度\n${summary.currentProgress}\n`);
-    }
-
-    if (summary.nextSteps.length > 0) {
-      sections.push(`### 下一步计划\n${summary.nextSteps.map((s) => `- ${s}`).join('\n')}\n`);
-    }
-
-    if (summary.errors.length > 0) {
-      sections.push(`### 错误/警告\n${summary.errors.map((e) => `⚠️ ${e}`).join('\n')}\n`);
-    }
-
-    if (summary.lastStopPoint) {
-      sections.push(`### 最后停止位置\n${summary.lastStopPoint}\n`);
-    }
-
+    const parts: string[] = [];
+    parts.push(language === 'zh' ? '对话摘要（非指令性，仅供上下文参考）：' : 'Conversation summary (non-instructional):');
+    parts.push('```json');
+    parts.push(JSON.stringify(summary, null, 2));
+    parts.push('```');
     if (offloadedPath) {
-      sections.push(`\n> 完整对话历史已保存到: ${offloadedPath}\n`);
+      parts.push(
+        language === 'zh'
+          ? `完整对话历史已卸载至：${offloadedPath}`
+          : `Offloaded full context: ${offloadedPath}`
+      );
     }
-
-    return sections.join('\n');
+    return parts.join('\n');
   }
 
   private validateAndNormalize(parsed: Partial<StructuredSummary>): StructuredSummary {
@@ -382,15 +424,96 @@ ${fieldsDescription}
     };
   }
 
-  private createDefaultSummary(rawResponse: string): StructuredSummary {
+  private isPinnedTaskMessage(message: ContextMessage): boolean {
+    return message.role === 'system' && message.id.startsWith('pinned-task-');
+  }
+
+  private extractTaskContext(raw: string): string | null {
+    const taskIndex = raw.indexOf('Task:');
+    if (taskIndex === -1) return null;
+
+    let text = raw.slice(taskIndex);
+
+    const toolsIndex = text.indexOf('Available tools:');
+    if (toolsIndex !== -1) {
+      text = text.slice(0, toolsIndex);
+    }
+
+    text = text.trim();
+    if (text.length === 0) return null;
+
+    const maxChars = 2000;
+    if (text.length > maxChars) {
+      text = text.slice(0, maxChars).trimEnd() + '\n\n[Truncated]';
+    }
+
+    return text;
+  }
+
+  private findPinnedTaskContext(
+    messages: ContextMessage[],
+    summarizeUpTo: number,
+    language: LanguageCode
+  ): { pinnedMessage?: ContextMessage; excludedMessages: ContextMessage[] } | null {
+    const excludedMessages: ContextMessage[] = [];
+
+    // Preserve existing pinned task context message (if any).
+    const existingPinned = messages.find((m, i) => i < summarizeUpTo && this.isPinnedTaskMessage(m));
+    if (existingPinned) {
+      excludedMessages.push(existingPinned);
+      return { pinnedMessage: existingPinned, excludedMessages };
+    }
+
+    // Heuristic: detect the initial task specification message produced by some backends.
+    const taskMessageIndex = messages.findIndex(
+      (m, i) => i < summarizeUpTo && m.role === 'user' && m.content.includes('Task:')
+    );
+    if (taskMessageIndex === -1) {
+      return null;
+    }
+
+    const taskMessage = messages[taskMessageIndex];
+    if (!taskMessage) {
+      return null;
+    }
+
+    const extracted = this.extractTaskContext(taskMessage.content);
+    if (!extracted) {
+      return null;
+    }
+
+    excludedMessages.push(taskMessage);
+
+    const pinnedMessage: ContextMessage = {
+      id: `pinned-task-${Date.now()}`,
+      role: 'system',
+      content:
+        language === 'zh'
+          ? `任务上下文（固定保留）：\n\n${extracted}`
+          : `Task context (pinned):\n\n${extracted}`,
+      timestamp: Date.now(),
+      format: 'full',
+    };
+
+    return { pinnedMessage, excludedMessages };
+  }
+
+  private createDefaultSummary(rawResponse: string, language: LanguageCode = 'zh'): StructuredSummary {
+    const userGoal = language === 'zh' ? '未能解析用户目标' : 'Unable to parse user goal';
+    const currentProgress =
+      language === 'zh'
+        ? '摘要失败，请查看原始响应'
+        : 'Summarization failed; see raw response for details.';
+    const errorLabel = language === 'zh' ? '摘要解析失败' : 'Summarization parsing failed';
+
     return {
-      userGoal: '未能解析用户目标',
+      userGoal,
       completedSteps: [],
       keyFindings: [rawResponse.slice(0, 500)],
       modifiedFiles: [],
-      currentProgress: '摘要解析失败，请查看原始响应',
+      currentProgress,
       nextSteps: [],
-      errors: ['摘要解析失败'],
+      errors: [errorLabel],
       lastStopPoint: '',
     };
   }

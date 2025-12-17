@@ -13,6 +13,7 @@ import type {
   TodoStatus,
   AgentNotes,
 } from '../types';
+import type { LanguageCode } from '../language';
 
 // ============================================================================
 // 笔记管理器
@@ -167,7 +168,8 @@ export class NoteManager {
    */
   injectIntoContext(
     notes: AgentNotes,
-    messages: ContextMessage[]
+    messages: ContextMessage[],
+    language: LanguageCode = 'zh'
   ): ContextMessage[] {
     const pendingTodos = notes.todos.filter((t) => t.status !== 'completed');
 
@@ -176,7 +178,7 @@ export class NoteManager {
     }
 
     // 生成简洁的状态提醒
-    const reminder = this.generateReminder(notes);
+    const reminder = this.generateReminder(notes, language);
 
     const reminderMessage: ContextMessage = {
       id: `reminder-${Date.now()}`,
@@ -233,7 +235,14 @@ export class NoteManager {
   // 私有方法
   // ========================================
 
-  private generateReminder(notes: AgentNotes): string {
+  private generateReminder(notes: AgentNotes, language: LanguageCode): string {
+    if (language === 'en') {
+      return this.generateReminderEn(notes);
+    }
+    return this.generateReminderZh(notes);
+  }
+
+  private generateReminderZh(notes: AgentNotes): string {
     const parts: string[] = [];
 
     parts.push('## 当前状态提醒\n');
@@ -256,6 +265,36 @@ export class NoteManager {
     if (notes.findings.length > 0) {
       const recentFindings = notes.findings.slice(-3);
       parts.push('### 最近发现');
+      for (const finding of recentFindings) {
+        parts.push(`• ${finding}`);
+      }
+      parts.push('');
+    }
+
+    return parts.join('\n');
+  }
+
+  private generateReminderEn(notes: AgentNotes): string {
+    const parts: string[] = [];
+
+    parts.push('## Status Reminder\n');
+
+    const pendingTodos = notes.todos.filter((t) => t.status !== 'completed');
+    if (pendingTodos.length > 0) {
+      parts.push('### Pending Tasks');
+      for (const todo of pendingTodos.slice(0, 5)) {
+        const marker = todo.status === 'in-progress' ? '🔄' : '⬜';
+        parts.push(`${marker} ${todo.description}`);
+      }
+      if (pendingTodos.length > 5) {
+        parts.push(`... and ${pendingTodos.length - 5} more pending`);
+      }
+      parts.push('');
+    }
+
+    if (notes.findings.length > 0) {
+      const recentFindings = notes.findings.slice(-3);
+      parts.push('### Recent Findings');
       for (const finding of recentFindings) {
         parts.push(`• ${finding}`);
       }

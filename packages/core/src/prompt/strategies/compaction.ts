@@ -17,6 +17,7 @@ import type {
   CompactionResult,
   ToolResultCompactionRule,
 } from '../types';
+import type { LanguageCode } from '../language';
 
 // ============================================================================
 // 压缩策略
@@ -44,7 +45,8 @@ export class CompactionStrategy {
    */
   compact(
     messages: ContextMessage[],
-    estimateTokens: (content: string) => number
+    estimateTokens: (content: string) => number,
+    language: LanguageCode = 'zh'
   ): CompactionResult {
     const beforeTokens = this.calculateTotalTokens(messages, estimateTokens);
     const recoveryRefs: string[] = [];
@@ -78,7 +80,7 @@ export class CompactionStrategy {
       }
 
       // 执行压缩
-      const compacted = this.compactMessage(msg);
+      const compacted = this.compactMessage(msg, language);
       if (compacted.format === 'compact' && compacted.recoveryRef) {
         recoveryRefs.push(compacted.recoveryRef);
         compactedCount++;
@@ -123,7 +125,7 @@ export class CompactionStrategy {
   /**
    * 压缩单条消息
    */
-  private compactMessage(message: ContextMessage): ContextMessage {
+  private compactMessage(message: ContextMessage, language: LanguageCode): ContextMessage {
     // 系统消息和用户消息不压缩
     if (message.role === 'system' || message.role === 'user') {
       return message;
@@ -131,17 +133,17 @@ export class CompactionStrategy {
 
     // 工具消息：根据规则压缩
     if (message.role === 'tool' && message.toolResult) {
-      return this.compactToolResult(message);
+      return this.compactToolResult(message, language);
     }
 
     // 助手消息（工具调用）：压缩输入参数
     if (message.role === 'assistant' && message.toolCall) {
-      return this.compactToolCall(message);
+      return this.compactToolCall(message, language);
     }
 
     // 普通助手消息：如果内容太长，生成摘要
     if (message.role === 'assistant' && message.content.length > 2000) {
-      return this.compactLongContent(message);
+      return this.compactLongContent(message, language);
     }
 
     return message;
@@ -150,7 +152,7 @@ export class CompactionStrategy {
   /**
    * 压缩工具结果
    */
-  private compactToolResult(message: ContextMessage): ContextMessage {
+  private compactToolResult(message: ContextMessage, language: LanguageCode): ContextMessage {
     if (!message.toolResult) {
       return message;
     }
@@ -171,7 +173,9 @@ export class CompactionStrategy {
         // 文件操作：保留路径
         recoveryRef = this.extractPath(output);
         compactContent = recoveryRef
-          ? `[文件内容已压缩，路径: ${recoveryRef}]`
+          ? (language === 'en'
+              ? `[File content compressed; path: ${recoveryRef}]`
+              : `[文件内容已压缩，路径: ${recoveryRef}]`)
           : message.content;
         break;
 
@@ -179,7 +183,9 @@ export class CompactionStrategy {
         // 浏览器操作：保留 URL
         recoveryRef = this.extractUrl(output);
         compactContent = recoveryRef
-          ? `[网页内容已压缩，URL: ${recoveryRef}]`
+          ? (language === 'en'
+              ? `[Web content compressed; URL: ${recoveryRef}]`
+              : `[网页内容已压缩，URL: ${recoveryRef}]`)
           : message.content;
         break;
 
@@ -187,18 +193,20 @@ export class CompactionStrategy {
         // 搜索操作：保留查询
         recoveryRef = this.extractQuery(output);
         compactContent = recoveryRef
-          ? `[搜索结果已压缩，查询: ${recoveryRef}]`
+          ? (language === 'en'
+              ? `[Search results compressed; query: ${recoveryRef}]`
+              : `[搜索结果已压缩，查询: ${recoveryRef}]`)
           : message.content;
         break;
 
       case 'keep-summary':
         // Shell 操作：保留摘要
-        compactContent = this.generateSummary(output);
+        compactContent = this.generateSummary(output, language);
         recoveryRef = `tool:${message.toolResult.callId}`;
         break;
 
       case 'remove':
-        compactContent = '[内容已移除]';
+        compactContent = language === 'en' ? '[Content removed]' : '[内容已移除]';
         recoveryRef = `tool:${message.toolResult.callId}`;
         break;
 
@@ -218,7 +226,7 @@ export class CompactionStrategy {
   /**
    * 压缩工具调用
    */
-  private compactToolCall(message: ContextMessage): ContextMessage {
+  private compactToolCall(message: ContextMessage, language: LanguageCode): ContextMessage {
     if (!message.toolCall) {
       return message;
     }
@@ -236,7 +244,10 @@ export class CompactionStrategy {
 
     // 提取关键标识符
     const identifiers = this.extractIdentifiers(input as Record<string, unknown>);
-    const compactContent = `[调用 ${message.toolCall.name}，参数: ${JSON.stringify(identifiers)}]`;
+    const compactContent =
+      language === 'en'
+        ? `[Call ${message.toolCall.name}, args: ${JSON.stringify(identifiers)}]`
+        : `[调用 ${message.toolCall.name}，参数: ${JSON.stringify(identifiers)}]`;
 
     return {
       ...message,
@@ -250,10 +261,14 @@ export class CompactionStrategy {
   /**
    * 压缩长内容
    */
-  private compactLongContent(message: ContextMessage): ContextMessage {
+  private compactLongContent(message: ContextMessage, language: LanguageCode): ContextMessage {
     // 保留前 500 字符 + "..." + 后 200 字符
     const content = message.content;
-    const compactContent = `${content.slice(0, 500)}...[已压缩 ${content.length} 字符]...${content.slice(-200)}`;
+    const marker =
+      language === 'en'
+        ? `...[compressed ${content.length} chars]...`
+        : `...[已压缩 ${content.length} 字符]...`;
+    const compactContent = `${content.slice(0, 500)}${marker}${content.slice(-200)}`;
 
     return {
       ...message,
@@ -359,7 +374,7 @@ export class CompactionStrategy {
     return identifiers;
   }
 
-  private generateSummary(output: unknown): string {
+  private generateSummary(output: unknown, language: LanguageCode): string {
     const str = typeof output === 'string' ? output : JSON.stringify(output);
     if (str.length <= 200) {
       return str;
@@ -368,7 +383,9 @@ export class CompactionStrategy {
     // 提取关键信息
     const lines = str.split('\n').filter((l) => l.trim());
     const summary = lines.slice(0, 3).join('\n');
-    return `${summary}\n... [总计 ${lines.length} 行]`;
+    return language === 'en'
+      ? `${summary}\n... [${lines.length} lines total]`
+      : `${summary}\n... [总计 ${lines.length} 行]`;
   }
 }
 
