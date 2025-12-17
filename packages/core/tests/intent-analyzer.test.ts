@@ -9,6 +9,23 @@ describe('IntentAnalyzer', () => {
     expect(result.intent).toBe(UserIntent.NEW_TASK);
   });
 
+  it('不应将英文单词内部的 next 误判为继续', () => {
+    const analyzer = new IntentAnalyzer();
+    expect(analyzer.analyze('SkipNext').intent).toBe(UserIntent.NEW_TASK);
+    expect(analyzer.analyze('context').intent).toBe(UserIntent.NEW_TASK);
+  });
+
+  it('应识别包含式中文继续表达', () => {
+    const analyzer = new IntentAnalyzer();
+    expect(analyzer.analyze('我们继续吧').intent).toBe(UserIntent.CONTINUE);
+    expect(analyzer.analyze('继续一下').intent).toBe(UserIntent.CONTINUE);
+  });
+
+  it('应识别英文 next 继续表达', () => {
+    const analyzer = new IntentAnalyzer();
+    expect(analyzer.analyze('next step').intent).toBe(UserIntent.CONTINUE);
+  });
+
   it('应识别明确的撤销意图', () => {
     const analyzer = new IntentAnalyzer();
     expect(analyzer.analyze('撤销').intent).toBe(UserIntent.UNDO);
@@ -16,4 +33,3 @@ describe('IntentAnalyzer', () => {
     expect(analyzer.analyze('还原到检查点').intent).toBe(UserIntent.UNDO);
   });
 });
-
