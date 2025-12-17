@@ -244,6 +244,17 @@ export const deepResearchTool: Tool = {
   title: 'Deep Research (Gemini)',
   description: `调用 Gemini Deep Research Agent 执行长时网络研究任务并返回带引用的报告。
 
+⚠️ **使用限制 - 仅在以下情况使用此工具**:
+- 需要从互联网获取最新信息（新闻、技术文档、API 参考等）
+- 任务明确要求"研究"、"调研"、"查找资料"
+- 需要多个外部来源的综合分析
+
+❌ **不要使用此工具**:
+- 本地文件操作（使用 file_list, file_read 等）
+- 项目代码分析（使用 file_read, grep 等）
+- 简单的目录列表或文件内容查看
+- 已有信息可以直接回答的问题
+
 默认使用 agent: ${DEFAULT_AGENT}，后台执行并轮询直到 completed/failed。
 
 需要在环境变量中配置 GEMINI_API_KEY（或 GOOGLE_API_KEY 作为兼容别名）。`,
