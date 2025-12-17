@@ -10,6 +10,7 @@ import type {
   WorkerBackendType,
   WorkerCapability,
   WorkerMessage,
+  WorkerStatus,
   WorkerTask,
   WorkerExecutionOptions,
   GenericBackendConfig,
@@ -34,6 +35,7 @@ import {
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
 import { isKeyDecision } from '../key-decision';
+import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 // Prompt 上下文工程模块（内部）
 import {
   createPromptContextEngine,
@@ -68,52 +70,8 @@ const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant that can use tools
 When given a task, think step by step about how to accomplish it, then use the available tools.
 Always provide clear explanations of what you're doing and why.
 
-## File Path Guidelines
-
-⚠️ CRITICAL: Always use RELATIVE paths for all file operations.
-- ✅ Correct: \`./src/index.js\`, \`package.json\`, \`src/utils/helper.ts\`
-- ❌ Wrong: \`/absolute/path/project/src/index.js\`, \`project-name/src/index.js\`
-
-DO NOT create directories that duplicate the project name. You are already in the project directory.
-
-## File Modification Guidelines
-
-IMPORTANT: When modifying existing files, prefer incremental edits over full rewrites to reduce output size and errors.
-
-**Tool Selection Priority:**
-1. \`apply_patch\` - For search/replace edits (PREFERRED for modifications)
-2. \`replace_between_markers\` - For replacing content between markers/delimiters
-3. \`file_write\` with \`append: true\` - For adding content to end of files
-4. \`file_write\` (full content) - ONLY for new files or complete rewrites when necessary
-
-**When to use apply_patch:**
-- Changing function names, parameters, or return values
-- Fixing bugs or typos in specific lines
-- Adding/removing imports, exports, or dependencies
-- Any targeted modification to existing code
-
-**Example apply_patch usage:**
-\`\`\`json
-{
-  "path": "config.js",
-  "patches": [
-    { "search": "debug: false", "replace": "debug: true" },
-    { "search": "port: 3000", "replace": "port: 8080" }
-  ]
-}
-\`\`\`
-
-**When creating new files:**
-- For large files (>50 lines), consider creating a skeleton first, then using apply_patch to fill in details
-- This helps avoid output truncation issues
-
-## Directory Listing Guidelines
-
-⚠️ When using file_list tool:
-- The tool automatically EXCLUDES node_modules, .git, dist, build, and other large directories when recursive=true
-- Results are limited to 500 files by default to prevent context overflow
-- If you need to see excluded directories, explicitly set excludes: [] to override defaults
-- For large projects, prefer non-recursive listing first, then drill down into specific directories`;
+${WORKER_BEHAVIOR_GUIDELINES_EN}
+`;
 
 // ============================================================================
 // 错误类型
@@ -257,6 +215,9 @@ const PROGRESS_TRACKER_CONFIG = {
     'file_list',      // 遍历目录
     'apply_patch',    // 连续应用多个补丁
     'file_write',     // 批量写入文件
+    'shell_run',      // 连续执行 shell 命令
+    'run_command',
+    'execute_command',
   ],
 };
 
@@ -470,35 +431,39 @@ class ProgressTracker {
       const isToolLoop = this.consecutiveSameToolCount >= PROGRESS_TRACKER_CONFIG.maxConsecutiveSameTool / 2;
       
       if (isToolLoop) {
-        return `⚠️ 检测到你可能陷入死循环（连续 ${this.consecutiveSameToolCount} 次调用 ${this.lastPrimaryTool}）。
+        return `⚠️ Potential loop detected (${this.consecutiveSameToolCount} consecutive calls to "${this.lastPrimaryTool}").
 
-请调整你的策略：
-1. 检查之前的工具调用是否真的成功了
-2. 如果命令失败，尝试不同的解决方案而不是重复同样的命令
-3. 如果遇到权限或环境问题，请报告并建议替代方案
-4. 考虑是否需要用户介入
+Adjust your strategy:
+1. Verify whether the previous tool calls actually succeeded
+2. If a command failed, try a different approach instead of repeating the same command
+3. If you hit permissions or environment limitations, report them and propose alternatives
+4. Consider whether user intervention is required
 
-如果任务无法完成，请明确说明原因。`;
+If you cannot complete the task, clearly explain why.`;
       }
       
-      return `⚠️ 检测到你的输出被截断了（已连续 ${this.noProgressCount} 次无进展）。
+      return `⚠️ Your output appears to be getting truncated (${this.noProgressCount} consecutive no-progress rounds).
 
-请调整你的策略：
-1. 不要一次性生成完整文件
-2. 每次只生成一个函数或一个代码块（最多 100 行）
-3. 使用 <!-- CONTINUE_FROM: 上次结束的位置 --> 标记
-4. 优先使用 apply_patch 工具进行增量修改
+Adjust your strategy:
+1. Do not generate an entire large file in one response
+2. Produce one function or one small code block at a time (e.g., ≤100 lines)
+3. Use a clear continuation marker when needed
+4. Prefer incremental edits (e.g., \`apply_patch\`) over full rewrites
 
-如果文件很长，请分多次写入。`;
+If the file is large, write it in multiple steps.
+
+Important: Do not switch the user-facing response language due to this warning. Keep responding in the user's language.`;
     }
     
     if (level === 2) {
-      return `⚠️ 连续 ${this.noProgressCount} 次无进展。请立即完成当前步骤或报告问题。
+      return `⚠️ No progress for ${this.noProgressCount} consecutive rounds. Finish the current step or report the blocker immediately.
 
-建议：
-- 简化你的输出，只完成最小可行版本
-- 如果任务太复杂，请说明并建议如何拆分
-- 如果遇到无法解决的问题，请明确报告`;
+Suggestions:
+- Simplify and deliver the minimum viable change
+- If the task is too large, propose a concrete breakdown
+- If you cannot proceed, clearly report the issue and why
+
+Important: Keep responding in the user's language.`;
     }
     
     return null; // level 3 会直接终止，不需要消息
@@ -1061,14 +1026,15 @@ When the task is complete, provide a final summary of what was accomplished.`));
       this.skills,
       this.config.skillsConfig?.maxSkillTokens
     );
-    if (skillsSection) {
-      systemPromptWithSkills += '\n\n' + skillsSection;
-    }
+	    if (skillsSection) {
+	      systemPromptWithSkills += '\n\n' + skillsSection;
+	    }
 
-    try {
-      let round = 0;
-      let done = false;
-      let totalToolCalls = 0;
+	    let finalStatus: WorkerStatus = 'failed';
+	    try {
+	      let round = 0;
+	      let done = false;
+	      let totalToolCalls = 0;
       
       // 创建进度追踪器
       const progressTracker = new ProgressTracker();
@@ -1076,33 +1042,26 @@ When the task is complete, provide a final summary of what was accomplished.`));
       // 追踪最后一轮未执行的工具调用（用于 grace round）
       let pendingToolCalls: ParsedToolCall[] = [];
 
-      while (!done && round < limits.maxThinkingRounds) {
-        round++;
+	      while (!done && round < limits.maxThinkingRounds) {
+	        round++;
 
-        // 检查是否已中断
-        if (this.abortController.signal.aborted) {
-          yield {
-            type: 'status',
-            status: 'interrupted',
-            timestamp: Date.now(),
-          };
-          break;
-        }
+	        // 检查是否已中断
+	        if (this.abortController.signal.aborted) {
+	          finalStatus = 'interrupted';
+	          done = true;
+	          break;
+	        }
 
         // 检查 intervention（每轮开始时）
         // eslint-disable-next-line no-await-in-loop -- Intervention check is intentionally sequential
-        const interventionResult = await this.checkAndHandleIntervention(options);
-        if (interventionResult === 'abort') {
-          yield {
-            type: 'status',
-            status: 'interrupted',
-            timestamp: Date.now(),
-          };
-          done = true;
-          break;
-        } else if (interventionResult === 'pause') {
-          // pause 时暂时跳过本轮，等待下一轮重新检查
-          // 实际实现中可能需要等待一段时间
+	        const interventionResult = await this.checkAndHandleIntervention(options);
+	        if (interventionResult === 'abort') {
+	          finalStatus = 'interrupted';
+	          done = true;
+	          break;
+	        } else if (interventionResult === 'pause') {
+	          // pause 时暂时跳过本轮，等待下一轮重新检查
+	          // 实际实现中可能需要等待一段时间
           continue;
         }
 
@@ -1132,19 +1091,20 @@ When the task is complete, provide a final summary of what was accomplished.`));
           }
           
           // 硬限制兜底：如果仍然超过限制，需要处理
-          if (context.needsSummarization()) {
-            // 超过硬限制，中止本轮执行并报告错误
-            console.error('[GenericAgentBackend] Context exceeds hard limit after all reduction attempts');
-            yield {
-              type: 'error',
-              error: `Context size exceeds hard limit after reduction. Token count: ${context.getState().totalTokens}`,
-              code: 'CONTEXT_OVERFLOW',
-              retryable: false,
-              timestamp: Date.now(),
-            };
-            done = true;
-            break;
-          }
+	          if (context.needsSummarization()) {
+	            // 超过硬限制，中止本轮执行并报告错误
+	            console.error('[GenericAgentBackend] Context exceeds hard limit after all reduction attempts');
+	            yield {
+	              type: 'error',
+	              error: `Context size exceeds hard limit after reduction. Token count: ${context.getState().totalTokens}`,
+	              code: 'CONTEXT_OVERFLOW',
+	              retryable: false,
+	              timestamp: Date.now(),
+	            };
+	            finalStatus = 'failed';
+	            done = true;
+	            break;
+	          }
           
           // 压缩成功后注入状态提醒帮助 agent 理解上下文变化
           context.injectStatusReminder();
@@ -1219,56 +1179,31 @@ When the task is complete, provide a final summary of what was accomplished.`));
         const response = await this.executeLLMWithRetry(request);
 
         // 记录 token 使用量
-        recordTokenUsage(
-          response.usage.inputTokens,
-          response.usage.outputTokens
-        );
+	        recordTokenUsage(
+	          response.usage.inputTokens,
+	          response.usage.outputTokens
+	        );
 
-        // 检查 token 预算 - 超过预算时尝试压缩上下文而不是直接失败
-        if (isOverBudget()) {
-          console.warn(
-            `[GenericAgentBackend] Token budget warning: ${totalTokensUsed}/${maxTotalTokens}. ` +
-            `Attempting context reduction before continuing...`
-          );
-          
-          // 触发上下文压缩/摘要
-          // eslint-disable-next-line no-await-in-loop -- Context reduction is intentionally sequential
-          await context.autoReduce();
-          
-          // 如果 autoReduce 后仍然需要压缩，尝试多轮压缩
-          if (context.needsReduction()) {
-            console.debug('[GenericAgentBackend] Context still large after autoReduce, forcing compact');
-            for (let i = 0; i < 3 && context.needsReduction(); i++) {
-              // eslint-disable-next-line no-await-in-loop -- Sequential compaction attempts
-              await context.compact();
-            }
-          }
-          
-          // 注入状态提醒帮助 agent 理解上下文变化
-          context.injectStatusReminder();
-          
-          // 报告压缩结果
-          const contextState = context.getState();
-          console.debug(
-            `[GenericAgentBackend] Context reduced. New token count: ${contextState.totalTokens}. ` +
-            `Messages: ${contextState.messages.length}. Continuing execution...`
-          );
-          
-          yield {
-            type: 'thinking',
-            content: `[Context Management] Token budget reached (${totalTokensUsed}/${maxTotalTokens}). ` +
-                     `Context has been summarized/compressed (now ${contextState.totalTokens} tokens). Continuing...`,
-            timestamp: Date.now(),
-          };
-          
-          // 注意：我们不再直接失败，而是继续执行
-          // 如果上下文压缩成功，下一轮 LLM 调用将使用更少的 input tokens
-          // 真正的硬限制检查在 context.needsSummarization() -> hardLimit
-        }
+	        // Budget check: if total token budget is exceeded, terminate.
+	        // Context reduction cannot "refund" already spent tokens.
+	        if (isOverBudget()) {
+	          const msg = `Total token budget exceeded (${totalTokensUsed}/${maxTotalTokens}). Terminating execution.`;
+	          console.warn(`[GenericAgentBackend] ${msg}`);
+	          yield {
+	            type: 'error',
+	            error: msg,
+	            code: 'TOKEN_BUDGET_EXCEEDED',
+	            retryable: false,
+	            timestamp: Date.now(),
+	          };
+	          finalStatus = 'failed';
+	          done = true;
+	          break;
+	        }
 
-        // 发出思考消息
-        yield {
-          type: 'thinking',
+	        // 发出思考消息
+	        yield {
+	          type: 'thinking',
           content: response.content,
           timestamp: Date.now(),
         };
@@ -1406,18 +1341,19 @@ When the task is complete, provide a final summary of what was accomplished.`));
               }
             }
 
-            // 检查工具调用次数限制
-            if (totalToolCalls >= limits.maxToolCalls) {
-              yield {
-                type: 'error',
-                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
-                code: 'MAX_TOOL_CALLS_EXCEEDED',
-                retryable: false,
-                timestamp: Date.now(),
-              };
-              done = true;
-              continue; // 跳过顺序执行
-            }
+	            // 检查工具调用次数限制
+	            if (totalToolCalls >= limits.maxToolCalls) {
+	              yield {
+	                type: 'error',
+	                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
+	                code: 'MAX_TOOL_CALLS_EXCEEDED',
+	                retryable: false,
+	                timestamp: Date.now(),
+	              };
+	              finalStatus = 'failed';
+	              done = true;
+	              continue; // 跳过顺序执行
+	            }
             } // 关闭 safeParallel.length > 0 分支
           }
 
@@ -1507,18 +1443,19 @@ When the task is complete, provide a final summary of what was accomplished.`));
               toolCallsSucceeded++;
             }
 
-            // 检查工具调用次数限制
-            if (totalToolCalls >= limits.maxToolCalls) {
-              yield {
-                type: 'error',
-                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
-                code: 'MAX_TOOL_CALLS_EXCEEDED',
-                retryable: false,
-                timestamp: Date.now(),
-              };
-              done = true;
-              break;
-            }
+	            // 检查工具调用次数限制
+	            if (totalToolCalls >= limits.maxToolCalls) {
+	              yield {
+	                type: 'error',
+	                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
+	                code: 'MAX_TOOL_CALLS_EXCEEDED',
+	                retryable: false,
+	                timestamp: Date.now(),
+	              };
+	              finalStatus = 'failed';
+	              done = true;
+	              break;
+	            }
 
             // 添加结果到上下文
             context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
@@ -1541,13 +1478,14 @@ When the task is complete, provide a final summary of what was accomplished.`));
             const terminate =
               out?.terminateSubtask === true ||
               out?.data?.terminateSubtask === true;
-            if (terminate) {
-              console.debug(
-                `[GenericAgentBackend] Tool ${call.name} returned terminateSubtask=true, terminating subtask`
-              );
-              done = true;
-              break;
-            }
+	            if (terminate) {
+	              console.debug(
+	                `[GenericAgentBackend] Tool ${call.name} returned terminateSubtask=true, terminating subtask`
+	              );
+	              finalStatus = 'completed';
+	              done = true;
+	              break;
+	            }
           }
         } else {
           // 没有工具调用，任务完成
@@ -1621,18 +1559,19 @@ When the task is complete, provide a final summary of what was accomplished.`));
           );
           
           // Level 3: 强制终止
-          if (degradationLevel >= 3) {
-            yield {
-              type: 'error',
-              error: `Task stuck: no progress after ${progressTracker.getNoProgressCount()} rounds. ` +
-                     `Consider breaking down the task into smaller subtasks.`,
-              code: 'NO_PROGRESS_TERMINATION',
-              retryable: false,
-              timestamp: Date.now(),
-            };
-            done = true;
-            break;
-          }
+	          if (degradationLevel >= 3) {
+	            yield {
+	              type: 'error',
+	              error: `Task stuck: no progress after ${progressTracker.getNoProgressCount()} rounds. ` +
+	                     `Consider breaking down the task into smaller subtasks.`,
+	              code: 'NO_PROGRESS_TERMINATION',
+	              retryable: false,
+	              timestamp: Date.now(),
+	            };
+	            finalStatus = 'failed';
+	            done = true;
+	            break;
+	          }
           
           // Level 1-2: 注入降级提示
           if (degradationMessage) {
@@ -1640,11 +1579,12 @@ When the task is complete, provide a final summary of what was accomplished.`));
           }
         }
 
-        // 检查停止原因
-        if (response.stopReason === 'stop' && !hasToolCallMarker) {
-          console.debug('[GenericAgentBackend] Loop stop: reason is stop and no tool call');
-          done = true;
-        } else {
+	        // 检查停止原因
+	        if (response.stopReason === 'stop' && !hasToolCallMarker) {
+	          console.debug('[GenericAgentBackend] Loop stop: reason is stop and no tool call');
+	          finalStatus = 'completed';
+	          done = true;
+	        } else {
           console.debug(
             `[GenericAgentBackend] Loop check: stopReason=${response.stopReason}, ` +
             `containsToolCall=${hasToolCallMarker}, toolCallsParsed=${toolCalls.length}, ` +
@@ -1667,21 +1607,22 @@ When the task is complete, provide a final summary of what was accomplished.`));
       // - 检查 token 预算和 maxToolCalls 限制
       // - 追踪成功/失败状态
       
-      if (pendingToolCalls.length > 0 && !done) {
-        // 检查 token 预算是否已超出
-        if (isOverBudget()) {
+	      if (pendingToolCalls.length > 0 && !done) {
+	        // 检查 token 预算是否已超出
+	        if (isOverBudget()) {
           console.warn(
             `[GenericAgentBackend] Grace round skipped: token budget exceeded ` +
             `(${totalTokensUsed}/${maxTotalTokens}). ${pendingToolCalls.length} tool calls not executed.`
           );
-          yield {
-            type: 'error',
-            error: `Grace round skipped: token budget exceeded. ${pendingToolCalls.length} pending tool calls not executed.`,
-            code: 'GRACE_ROUND_BUDGET_EXCEEDED',
-            retryable: false,
-            timestamp: Date.now(),
-          };
-        } else {
+	          yield {
+	            type: 'error',
+	            error: `Grace round skipped: token budget exceeded. ${pendingToolCalls.length} pending tool calls not executed.`,
+	            code: 'GRACE_ROUND_BUDGET_EXCEEDED',
+	            retryable: false,
+	            timestamp: Date.now(),
+	          };
+	          finalStatus = 'failed';
+	        } else {
           console.warn(
             `[GenericAgentBackend] Grace round: executing ${pendingToolCalls.length} pending tool calls ` +
             `that were parsed but not executed due to loop termination.`
@@ -1815,18 +1756,20 @@ When the task is complete, provide a final summary of what was accomplished.`));
           // 清空待执行队列
           pendingToolCalls = [];
           
-          // 根据执行结果决定最终状态
-          // 只有所有工具调用都成功时才标记为完成
-          if (graceRoundFailed === 0 && graceRoundSucceeded > 0) {
-            done = true;
-            console.debug(`[GenericAgentBackend] Grace round completed successfully. ${graceRoundSucceeded} tools executed.`);
-          } else if (graceRoundSucceeded > 0) {
-            // 部分成功：仍标记为完成，但发出警告
-            done = true;
-            console.warn(
-              `[GenericAgentBackend] Grace round partially succeeded. ` +
-              `${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`
-            );
+	          // 根据执行结果决定最终状态
+	          // 只有所有工具调用都成功时才标记为完成
+	          if (graceRoundFailed === 0 && graceRoundSucceeded > 0) {
+	            done = true;
+	            finalStatus = 'completed';
+	            console.debug(`[GenericAgentBackend] Grace round completed successfully. ${graceRoundSucceeded} tools executed.`);
+	          } else if (graceRoundSucceeded > 0) {
+	            // 部分成功：仍标记为完成，但发出警告
+	            done = true;
+	            finalStatus = 'failed';
+	            console.warn(
+	              `[GenericAgentBackend] Grace round partially succeeded. ` +
+	              `${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`
+	            );
             yield {
               type: 'error',
               error: `Grace round partially succeeded: ${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`,
@@ -1834,59 +1777,56 @@ When the task is complete, provide a final summary of what was accomplished.`));
               retryable: false,
               timestamp: Date.now(),
             };
-          } else {
-            // 全部失败
-            console.error(`[GenericAgentBackend] Grace round failed. All ${graceRoundFailed} tool calls failed.`);
-            yield {
-              type: 'error',
-              error: `Grace round failed: all ${graceRoundFailed} tool calls failed.`,
-              code: 'GRACE_ROUND_FAILED',
-              retryable: false,
-              timestamp: Date.now(),
-            };
-          }
-        }
-      }
+	          } else {
+	            // 全部失败
+	            console.error(`[GenericAgentBackend] Grace round failed. All ${graceRoundFailed} tool calls failed.`);
+	            yield {
+	              type: 'error',
+	              error: `Grace round failed: all ${graceRoundFailed} tool calls failed.`,
+	              code: 'GRACE_ROUND_FAILED',
+	              retryable: false,
+	              timestamp: Date.now(),
+	            };
+	            finalStatus = 'failed';
+	          }
+	        }
+	      }
 
-      // 发出完成状态
-      yield {
-        type: 'status',
-        status: done ? 'completed' : 'failed',
-        timestamp: Date.now(),
-        tokensUsed: totalTokensUsed,
-      };
+	      // 如果达到最大轮次，发出警告（但如果 grace round 成功执行了，不算失败）
+	      if (round >= limits.maxThinkingRounds && !done) {
+	        yield {
+	          type: 'error',
+	          error: `Max thinking rounds (${limits.maxThinkingRounds}) exceeded`,
+	          code: 'MAX_ROUNDS_EXCEEDED',
+	          retryable: false,
+	          timestamp: Date.now(),
+	        };
+	        finalStatus = 'failed';
+	      }
+	    } catch (error) {
+	      const err = error as Error;
+	      console.error('[GenericAgentBackend] Execution error:', err);
+	      yield {
+	        type: 'error',
+	        error: err.message,
+	        code: 'EXECUTION_ERROR',
+	        retryable: this.isRetryableError(err),
+	        timestamp: Date.now(),
+	      };
+	      finalStatus = 'failed';
+	    } finally {
+	      this.isExecuting = false;
+	      this.abortController = null;
+	    }
 
-      // 如果达到最大轮次，发出警告（但如果 grace round 成功执行了，不算失败）
-      if (round >= limits.maxThinkingRounds && !done) {
-        yield {
-          type: 'error',
-          error: `Max thinking rounds (${limits.maxThinkingRounds}) exceeded`,
-          code: 'MAX_ROUNDS_EXCEEDED',
-          retryable: false,
-          timestamp: Date.now(),
-        };
-      }
-    } catch (error) {
-      const err = error as Error;
-      console.error('[GenericAgentBackend] Execution error:', err);
-      yield {
-        type: 'error',
-        error: err.message,
-        code: 'EXECUTION_ERROR',
-        retryable: this.isRetryableError(err),
-        timestamp: Date.now(),
-      };
-
-      yield {
-        type: 'status',
-        status: 'failed',
-        timestamp: Date.now(),
-      };
-    } finally {
-      this.isExecuting = false;
-      this.abortController = null;
-    }
-  }
+	    // Emit final status once, consistently.
+	    yield {
+	      type: 'status',
+	      status: finalStatus,
+	      timestamp: Date.now(),
+	      tokensUsed: totalTokensUsed,
+	    };
+	  }
 
   /**
    * 获取后端能力
@@ -2271,15 +2211,18 @@ When the task is complete, provide a final summary of what was accomplished.`));
         lastError = error instanceof Error ? error : new Error(String(error));
         const errorMessage = lastError.message.toLowerCase();
         
+
         // 判断是否为可重试的错误
-        const isRetryable = 
+        const isRetryable =
+          (lastError as any).retryable === true || // 优先使用错误对象自带的 retryable 属性
           errorMessage.includes('empty response') ||
           errorMessage.includes('json parse') ||
           errorMessage.includes('api_error') ||
           errorMessage.includes('rate limit') ||
           errorMessage.includes('timeout') ||
           errorMessage.includes('network') ||
-          errorMessage.includes('econnreset');
+          errorMessage.includes('econnreset') ||
+          errorMessage.includes('socket connection was closed'); // P0: Add socket closed check
 
         if (!isRetryable || attempt >= MAX_LLM_RETRIES - 1) {
           console.error(
@@ -2305,9 +2248,16 @@ When the task is complete, provide a final summary of what was accomplished.`));
    */
   private isRetryableError(error: Error): boolean {
     const message = error.message.toLowerCase();
+    // Prefer explicit retryable hints when provided by upstream clients.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const retryableFlag = (error as any).retryable === true;
     return (
+      retryableFlag ||
       message.includes('rate limit') ||
       message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('econnreset') ||
+      message.includes('socket connection was closed') ||
       message.includes('503') ||
       message.includes('529') ||
       message.includes('overloaded')

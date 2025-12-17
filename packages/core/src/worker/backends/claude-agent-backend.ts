@@ -18,6 +18,7 @@ import type { Tool } from '../../types';
 import { ToolToMCPBridge } from '../../mcp/tool-bridge';
 import type { ToolBridgeConfig } from '../../mcp/tool-bridge';
 import { MemoryService } from '../../memory';
+import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 
 // ============================================================================
 // Claude Agent SDK 类型（延迟导入）
@@ -358,7 +359,9 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
     const mcpServers = await this.toolBridge.convertToMCPServers(tools, overrides);
 
     // Build system prompt with memory context (if available)
-    let systemPrompt = sdkConfig.systemPrompt || '';
+    let systemPrompt = sdkConfig.systemPrompt
+      ? `${WORKER_BEHAVIOR_GUIDELINES_EN}\n\n${sdkConfig.systemPrompt}`
+      : WORKER_BEHAVIOR_GUIDELINES_EN;
     if (memoryContext) {
       const memoryInstruction = '\n\n[Historical Context]\n' +
         'The following are relevant memories from previous sessions. ' +
