@@ -91,6 +91,12 @@ export class IntentAnalyzer {
   analyze(message: string, session?: SessionState): IntentAnalysisResult {
     const trimmedMessage = message.trim();
 
+    const isAsciiKeyword = (s: string): boolean => {
+      // ASCII keyword: apply word-boundary-like checks to avoid matching inside identifiers (e.g. SkipNext)
+      return /^[\x00-\x7F]+$/.test(s) && /[a-z0-9]/i.test(s);
+    };
+    const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
     // 1. 如果 Agent 在等待用户回答问题，这是一个 CLARIFY
     if (session?.waitingForUser && session.pendingQuestion) {
       return {
@@ -115,12 +121,26 @@ export class IntentAnalyzer {
         }
       }
 
-      // 关键词匹配
+      // 关键词匹配：
+      // - 对于英文关键词：使用“非标识符边界”避免 SkipNext 误匹配 next
+      // - 对于中文关键词：保持 includes 行为（中文没有 ASCII 词边界概念）
       for (const keyword of pattern.keywords) {
         const haystack = trimmedMessage.toLowerCase();
         const needle = keyword.toLowerCase();
-        const matched =
-          pattern.intent === UserIntent.UNDO ? haystack.startsWith(needle) : haystack.includes(needle);
+        // 对于 UNDO，检查开头；对于其他意图，英文用边界正则，中文用 includes
+        let matched: boolean;
+        if (pattern.intent === UserIntent.UNDO) {
+          matched = haystack.startsWith(needle);
+        } else if (isAsciiKeyword(needle)) {
+          // 非标识符边界：避免 "SkipNext" 触发 next，但允许 "next step" / "go on" 等自然语言
+          const boundaryRegex = new RegExp(
+            `(?:^|[^A-Za-z0-9_])${escapeRegex(needle)}(?:$|[^A-Za-z0-9_])`,
+            'i'
+          );
+          matched = boundaryRegex.test(trimmedMessage);
+        } else {
+          matched = haystack.includes(needle);
+        }
         if (matched) {
           return {
             intent: pattern.intent,
