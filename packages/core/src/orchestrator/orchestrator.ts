@@ -227,6 +227,12 @@ export class Orchestrator extends BaseAgent {
   /** 当前运行上下文（从 task.context.metadata 派生） */
   private currentRunMetadata: Record<string, unknown> | null = null;
 
+  private isDebugEnabled(): boolean {
+    const levelRaw = process.env.TACHIKOMA_LOG_LEVEL ?? '';
+    const level = String(levelRaw).toLowerCase();
+    return level === 'debug' || level === 'trace';
+  }
+
   private getPlannerMetadata(): PlannerMetadata {
     const meta = this.currentRunMetadata;
     const planner =
@@ -812,13 +818,11 @@ export class Orchestrator extends BaseAgent {
         return this.createNeedUserInputResult(task.id, startTime, planResult.tokensUsed, question, missingInfo);
       }
 
-      // 确保 Worker 已注册（基于规划结果的 workerCount）
-      if (this.workerPool.workerCount === 0) {
-        await this.registerDefaultWorkers({
-          workerCount: normalizedPlan.delegation.workerCount,
-          roles: normalizedPlan.roles,
-        });
-      }
+      // 确保 Worker 已注册（增量注册：已存在的跳过，缺少的补充）
+      await this.registerDefaultWorkers({
+        workerCount: normalizedPlan.delegation.workerCount,
+        roles: normalizedPlan.roles,
+      });
 
       // 阶段 2: 执行（分配与聚合）
       const aggregatedResult = await this.executeAssignPhase(
@@ -980,6 +984,19 @@ export class Orchestrator extends BaseAgent {
    * 先取消事件监听、停止文件监控，再关闭 SessionManager
    */
   private async closeSession(): Promise<void> {
+    // 重置所有 Worker 状态（防止上次任务未正常结束导致 worker 卡在 busy）
+    if (this.workerPool) {
+      for (const worker of this.workerPool.getAllWorkers()) {
+        if (worker.status === 'busy') {
+          if (worker.currentTaskId) {
+            this.workerPool.completeTask(worker.currentTaskId);
+          } else {
+            this.workerPool.updateWorkerStatus(worker.id, 'idle');
+          }
+        }
+      }
+    }
+
     // 停止偏离检测定时器
     this.stopDeviationDetection();
 
@@ -1027,6 +1044,10 @@ export class Orchestrator extends BaseAgent {
   private forwardActionEvent(event: SessionFileEvent<ActionRecord>): void {
     const workerId = this.deriveWorkerIdFromEvent(event) ?? 'unknown';
     const taskId = this.currentTask?.id ?? '';
+    // 仅在 debug 时输出事件转发日志，避免污染上层输出
+    if (this.isDebugEnabled() && event.data.description?.startsWith('Calling tool:')) {
+      console.debug(`[Orchestrator] Forwarding worker:action: ${event.data.description}`);
+    }
     this.emit('worker:action', taskId, { workerId, record: event.data }, event.data.subtaskId);
   }
 
@@ -2178,10 +2199,47 @@ Is this a genuine deviation? Answer YES or NO only.`,
     const workDir = this.extractWorkDirFromMetadata();
     const canUseRealWorkerAgent = !!(llm && llm.apiKey);
 
+    // 获取已注册的 worker IDs（用于增量注册）
+    const existingWorkerIds = new Set(this.workerPool.getAllWorkers().map((w) => w.id));
+
     for (let i = 0; i < workerCount; i++) {
       const role = roles ? roles[i] : undefined;
       const roleId = role?.id;
       const workerId = roleId ? `worker-${roleId}` : `worker-${i}`;
+
+      const roleCapabilities = role?.capabilities ?? [];
+      const stableRoleCap = roleId ? `role:${roleId}` : undefined;
+      const desiredCapabilities = [
+        'general',
+        ...roleCapabilities,
+        ...(stableRoleCap && !roleCapabilities.includes(stableRoleCap) ? [stableRoleCap] : []),
+      ];
+
+      // 增量注册：已存在则“更新能力 + 确保 session 注册”，避免跨 run/角色变化导致路由失败
+      if (existingWorkerIds.has(workerId)) {
+        const existing = this.workerPool.getWorker(workerId);
+        if (existing) {
+          const mergedCaps = Array.from(
+            new Set([...(existing.capabilities ?? []), ...desiredCapabilities])
+          );
+
+          // DefaultWorkerPool 不提供直接更新 agent/capabilities 的 API
+          // 这里用 unregister/register 做 best-effort 更新（仅在 idle 时）
+          if (existing.status === 'idle') {
+            this.workerPool.unregister(workerId);
+            this.workerPool.register({
+              ...existing,
+              status: 'idle',
+              capabilities: mergedCaps,
+            });
+          }
+        }
+
+        if (this.sessionManager) {
+          await this.sessionManager.registerWorker(workerId);
+        }
+        continue;
+      }
       const agent = canUseRealWorkerAgent
         ? new WorkerAgent(
             workerId,
@@ -2229,18 +2287,10 @@ Is this a genuine deviation? Answer YES or NO only.`,
             stop: async () => undefined,
           };
 
-      const roleCapabilities = role?.capabilities ?? [];
-      const stableRoleCap = roleId ? `role:${roleId}` : undefined;
-      const capabilities = [
-        'general',
-        ...roleCapabilities,
-        ...(stableRoleCap && !roleCapabilities.includes(stableRoleCap) ? [stableRoleCap] : []),
-      ];
-
       this.workerPool.register({
         id: workerId,
         status: 'idle',
-        capabilities,
+        capabilities: desiredCapabilities,
         agent,
       });
 
