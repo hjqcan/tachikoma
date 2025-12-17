@@ -35,6 +35,33 @@ export class LLMClientError extends Error {
   }
 }
 
+function isDebugEnabled(): boolean {
+  const raw = process.env.TACHIKOMA_LOG_LEVEL ?? '';
+  const level = String(raw).toLowerCase();
+  return level === 'debug' || level === 'trace';
+}
+
+function isTransientNetworkError(code: string, message: string): boolean {
+  // Bun/Node fetch/network errors are often surfaced as code + message with no HTTP status.
+  const upper = code.toUpperCase();
+  const lowerMsg = message.toLowerCase();
+
+  if (upper === 'ECONNRESET') return true;
+  if (upper === 'ETIMEDOUT') return true;
+  if (upper === 'ECONNREFUSED') return true;
+  if (upper === 'EPIPE') return true;
+
+  return (
+    lowerMsg.includes('socket connection was closed') ||
+    lowerMsg.includes('fetch failed') ||
+    lowerMsg.includes('network error')
+  );
+}
+
+function isRetryableError(statusCode: number, code: string, message: string): boolean {
+  return statusCode >= 500 || statusCode === 429 || isTransientNetworkError(code, message);
+}
+
 // ============================================================================
 // 抽象基类
 // ============================================================================
@@ -220,7 +247,11 @@ export class AnthropicLLMClient extends BaseLLMClient {
         } catch (fallbackError) {
           const fallbackErr = fallbackError as Error & { status?: number; code?: string };
           const fallbackStatus = fallbackErr.status || 0;
-          const fallbackRetryable = fallbackStatus >= 500 || fallbackStatus === 429;
+          const fallbackRetryable = isRetryableError(
+            fallbackStatus,
+            fallbackErr.code || '',
+            fallbackErr.message || ''
+          );
           throw new LLMClientError(
             fallbackErr.message || 'Unknown error',
             this.provider,
@@ -231,7 +262,9 @@ export class AnthropicLLMClient extends BaseLLMClient {
       }
 
       // 处理 AI SDK 错误
-      const isRetryable = statusCode >= 500 || statusCode === 429;
+      const message = err.message || '';
+      const code = err.code || '';
+      const isRetryable = isRetryableError(statusCode, code, message);
 
       throw new LLMClientError(
         err.message || 'Unknown error',
@@ -340,11 +373,15 @@ export class OpenAILLMClient extends BaseLLMClient {
         model: this.config.model,
       };
     } catch (error) {
-      console.error('[OpenAILLMClient] Raw error:', error);
+      if (isDebugEnabled()) {
+        console.debug('[OpenAILLMClient] Raw error:', error);
+      }
       // 处理 AI SDK 错误
       const err = error as Error & { status?: number; code?: string };
       const statusCode = err.status || 0;
-      const isRetryable = statusCode >= 500 || statusCode === 429;
+      const message = err.message || '';
+      const code = err.code || '';
+      const isRetryable = isRetryableError(statusCode, code, message);
 
       throw new LLMClientError(
         err.message || 'Unknown error',
