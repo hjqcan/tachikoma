@@ -819,9 +819,12 @@ export class Orchestrator extends BaseAgent {
       }
 
       // 确保 Worker 已注册（增量注册：已存在的跳过，缺少的补充）
+      // 分析执行计划中每个角色需要的最大并行 Worker 数
+      const parallelRequirements = this.extractParallelRequirements(normalizedPlan);
       await this.registerDefaultWorkers({
         workerCount: normalizedPlan.delegation.workerCount,
         ...(Array.isArray(normalizedPlan.roles) ? { roles: normalizedPlan.roles } : {}),
+        parallelRequirements,
       });
 
       // 阶段 2: 执行（分配与聚合）
@@ -2067,10 +2070,30 @@ Is this a genuine deviation? Answer YES or NO only.`,
     const out = result.output as unknown;
     if (!out || typeof out !== 'object') return undefined;
     const text = (out as Record<string, unknown>).text;
-    if (typeof text === 'string' && text.trim()) return text.trim().slice(0, 800);
+    if (typeof text === 'string' && text.trim()) {
+      const sanitized = this.stripToolUseXml(text);
+      if (sanitized) return sanitized.slice(0, 800);
+    }
     const message = (out as Record<string, unknown>).message;
-    if (typeof message === 'string' && message.trim()) return message.trim().slice(0, 800);
+    if (typeof message === 'string' && message.trim()) {
+      const sanitized = this.stripToolUseXml(message);
+      if (sanitized) return sanitized.slice(0, 800);
+    }
     return undefined;
+  }
+
+  private stripToolUseXml(input: string): string | undefined {
+    const original = input.trim();
+    if (!original) return undefined;
+
+    // Remove complete tool_use blocks.
+    let cleaned = original.replace(/<tool_use[\s\S]*?<\/tool_use>/g, '').trim();
+    // Remove dangling tool_use content if model output got cut mid-block.
+    cleaned = cleaned.replace(/<tool_use[\s\S]*$/g, '').trim();
+
+    // Normalize whitespace/newlines.
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+    return cleaned || undefined;
   }
 
   /**
@@ -2180,6 +2203,54 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   /**
+   * 分析执行计划，提取每个角色需要的最大并行 Worker 数
+   *
+   * 遍历执行计划的每个步骤，统计同一步骤内同一角色的子任务数量，
+   * 取每个角色在所有步骤中的最大值。
+   *
+   * @param plan - 规划输出
+   * @returns 角色 ID 到最大并行数的映射
+   */
+  private extractParallelRequirements(plan: PlannerOutput): Map<string, number> {
+    const requirements = new Map<string, number>();
+
+    // 构建 subtaskId -> roleId 的映射
+    const subtaskRoleMap = new Map<string, string>();
+    for (const subtask of plan.subtasks) {
+      if (subtask.roleId) {
+        subtaskRoleMap.set(subtask.id, subtask.roleId);
+      }
+    }
+
+    // 遍历每个执行步骤
+    for (const step of plan.executionPlan.steps) {
+      if (!step.parallel) {
+        // 非并行步骤中每个任务顺序执行，不需要多 worker
+        continue;
+      }
+
+      // 统计该步骤中每个角色的子任务数量
+      const stepRoleCounts = new Map<string, number>();
+      for (const subtaskId of step.subtaskIds) {
+        const roleId = subtaskRoleMap.get(subtaskId);
+        if (roleId) {
+          stepRoleCounts.set(roleId, (stepRoleCounts.get(roleId) ?? 0) + 1);
+        }
+      }
+
+      // 更新全局最大值
+      for (const [roleId, count] of stepRoleCounts) {
+        const current = requirements.get(roleId) ?? 1;
+        if (count > current) {
+          requirements.set(roleId, count);
+        }
+      }
+    }
+
+    return requirements;
+  }
+
+  /**
    * 注册默认 Workers
    *
    * @param planWorkerCount - 计划指定的 worker 数量（可选，默认使用配置值）
@@ -2187,14 +2258,30 @@ Is this a genuine deviation? Answer YES or NO only.`,
   private async registerDefaultWorkers(opts?: {
     workerCount?: number;
     roles?: PlannerRole[];
+    /** 每个角色需要的最大并发 Worker 数（来自执行计划分析） */
+    parallelRequirements?: Map<string, number>;
   }): Promise<void> {
     const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
     const roles = Array.isArray(opts?.roles) && opts.roles.length > 0 ? opts.roles : null;
+    const parallelReqs = opts?.parallelRequirements ?? new Map<string, number>();
 
-    // 角色化 worker：每个角色对应一个 worker（超出上限则截断，并降级部分子任务为 general）
-    const workerCount = roles
-      ? Math.min(roles.length, maxWorkers)
-      : Math.min(opts?.workerCount ?? this.orchestratorConfig.delegation.workerCount, maxWorkers);
+    // 计算每个角色需要的 Worker 数量
+    // 角色化 worker：每个角色至少 1 个，如果有并行需求则更多
+    let totalWorkersNeeded = 0;
+    const roleWorkerCounts = new Map<string, number>();
+    
+    if (roles) {
+      for (const role of roles) {
+        const parallelCount = parallelReqs.get(role.id) ?? 1;
+        roleWorkerCounts.set(role.id, parallelCount);
+        totalWorkersNeeded += parallelCount;
+      }
+    } else {
+      totalWorkersNeeded = opts?.workerCount ?? this.orchestratorConfig.delegation.workerCount;
+    }
+
+    // 限制最大 Worker 数
+    const workerCount = Math.min(totalWorkersNeeded, maxWorkers);
 
     const llm = this.extractLLMFromMetadata();
     const workDir = this.extractWorkDirFromMetadata();
@@ -2203,18 +2290,44 @@ Is this a genuine deviation? Answer YES or NO only.`,
     // 获取已注册的 worker IDs（用于增量注册）
     const existingWorkerIds = new Set(this.workerPool.getAllWorkers().map((w) => w.id));
 
-    for (let i = 0; i < workerCount; i++) {
-      const role = roles ? roles[i] : undefined;
-      const roleId = role?.id;
-      const workerId = roleId ? `worker-${roleId}` : `worker-${i}`;
+    // 生成需要注册的 Worker 列表
+    interface WorkerToRegister {
+      workerId: string;
+      roleId?: string;
+      capabilities: string[];
+    }
+    const workersToRegister: WorkerToRegister[] = [];
 
-      const roleCapabilities = role?.capabilities ?? [];
-      const stableRoleCap = roleId ? `role:${roleId}` : undefined;
-      const desiredCapabilities = [
-        'general',
-        ...roleCapabilities,
-        ...(stableRoleCap && !roleCapabilities.includes(stableRoleCap) ? [stableRoleCap] : []),
-      ];
+    if (roles) {
+      // 角色化模式：每个角色注册 parallelCount 个 Worker
+      for (const role of roles) {
+        const parallelCount = roleWorkerCounts.get(role.id) ?? 1;
+        for (let i = 0; i < parallelCount && workersToRegister.length < workerCount; i++) {
+          const workerId = i === 0 ? `worker-${role.id}` : `worker-${role.id}-${i}`;
+          const stableRoleCap = `role:${role.id}`;
+          workersToRegister.push({
+            workerId,
+            roleId: role.id,
+            capabilities: [
+              'general',
+              ...role.capabilities,
+              ...(role.capabilities.includes(stableRoleCap) ? [] : [stableRoleCap]),
+            ],
+          });
+        }
+      }
+    } else {
+      // 非角色化模式：注册通用 Worker
+      for (let i = 0; i < workerCount; i++) {
+        workersToRegister.push({
+          workerId: `worker-${i}`,
+          capabilities: ['general'],
+        });
+      }
+    }
+
+    // 注册 Workers
+    for (const { workerId, capabilities: desiredCapabilities } of workersToRegister) {
 
       // 增量注册：已存在则“更新能力 + 确保 session 注册”，避免跨 run/角色变化导致路由失败
       if (existingWorkerIds.has(workerId)) {
@@ -2384,6 +2497,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
           ...(this.currentTask?.context?.traceId && { traceId: this.currentTask.context.traceId }),
           metadata: {
             workerId,
+            // 传递 noApproval 配置到 Worker
+            ...(this.currentRunMetadata?.noApproval === true && { noApproval: true }),
           },
         },
       };

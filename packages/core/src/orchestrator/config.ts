@@ -65,6 +65,9 @@ export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   idleTimeout: 300000, // 5 分钟
   healthCheckInterval: 30000, // 30 秒
   selectionStrategy: 'least-loaded',
+  fallbackToGeneral: true, // 启用降级路由
+  waitQueueTimeout: 30000, // 30 秒等待队列超时
+  waitQueuePollInterval: 500, // 500ms 轮询间隔
 };
 
 /**
@@ -76,6 +79,9 @@ export const HIGH_CONCURRENCY_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   idleTimeout: 600000, // 10 分钟
   healthCheckInterval: 15000, // 15 秒
   selectionStrategy: 'least-loaded',
+  fallbackToGeneral: true,
+  waitQueueTimeout: 60000, // 60 秒等待队列超时
+  waitQueuePollInterval: 300, // 300ms 轮询间隔
 };
 
 // ============================================================================

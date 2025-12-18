@@ -1,7 +1,7 @@
 /**
  * Conversation Prompt Builder
  *
- * 为 ConversationalRunner 构建 LLM Prompt 上下文，压缩历史避免超限
+ * Builds LLM prompt context for ConversationalRunner and compresses history to avoid overruns.
  */
 
 import type { SessionState, ConversationMessage } from './types';
@@ -19,9 +19,9 @@ const SUMMARY_THRESHOLD = 10;
 
 /**
  * 会话 Prompt 构建器
- * 
- * 用于 ConversationalRunner，管理多轮对话上下文
- * 注意：这是 prompt 拼接器，不是对外暴露的 ConversationContextManager（对话容器）接口。
+ *
+ * Used by ConversationalRunner to manage multi-turn conversation context.
+ * Note: This is a prompt string builder, not the public ConversationContextManager interface.
  */
 export class ConversationPromptBuilder {
   private readonly maxMessages: number;
@@ -37,38 +37,85 @@ export class ConversationPromptBuilder {
     const parts: string[] = [];
 
     // 1. 系统上下文
-    parts.push('## 会话上下文\n');
-    parts.push(`工作目录: ${session.workDir}`);
-    parts.push(`会话时长: ${this.formatDuration(Date.now() - session.createdAt)}`);
+    parts.push('## Session Context\n');
+    parts.push(`Working directory: ${session.workDir}`);
+    parts.push(`Session duration: ${this.formatDuration(Date.now() - session.createdAt)}`);
 
-    // 2. 变量上下文
+    // 2. 变量上下文（包含上次任务目标和错误信息）
     if (Object.keys(session.variables).length > 0) {
-      parts.push('\n## 共享变量');
+      parts.push('\n## Shared Variables');
+      // 优先显示重要变量
+      if (session.variables.lastObjective) {
+        parts.push(`- Last objective: ${session.variables.lastObjective}`);
+      }
+      if (session.variables.lastRunError) {
+        parts.push(`- Last run error: ${session.variables.lastRunError}`);
+      }
+      // 其他变量
       for (const [key, value] of Object.entries(session.variables)) {
-        parts.push(`- ${key}: ${JSON.stringify(value)}`);
+        if (key !== 'lastObjective' && key !== 'lastRunError' && key !== 'lastFilesAffected') {
+          parts.push(`- ${key}: ${JSON.stringify(value)}`);
+        }
       }
     }
 
-    // 3. 当前计划状态
+    // 3. 当前计划状态（包含具体子任务信息）
     if (session.currentPlan) {
-      parts.push('\n## 当前计划');
-      parts.push(`总子任务: ${session.currentPlan.subtasks.length}`);
-      parts.push(`已完成: ${session.completedSubtasks.length}`);
-      parts.push(`待执行: ${session.pendingSubtasks.length}`);
+      parts.push('\n## Current Plan');
+      parts.push(`Total subtasks: ${session.currentPlan.subtasks.length}`);
+      parts.push(`Completed: ${session.completedSubtasks.length}`);
+      parts.push(`Pending: ${session.pendingSubtasks.length}`);
+      
+      // 显示已完成的子任务（让 LLM 知道之前做了什么）
+      const completedSubtasks = session.currentPlan.subtasks.filter(
+        st => session.completedSubtasks.includes(st.id)
+      );
+      if (completedSubtasks.length > 0) {
+        parts.push('\nCompleted subtasks:');
+        for (const st of completedSubtasks.slice(-5)) { // 最近 5 个
+          parts.push(`  - ${st.objective} (${st.status})`);
+        }
+        if (completedSubtasks.length > 5) {
+          parts.push(`  ... and ${completedSubtasks.length - 5} more`);
+        }
+      }
+
+      // 显示失败的子任务
+      const failedSubtasks = session.currentPlan.subtasks.filter(
+        st => st.status === 'failure'
+      );
+      if (failedSubtasks.length > 0) {
+        parts.push('\nFailed subtasks:');
+        for (const st of failedSubtasks.slice(-3)) {
+          parts.push(`  - ${st.objective}`);
+        }
+      }
     }
 
-    // 4. 压缩的历史摘要
+    // 4. 之前创建/修改的文件（非常重要）
+    if (Array.isArray(session.variables.lastFilesAffected) && session.variables.lastFilesAffected.length > 0) {
+      const files = session.variables.lastFilesAffected as string[];
+      parts.push('\n## Recently Created/Modified Files');
+      for (const file of files.slice(-15)) { // 最近 15 个文件
+        parts.push(`  - ${file}`);
+      }
+      if (files.length > 15) {
+        parts.push(`  ... and ${files.length - 15} more`);
+      }
+    }
+
+    // 5. 压缩的历史摘要
     if (session.compressedHistory) {
-      parts.push('\n## 历史摘要');
+      parts.push('\n## History Summary');
       parts.push(session.compressedHistory);
     }
 
-    // 5. 最近的对话
+    // 6. 最近的对话
     const recentMessages = this.getRecentMessages(session);
     if (recentMessages.length > 0) {
-      parts.push('\n## 最近对话');
+      parts.push('\n## Recent Conversation');
       for (const msg of recentMessages) {
-        const role = msg.role === 'user' ? '用户' : msg.role === 'assistant' ? 'Agent' : '系统';
+        const role = msg.role === 'user' ? 'User' : msg.role === 'assistant' ? 'Assistant' : 'System';
         parts.push(`[${role}] ${msg.content.substring(0, 200)}${msg.content.length > 200 ? '...' : ''}`);
       }
     }
@@ -151,12 +198,12 @@ export class ConversationPromptBuilder {
     const hours = Math.floor(minutes / 60);
 
     if (hours > 0) {
-      return `${hours}小时${minutes % 60}分钟`;
+      return `${hours}h ${minutes % 60}m`;
     }
     if (minutes > 0) {
-      return `${minutes}分钟`;
+      return `${minutes}m`;
     }
-    return `${seconds}秒`;
+    return `${seconds}s`;
   }
 
   /**
@@ -164,7 +211,7 @@ export class ConversationPromptBuilder {
    */
   buildContinuePrompt(session: SessionState): string {
     if (session.pendingSubtasks.length === 0) {
-      return '没有待执行的任务。';
+      return 'No pending tasks.';
     }
 
     const nextSubtaskId = session.pendingSubtasks[0];
@@ -173,10 +220,10 @@ export class ConversationPromptBuilder {
     );
 
     if (!nextSubtask) {
-      return '无法找到下一个子任务。';
+      return 'Unable to find the next subtask.';
     }
 
-    return `继续执行任务。\n\n下一个子任务: ${nextSubtask.objective}`;
+    return `Continue execution.\n\nNext subtask: ${nextSubtask.objective}`;
   }
 
   /**
@@ -187,18 +234,18 @@ export class ConversationPromptBuilder {
     target: string | undefined,
     newValue: string | undefined
   ): string {
-    const parts: string[] = ['用户请求修改:'];
+    const parts: string[] = ['User requested changes:'];
 
     if (target && newValue) {
-      parts.push(`把 "${target}" 改成 "${newValue}"`);
+      parts.push(`Change "${target}" to "${newValue}"`);
     } else {
-      parts.push('请根据用户的修改请求调整之前的工作。');
+      parts.push('Please adjust the previous work based on the user request.');
     }
 
     // 添加受影响文件的上下文
     const lastFiles = session.variables.lastFilesAffected;
     if (Array.isArray(lastFiles) && lastFiles.length > 0) {
-      parts.push(`\n最近修改的文件: ${lastFiles.join(', ')}`);
+      parts.push(`\nRecently modified files: ${lastFiles.join(', ')}`);
     }
 
     return parts.join('\n');

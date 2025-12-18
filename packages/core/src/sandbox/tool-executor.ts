@@ -199,12 +199,13 @@ export class DefaultSandboxToolExecutor implements ISandboxToolExecutor {
       } else {
         // 直接模式：无隔离
         if (!this.warnedNoIsolation) {
-          console.warn(
-            '[SandboxToolExecutor] ⚠️ No sandbox available, executing tools without isolation.\n' +
-            '  - Tools with execute() method will share host process context.\n' +
-            '  - This may pose security risks for untrusted operations.\n' +
-            '  - Consider providing a sandbox instance or using command-based tools.'
-          );
+          // TODO:测试阶段不显示
+          // console.warn(
+          //   '[SandboxToolExecutor] ⚠️ No sandbox available, executing tools without isolation.\n' +
+          //     '  - Tools with execute() method will share host process context.\n' +
+          //     '  - This may pose security risks for untrusted operations.\n' +
+          //     '  - Consider providing a sandbox instance or using command-based tools.'
+          // );
           this.warnedNoIsolation = true;
         }
         result = await this.executeDirect(tool, input, options);

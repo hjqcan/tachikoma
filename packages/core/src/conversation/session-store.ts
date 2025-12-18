@@ -4,16 +4,20 @@
  * 会话持久化存储，支持检查点管理
  */
 
-import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { SessionState, Checkpoint, ConversationMessage } from './types';
+import type { PlanFile, ProgressFile } from '../orchestrator/session/types';
+import { atomicWriteJson } from '../orchestrator/session/utils';
 
 // =============================================================================
 // 常量
 // =============================================================================
 
 const SESSION_FILE = 'session.json';
+const CANONICAL_SESSIONS_DIR = 'sessions';
+const CONVERSATION_DIR = 'conversation';
 
 // =============================================================================
 // SessionStore 类
@@ -61,36 +65,49 @@ export class SessionStore {
    * 获取会话
    */
   async getSession(sessionId: string): Promise<SessionState | null> {
-    try {
-      const sessionPath = this.getSessionPath(sessionId);
-      const content = await readFile(join(sessionPath, SESSION_FILE), 'utf-8');
-      return JSON.parse(content) as SessionState;
-    } catch {
-      return null;
+    const canonical = await this.readCanonicalSession(sessionId);
+    if (canonical) {
+      await this.hydrateSessionFromOrchestrator(canonical);
+      return canonical;
     }
+
+    const legacy = await this.readLegacySession(sessionId);
+    if (legacy) {
+      // Best-effort migration: write canonical copy so future reads use the orchestrator session root.
+      await this.saveSession(legacy).catch(() => undefined);
+      await this.hydrateSessionFromOrchestrator(legacy);
+      return legacy;
+    }
+
+    // If this session was created by Orchestrator directly, synthesize a minimal SessionState.
+    const synthesized = await this.synthesizeFromOrchestrator(sessionId);
+    if (synthesized) return synthesized;
+
+    return null;
   }
 
   /**
    * 保存会话
    */
   async saveSession(session: SessionState): Promise<void> {
-    const sessionPath = this.getSessionPath(session.sessionId);
+    const sessionPath = this.getCanonicalSessionPath(session.sessionId);
     await mkdir(sessionPath, { recursive: true });
 
     session.lastActiveAt = Date.now();
-    await writeFile(
-      join(sessionPath, SESSION_FILE),
-      JSON.stringify(session, null, 2),
-      'utf-8'
-    );
+    // Use atomic write to prevent half-written JSON on crash
+    await atomicWriteJson(join(sessionPath, SESSION_FILE), session);
   }
 
   /**
    * 删除会话
    */
   async deleteSession(sessionId: string): Promise<void> {
-    const sessionPath = this.getSessionPath(sessionId);
-    await rm(sessionPath, { recursive: true, force: true });
+    const canonicalRoot = this.getCanonicalSessionRoot(sessionId);
+    await rm(canonicalRoot, { recursive: true, force: true });
+
+    // Legacy cleanup (best-effort).
+    const legacyRoot = this.getLegacySessionPath(sessionId);
+    await rm(legacyRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 
   /**
@@ -99,16 +116,25 @@ export class SessionStore {
   async listSessions(): Promise<SessionState[]> {
     try {
       await mkdir(this.baseDir, { recursive: true });
-      const entries = await readdir(this.baseDir, { withFileTypes: true });
+      const sessionsDir = join(this.baseDir, CANONICAL_SESSIONS_DIR);
+      await mkdir(sessionsDir, { recursive: true });
+
+      const entries = await readdir(sessionsDir, { withFileTypes: true });
       const sessions: SessionState[] = [];
 
       for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith('conv-')) {
-          const session = await this.getSession(entry.name);
-          if (session) {
-            sessions.push(session);
-          }
-        }
+        if (!entry.isDirectory()) continue;
+        const session = await this.getSession(entry.name);
+        if (session) sessions.push(session);
+      }
+
+      // Backward compatibility: also scan legacy `baseDir/conv-*` directories.
+      const legacyEntries = await readdir(this.baseDir, { withFileTypes: true });
+      for (const entry of legacyEntries) {
+        if (!entry.isDirectory() || !entry.name.startsWith('conv-')) continue;
+        if (sessions.some((s) => s.sessionId === entry.name)) continue;
+        const session = await this.getSession(entry.name);
+        if (session) sessions.push(session);
       }
 
       // 按最后活动时间排序
@@ -232,9 +258,120 @@ export class SessionStore {
   // ---------------------------------------------------------------------------
 
   /**
-   * 获取会话目录路径
+   * 获取 canonical 会话 conversation 目录路径
    */
-  private getSessionPath(sessionId: string): string {
+  private getCanonicalSessionPath(sessionId: string): string {
+    return join(this.getCanonicalSessionRoot(sessionId), CONVERSATION_DIR);
+  }
+
+  private getCanonicalSessionRoot(sessionId: string): string {
+    return join(this.baseDir, CANONICAL_SESSIONS_DIR, sessionId);
+  }
+
+  private getLegacySessionPath(sessionId: string): string {
     return join(this.baseDir, sessionId);
+  }
+
+  private async readCanonicalSession(sessionId: string): Promise<SessionState | null> {
+    try {
+      const content = await readFile(join(this.getCanonicalSessionPath(sessionId), SESSION_FILE), 'utf-8');
+      return JSON.parse(content) as SessionState;
+    } catch {
+      return null;
+    }
+  }
+
+  private async readLegacySession(sessionId: string): Promise<SessionState | null> {
+    try {
+      const content = await readFile(join(this.getLegacySessionPath(sessionId), SESSION_FILE), 'utf-8');
+      return JSON.parse(content) as SessionState;
+    } catch {
+      return null;
+    }
+  }
+
+  private async synthesizeFromOrchestrator(sessionId: string): Promise<SessionState | null> {
+    const progressPath = join(this.getCanonicalSessionRoot(sessionId), 'orchestrator', 'progress.json');
+    const planPath = join(this.getCanonicalSessionRoot(sessionId), 'orchestrator', 'plan.json');
+
+    let progress: ProgressFile | null = null;
+    let plan: PlanFile | null = null;
+
+    try {
+      progress = JSON.parse(await readFile(progressPath, 'utf-8')) as ProgressFile;
+    } catch {
+      // ignore
+    }
+    try {
+      plan = JSON.parse(await readFile(planPath, 'utf-8')) as PlanFile;
+    } catch {
+      // ignore
+    }
+
+    if (!progress && !plan) return null;
+
+    const createdAt = progress?.startedAt ?? plan?.createdAt ?? Date.now();
+    const session: SessionState = {
+      sessionId,
+      createdAt,
+      lastActiveAt: progress?.updatedAt ?? plan?.updatedAt ?? Date.now(),
+      workDir: '',
+      messages: [],
+      completedSubtasks: [],
+      pendingSubtasks: [],
+      checkpoints: [],
+      variables: {},
+      waitingForUser: false,
+    };
+
+    await this.hydrateSessionFromOrchestrator(session);
+    return session;
+  }
+
+  private async hydrateSessionFromOrchestrator(session: SessionState): Promise<void> {
+    const sessionRoot = this.getCanonicalSessionRoot(session.sessionId);
+    const progressPath = join(sessionRoot, 'orchestrator', 'progress.json');
+    const planPath = join(sessionRoot, 'orchestrator', 'plan.json');
+
+    let progress: ProgressFile | null = null;
+    let plan: PlanFile | null = null;
+
+    try {
+      progress = JSON.parse(await readFile(progressPath, 'utf-8')) as ProgressFile;
+    } catch {
+      // ignore
+    }
+    try {
+      plan = JSON.parse(await readFile(planPath, 'utf-8')) as PlanFile;
+    } catch {
+      // ignore
+    }
+
+    if (plan?.plannerOutput) {
+      const subtasks = plan.plannerOutput.subtasks.map((st) => ({ ...st }));
+      const completed = new Set(progress?.completedSubtasks ?? []);
+      const failed = new Set(progress?.failedSubtasks ?? []);
+      const running = new Set(progress?.runningSubtasks ?? []);
+
+      for (const st of subtasks) {
+        if (completed.has(st.id)) st.status = 'success';
+        else if (failed.has(st.id)) st.status = 'failure';
+        else if (running.has(st.id)) st.status = 'running';
+      }
+
+      session.currentPlan = {
+        subtasks,
+        executionOrder: plan.plannerOutput.executionPlan.steps.flatMap((s) => s.subtaskIds),
+      };
+    }
+
+    if (progress) {
+      session.completedSubtasks = Array.isArray(progress.completedSubtasks) ? progress.completedSubtasks.slice() : [];
+
+      const completed = new Set(progress.completedSubtasks ?? []);
+      const failed = new Set(progress.failedSubtasks ?? []);
+      const planIds = session.currentPlan?.subtasks?.map((s) => s.id) ?? [];
+      session.pendingSubtasks = planIds.filter((id) => !completed.has(id) && !failed.has(id));
+    }
   }
 }

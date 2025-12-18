@@ -275,8 +275,9 @@ describe('SessionPathBuilder', () => {
 
   it('getAllDirs 应返回所有基础目录', () => {
     const dirs = builder.getAllDirs();
-    expect(dirs).toHaveLength(4);
+    expect(dirs).toHaveLength(5);
     expect(dirs).toContain(builder.sessionRoot);
+    expect(dirs).toContain(builder.conversationDir);
     expect(dirs).toContain(builder.orchestratorDir);
     expect(dirs).toContain(builder.workersDir);
     expect(dirs).toContain(builder.sharedDir);

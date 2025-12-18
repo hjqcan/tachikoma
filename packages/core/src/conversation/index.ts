@@ -6,10 +6,6 @@
 
 // Types
 export {
-  UserIntent,
-  FeedbackAction,
-  type IntentAnalysisResult,
-  type FeedbackAnalysisResult,
   type ConversationMessage,
   type ExecutionSummary,
   type Checkpoint,
@@ -27,12 +23,6 @@ export {
 
 // Session Store
 export { SessionStore } from './session-store';
-
-// Intent Analyzer
-export { IntentAnalyzer } from './intent-analyzer';
-
-// Feedback Loop
-export { FeedbackLoop } from './feedback-loop';
 
 // Prompt Builder
 export { ConversationPromptBuilder } from './prompt-builder';

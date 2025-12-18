@@ -467,6 +467,16 @@ export class SessionPathBuilder {
     return join(this.rootDir, 'sessions', this.sessionId);
   }
 
+  /** 获取 conversation 目录路径（ConversationalRunner 会话持久化） */
+  get conversationDir(): string {
+    return join(this.sessionRoot, 'conversation');
+  }
+
+  /** 获取 conversation session 文件路径 */
+  get conversationSessionFile(): string {
+    return join(this.conversationDir, 'session.json');
+  }
+
   /** 获取 orchestrator 目录路径 */
   get orchestratorDir(): string {
     return join(this.sessionRoot, 'orchestrator');
@@ -586,6 +596,7 @@ export class SessionPathBuilder {
   getAllDirs(): string[] {
     return [
       this.sessionRoot,
+      this.conversationDir,
       this.orchestratorDir,
       this.workersDir,
       this.sharedDir,

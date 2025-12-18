@@ -442,7 +442,8 @@ describe('任务分配', () => {
   let pool: DefaultWorkerPool;
 
   beforeEach(() => {
-    pool = new DefaultWorkerPool(DEFAULT_WORKER_POOL_CONFIG);
+    // Disable wait queue to avoid 30s timeout in tests
+    pool = new DefaultWorkerPool({ ...DEFAULT_WORKER_POOL_CONFIG, waitQueueTimeout: 0 });
     pool.register(createTestWorker('worker-1'));
     pool.register(createTestWorker('worker-2'));
   });

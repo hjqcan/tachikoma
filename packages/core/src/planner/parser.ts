@@ -294,21 +294,23 @@ function validatePlanningOutput(data: unknown): asserts data is PlanningOutputFo
     }
   }
 
-  // 验证依赖关系的一致性
+  // 验证并修复依赖关系的一致性（自动移除无效依赖）
   for (const st of obj.subtasks as { id: string; dependencies: string[] }[]) {
-    for (const depId of st.dependencies) {
+    // 过滤掉无效的依赖
+    const originalDeps = [...st.dependencies];
+    st.dependencies = st.dependencies.filter(depId => {
       if (!subtaskIds.has(depId)) {
-        throw new ParseError(
-          `subtask ${st.id} depends on unknown subtask ID: ${depId}`,
-          `subtasks.${st.id}.dependencies`
-        );
+        console.warn(`[Parser] Auto-fix: removed invalid dependency ${depId} from ${st.id}`);
+        return false;
       }
       if (depId === st.id) {
-        throw new ParseError(
-          `subtask ${st.id} cannot depend on itself`,
-          `subtasks.${st.id}.dependencies`
-        );
+        console.warn(`[Parser] Auto-fix: removed self-dependency from ${st.id}`);
+        return false;
       }
+      return true;
+    });
+    if (st.dependencies.length !== originalDeps.length) {
+      console.warn(`[Parser] Dependencies fixed for ${st.id}: ${JSON.stringify(originalDeps)} -> ${JSON.stringify(st.dependencies)}`);
     }
   }
 

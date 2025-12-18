@@ -140,13 +140,15 @@ export interface IWorkerPool {
    * @param timeout - 超时时间（毫秒）
    * @param retryPolicy - 重试策略
    * @param context - 执行上下文
+   * @param signal - 可选的 AbortSignal 用于取消等待队列
    * @returns 分配结果
    */
   assign(
     subtask: SubTask,
     timeout: number,
     retryPolicy: RetryPolicy,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<AssignmentResult>;
 
   /**
@@ -538,12 +540,21 @@ export class DefaultWorkerPool implements IWorkerPool {
     subtask: SubTask,
     timeout: number,
     retryPolicy: RetryPolicy,
-    context?: Record<string, unknown>
+    context?: Record<string, unknown>,
+    signal?: AbortSignal
   ): Promise<AssignmentResult> {
     if (this.isShutdown) {
       return {
         success: false,
         error: 'Worker pool is shutdown',
+      };
+    }
+
+    // Check if already aborted
+    if (signal?.aborted) {
+      return {
+        success: false,
+        error: 'Assignment aborted',
       };
     }
 
@@ -555,22 +566,17 @@ export class DefaultWorkerPool implements IWorkerPool {
       ? (context.requiredCapabilities as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
       : undefined;
 
-    let workerId: string | undefined;
-    if (preferredWorkerId) {
-      const w = this.workers.get(preferredWorkerId);
-      if (w && w.status === 'idle') {
-        if (!requiredCapabilities || requiredCapabilities.every((cap) => (w.capabilities ?? []).includes(cap))) {
-          workerId = preferredWorkerId;
-        }
-      }
-    }
-    if (!workerId) {
-      workerId = this.selectWorker(requiredCapabilities);
-    }
+    // 尝试选择 Worker（带等待队列）
+    const workerId = await this.selectWorkerWithQueue(
+      requiredCapabilities,
+      preferredWorkerId,
+      signal
+    );
+
     if (!workerId) {
       return {
         success: false,
-        error: 'No available workers',
+        error: signal?.aborted ? 'Assignment aborted' : 'No available workers',
       };
     }
 
@@ -622,6 +628,98 @@ export class DefaultWorkerPool implements IWorkerPool {
       workerId,
       cancel: () => this.cancelTask(subtask.id),
     };
+  }
+
+  /**
+   * 选择 Worker（带等待队列和降级路由）
+   */
+  private async selectWorkerWithQueue(
+    requiredCapabilities?: string[],
+    preferredWorkerId?: string,
+    signal?: AbortSignal
+  ): Promise<string | undefined> {
+    const waitQueueTimeout = this._config.waitQueueTimeout ?? 0;
+    const waitQueuePollInterval = this._config.waitQueuePollInterval ?? 500;
+    const fallbackToGeneral = this._config.fallbackToGeneral !== false; // 默认 true
+
+    const startTime = Date.now();
+
+    while (true) {
+      // 0. Check if aborted
+      if (signal?.aborted) {
+        return undefined;
+      }
+
+      // 1. 尝试使用偏好 Worker
+      if (preferredWorkerId) {
+        const w = this.workers.get(preferredWorkerId);
+        if (w && w.status === 'idle') {
+          if (!requiredCapabilities || requiredCapabilities.every((cap) => (w.capabilities ?? []).includes(cap))) {
+            return preferredWorkerId;
+          }
+        }
+      }
+
+      // 2. 按能力筛选
+      let workerId = this.selectWorker(requiredCapabilities);
+      if (workerId) {
+        return workerId;
+      }
+
+      // 3. 降级路由（如果启用）
+      if (fallbackToGeneral && requiredCapabilities && requiredCapabilities.length > 0) {
+        workerId = this.selectWorker(); // 不带能力要求
+        if (workerId) {
+          console.debug(
+            `[WorkerPool] Fallback: no worker with capabilities [${requiredCapabilities.join(', ')}], using ${workerId}`
+          );
+          return workerId;
+        }
+      }
+
+      // 4. 检查是否启用等待队列
+      if (waitQueueTimeout <= 0) {
+        // 不启用等待队列，立即返回
+        return undefined;
+      }
+
+      // 5. 检查是否超时
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= waitQueueTimeout) {
+        console.debug(
+          `[WorkerPool] Wait queue timeout after ${elapsed}ms for capabilities [${requiredCapabilities?.join(', ') ?? 'any'}]`
+        );
+        return undefined;
+      }
+
+      // 6. 等待一段时间后重试 (with abort support)
+      await this.sleepWithSignal(waitQueuePollInterval, signal);
+
+      // 7. 检查是否已关闭
+      if (this.isShutdown) {
+        return undefined;
+      }
+    }
+  }
+
+  /**
+   * 睡眠辅助函数 (with AbortSignal support)
+   */
+  private sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal?.aborted) {
+        resolve();
+        return;
+      }
+      const timer = setTimeout(resolve, ms);
+      if (signal) {
+        const onAbort = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    });
   }
 
   /**

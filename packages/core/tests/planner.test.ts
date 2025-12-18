@@ -307,8 +307,8 @@ describe('LLM 客户端', () => {
 describe('Prompt 模板', () => {
   describe('PLANNING_SYSTEM_PROMPT', () => {
     it('应包含关键指导内容', () => {
-      expect(PLANNING_SYSTEM_PROMPT).toContain('任务规划专家');
-      expect(PLANNING_SYSTEM_PROMPT).toContain('JSON 格式');
+      expect(PLANNING_SYSTEM_PROMPT).toContain('task planning expert');
+      expect(PLANNING_SYSTEM_PROMPT).toContain('JSON format');
       expect(PLANNING_SYSTEM_PROMPT).toContain('subtasks');
       expect(PLANNING_SYSTEM_PROMPT).toContain('executionPlan');
     });
@@ -333,7 +333,7 @@ describe('Prompt 模板', () => {
       });
 
       expect(prompt).toContain('测试任务');
-      expect(prompt).toContain('无特殊约束');
+      expect(prompt).toContain('No special constraints');
     });
 
     it('应包含可用工具列表', () => {
@@ -343,7 +343,7 @@ describe('Prompt 模板', () => {
         availableTools: ['git', 'npm', 'docker'],
       });
 
-      expect(prompt).toContain('可用工具');
+      expect(prompt).toContain('Available Tools');
       expect(prompt).toContain('git');
       expect(prompt).toContain('npm');
       expect(prompt).toContain('docker');
@@ -356,7 +356,7 @@ describe('Prompt 模板', () => {
         maxSubtasks: 5,
       });
 
-      expect(prompt).toContain('最多生成 5 个子任务');
+      expect(prompt).toContain('Generate at most 5 subtasks');
     });
 
     it('应包含额外上下文', () => {
@@ -366,7 +366,7 @@ describe('Prompt 模板', () => {
         additionalContext: '这是一个紧急任务',
       });
 
-      expect(prompt).toContain('额外上下文');
+      expect(prompt).toContain('Additional Context');
       expect(prompt).toContain('这是一个紧急任务');
     });
   });
@@ -379,10 +379,10 @@ describe('Prompt 模板', () => {
         retryCount: 1,
       });
 
-      expect(prompt).toContain('无法正确解析');
+      expect(prompt).toContain('could not be parsed');
       expect(prompt).toContain('Unexpected token');
       expect(prompt).toContain('Invalid JSON...');
-      expect(prompt).toContain('第 1 次重试');
+      expect(prompt).toContain('retry attempt 1');
     });
 
     it('应截断过长的原始响应', () => {
@@ -393,7 +393,7 @@ describe('Prompt 模板', () => {
         retryCount: 1,
       });
 
-      expect(prompt).toContain('...(已截断)');
+      expect(prompt).toContain('...(truncated)');
       expect(prompt.length).toBeLessThan(2500);
     });
   });
@@ -538,7 +538,7 @@ ${validPlanningOutputJson}
       expect(result.error).toContain('unknown subtask ID');
     });
 
-    it('循环依赖应返回失败', () => {
+    it('循环依赖（自引用）应被自动修复', () => {
       const invalid = {
         ...validPlanningOutput,
         subtasks: [
@@ -547,7 +547,7 @@ ${validPlanningOutputJson}
             objective: 'Test',
             constraints: [],
             estimatedMinutes: 10,
-            dependencies: ['subtask-1'], // 自引用
+            dependencies: ['subtask-1'], // 自引用 - 将被自动移除
           },
         ],
         executionPlan: {
@@ -557,11 +557,12 @@ ${validPlanningOutputJson}
       };
       const result = parsePlanningOutput(JSON.stringify(invalid));
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('cannot depend on itself');
+      // Auto-fix: self-dependency is removed, parse succeeds
+      expect(result.success).toBe(true);
+      expect(result.data?.subtasks[0].dependencies).toEqual([]);
     });
 
-    it('依赖不存在的子任务应返回失败', () => {
+    it('依赖不存在的子任务应被自动修复', () => {
       const invalid = {
         ...validPlanningOutput,
         subtasks: [
@@ -570,7 +571,7 @@ ${validPlanningOutputJson}
             objective: 'Test',
             constraints: [],
             estimatedMinutes: 10,
-            dependencies: ['nonexistent'],
+            dependencies: ['nonexistent'], // 不存在的依赖 - 将被自动移除
           },
         ],
         executionPlan: {
@@ -580,8 +581,9 @@ ${validPlanningOutputJson}
       };
       const result = parsePlanningOutput(JSON.stringify(invalid));
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('unknown subtask ID');
+      // Auto-fix: nonexistent dependency is removed, parse succeeds
+      expect(result.success).toBe(true);
+      expect(result.data?.subtasks[0].dependencies).toEqual([]);
     });
   });
 

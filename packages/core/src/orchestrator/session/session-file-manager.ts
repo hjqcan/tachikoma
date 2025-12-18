@@ -933,9 +933,65 @@ export class SessionFileManager implements ISessionFileManager {
           }
         }
       );
+
+      // Stale detection: if a worker stops updating heartbeat, mark it as error to avoid a permanently stuck status.
+      await this.maybeMarkStaleWorker(workerId);
     } catch (error) {
       console.warn(`[SessionFileManager] Error polling worker ${workerId}:`, error);
     }
+  }
+
+  private async maybeMarkStaleWorker(workerId: string): Promise<void> {
+    const statusPath = this.paths.workerStatusFile(workerId);
+    const status = await safeReadJsonFileWithRetry<WorkerStatusFile>(statusPath, {
+      retries: 1,
+      delay: 20,
+    });
+    if (!status) return;
+
+    if (status.status === 'idle' || status.status === 'error' || status.status === 'waiting_approval') {
+      return;
+    }
+
+    const currentTime = now();
+    const heartbeatAge = currentTime - status.lastHeartbeat;
+    if (heartbeatAge <= this.config.staleWorkerTimeoutMs) return;
+
+    // If actions are still being appended, treat the worker as active even if heartbeat isn't updated.
+    const actionsPath = this.paths.workerActionsFile(workerId);
+    const tail = await safeReadJsonlTailWithRetry<ActionRecord>(actionsPath, 1, {
+      retries: 1,
+      delay: 20,
+    });
+    const lastAction = tail.length > 0 ? tail[tail.length - 1] : undefined;
+    const lastActionAge = lastAction ? currentTime - lastAction.timestamp : Number.POSITIVE_INFINITY;
+    if (lastAction && lastActionAge <= this.config.staleWorkerActionGraceMs) return;
+
+    // CAS check: re-read status to avoid race condition where worker resumed heartbeat
+    // between our first read and this write. Abort if heartbeat was updated.
+    const recheck = await safeReadJsonFileWithRetry<WorkerStatusFile>(statusPath, {
+      retries: 1,
+      delay: 20,
+    });
+    if (!recheck || recheck.lastHeartbeat !== status.lastHeartbeat) {
+      // Heartbeat was updated, worker is alive - abort marking as stale
+      return;
+    }
+
+    const next: WorkerStatusFile = {
+      workerId,
+      status: 'error',
+      progress: typeof status.progress === 'number' ? status.progress : 0,
+      lastHeartbeat: currentTime,
+      ...(status.currentSubtask && { currentSubtask: status.currentSubtask }),
+      error: {
+        code: 'stale_worker',
+        message: `Worker heartbeat timed out (${Math.round(heartbeatAge / 1000)}s)`,
+        timestamp: currentTime,
+      },
+    };
+
+    await atomicWriteJson(statusPath, next);
   }
 
   /**

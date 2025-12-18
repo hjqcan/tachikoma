@@ -6,77 +6,6 @@
 
 import type { PlannerRole, SubTask } from '../orchestrator/types';
 
-// =============================================================================
-// 用户意图类型
-// =============================================================================
-
-/**
- * 用户意图分类
- */
-export enum UserIntent {
-  /** 全新任务 */
-  NEW_TASK = 'new_task',
-  /** 继续上一任务 */
-  CONTINUE = 'continue',
-  /** 修改刚才的结果 */
-  MODIFY = 'modify',
-  /** 回答 Agent 的问题 */
-  CLARIFY = 'clarify',
-  /** 撤销操作 */
-  UNDO = 'undo',
-  /** 询问状态/进度 */
-  QUERY = 'query',
-}
-
-/**
- * 意图分析结果
- */
-export interface IntentAnalysisResult {
-  /** 识别的意图 */
-  intent: UserIntent;
-  /** 置信度 0-1 */
-  confidence: number;
-  /** 提取的实体/参数 */
-  entities: Record<string, unknown>;
-  /** 原始消息 */
-  originalMessage: string;
-}
-
-// =============================================================================
-// 反馈循环类型
-// =============================================================================
-
-/**
- * 反馈动作类型
- */
-export enum FeedbackAction {
-  /** 自动重试（如网络错误） */
-  AUTO_RETRY = 'auto_retry',
-  /** 需要重新规划 */
-  REPLAN = 'replan',
-  /** 需要用户澄清 */
-  ASK_USER = 'ask_user',
-  /** 任务完成 */
-  COMPLETE = 'complete',
-  /** 部分完成，等待下一轮 */
-  PARTIAL_COMPLETE = 'partial_complete',
-}
-
-/**
- * 反馈分析结果
- */
-export interface FeedbackAnalysisResult {
-  /** 建议的动作 */
-  action: FeedbackAction;
-  /** 原因说明 */
-  reason: string;
-  /** 如果 ASK_USER，要问的问题 */
-  question?: string;
-  /** 如果 REPLAN，建议的调整 */
-  replanSuggestion?: string;
-  /** 重试次数（如果 AUTO_RETRY） */
-  retryCount?: number;
-}
 
 // =============================================================================
 // 会话消息类型
@@ -99,8 +28,6 @@ export interface ConversationMessage {
   content: string;
   /** 时间戳 */
   timestamp: number;
-  /** 关联的意图（用户消息） */
-  intent?: UserIntent;
   /** 关联的执行结果（助手消息） */
   executionSummary?: ExecutionSummary;
 }

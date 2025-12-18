@@ -15,6 +15,8 @@ import type { PlannerOutput } from '../types';
  * 会话根目录结构
  *
  * .tachikoma/sessions/{session-id}/
+ * ├── conversation/           # ConversationalRunner 会话状态
+ * │   └── session.json        # 对话会话持久化（messages/checkpoints/variables）
  * ├── orchestrator/           # 统筹者状态
  * │   ├── plan.json           # 当前执行计划
  * │   ├── progress.json       # 进度状态
@@ -45,6 +47,20 @@ export interface SessionConfig {
   watchPollInterval: number;
   /** 是否启用文件监控 */
   enableWatch: boolean;
+  /**
+   * Worker 心跳超时（毫秒）
+   *
+   * 当 Worker 的 lastHeartbeat 超过该阈值且近期无行动日志更新时，
+   * SessionFileManager 可将其标记为 stale/error，避免状态永久卡住。
+   */
+  staleWorkerTimeoutMs: number;
+  /**
+   * 行动日志宽限期（毫秒）
+   *
+   * 若 actions.jsonl 在该时间窗口内仍有更新，则认为 Worker 仍在工作，
+   * 即使 lastHeartbeat 未更新也不做 stale 标记。
+   */
+  staleWorkerActionGraceMs: number;
 }
 
 /**
@@ -55,6 +71,8 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
   autoCreateDirs: true,
   watchPollInterval: 500,
   enableWatch: true,
+  staleWorkerTimeoutMs: 3 * 60 * 1000,
+  staleWorkerActionGraceMs: 30 * 1000,
 };
 
 /**

@@ -1,111 +1,64 @@
 # Conversation Module
 
-多轮对话系统，支持迭代对话、错误恢复和上下文持久化。
+Multi-turn conversation system with session management, checkpoints, and slash commands.
 
-## 模块结构
+## Module Structure
 
 ```
 conversation/
-├── types.ts                   # 核心类型定义
-├── session-store.ts           # 会话持久化存储
-├── intent-analyzer.ts         # 用户意图分析
-├── feedback-loop.ts           # 执行结果分析与决策
-├── prompt-builder.ts          # Prompt 上下文构建
-├── conversational-runner.ts   # 主执行器
-└── index.ts                   # 模块导出
+├── types.ts                   # Core type definitions
+├── session-store.ts           # Session persistence
+├── prompt-builder.ts          # Prompt context builder
+├── conversational-runner.ts   # Main runner with slash commands
+└── index.ts                   # Module exports
 ```
 
-## 架构概览
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ConversationalRunner                         │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │           SessionState (via SessionStore)                │   │
-│  │  sessionId, messages[], checkpoints[], variables{}       │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │  Slash Commands (/undo, /clear, /checkpoints, /continue)   ││
+│  └─────────────────────────────────────────────────────────────┘│
 │                              │                                  │
-│  ┌──────────┐  ┌──────────┐  │  ┌──────────┐  ┌─────────────┐  │
-│  │ Intent   │→ │ Planner/ │→ │→ │ Workers  │→ │   Result    │  │
-│  │ Analyzer │  │ Orch     │  │  │          │  │ Aggregator  │  │
-│  └──────────┘  └──────────┘  │  └──────────┘  └─────────────┘  │
-│        ↑                     │                       │          │
-│        │                     │                       ▼          │
-│        │              ┌──────┴───────────────────────────┐     │
-│        └──────────────│         FeedbackLoop             │     │
-│                       │  - Error Classification          │     │
-│                       │  - Auto-retry / Ask User / Replan│     │
-│                       └──────────────────────────────────┘     │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │             SessionState (via SessionStore)                 ││
+│  │    sessionId, messages[], checkpoints[], variables{}       ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                              │                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                    Orchestrator                             │ │
+│  │            Planner → Workers → Results                     │ │
+│  └────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 核心组件
+## Slash Commands
 
-| 组件                     | 职责                                         |
-| ------------------------ | -------------------------------------------- |
-| **SessionStore**         | 持久化会话状态：消息历史、检查点、变量       |
-| **IntentAnalyzer**       | 判断用户意图：新任务/继续/修改/撤销/查询     |
-| **FeedbackLoop**         | 分析执行结果，决定：自动重试/请求澄清/重规划 |
-| **PromptBuilder**        | 管理上下文窗口，压缩历史避免超限             |
-| **ConversationalRunner** | 协调所有组件，处理多轮对话                   |
+| Command                  | Description                       |
+| ------------------------ | --------------------------------- |
+| `/undo [steps\|id]`      | Roll back to a checkpoint         |
+| `/checkpoints`           | List all available checkpoints    |
+| `/continue [context]`    | Continue the last unfinished task |
+| `/clear [--checkpoints]` | Clear conversation history        |
+| `/help`                  | Show available commands           |
 
-## 类型定义
+All other messages are sent to the Orchestrator for AI processing.
 
-### 用户意图
+## Core Components
 
-```typescript
-enum UserIntent {
-  NEW_TASK, // 全新任务
-  CONTINUE, // 继续上一任务（如 "继续"）
-  MODIFY, // 修改刚才的结果（如 "把颜色改成红色"）
-  CLARIFY, // 回答 Agent 的问题
-  UNDO, // 撤销操作
-  QUERY, // 询问状态/进度
-}
-```
+| Component                | Responsibility                                          |
+| ------------------------ | ------------------------------------------------------- |
+| **SessionStore**         | Persist session state: messages, checkpoints, variables |
+| **PromptBuilder**        | Manage context window, compress history                 |
+| **ConversationalRunner** | Handle messages, slash commands, orchestrate tasks      |
 
-### 反馈动作
+## Usage
 
 ```typescript
-enum FeedbackAction {
-  AUTO_RETRY, // 自动重试（如网络错误）
-  REPLAN, // 需要重新规划（如发现依赖问题）
-  ASK_USER, // 需要用户澄清
-  COMPLETE, // 任务完成
-  PARTIAL_COMPLETE, // 部分完成，等待下一轮
-}
-```
+import { ConversationalRunner } from '@tachikoma/core/conversation';
 
-### 会话状态
-
-```typescript
-interface SessionState {
-  sessionId: string;
-  createdAt: number;
-  lastActiveAt: number;
-  workDir: string;
-
-  messages: ConversationMessage[];
-  compressedHistory?: string;
-
-  currentPlan?: { subtasks: SubTask[]; executionOrder: string[] };
-  completedSubtasks: string[];
-  pendingSubtasks: string[];
-
-  checkpoints: Checkpoint[];
-  variables: Record<string, unknown>;
-
-  waitingForUser: boolean;
-  pendingQuestion?: string;
-}
-```
-
-## API 使用
-
-```typescript
-import { ConversationalRunner } from '@anthropic/tachikoma-core/conversation';
-
-// 初始化
 const runner = new ConversationalRunner({
   sessionDir: './.tachikoma/conversations',
   workDir: process.cwd(),
@@ -114,13 +67,14 @@ const runner = new ConversationalRunner({
     baseUrl: 'https://openrouter.ai/api/v1',
     model: 'anthropic/claude-sonnet-4',
   },
+  enableCheckpoints: true,
 });
 
-// 创建会话
+// Create session
 const session = await runner.createSession();
 
-// 处理用户消息（流式输出）
-for await (const event of runner.handleMessage(session.sessionId, '创建一个 React 项目')) {
+// Handle messages (streaming)
+for await (const event of runner.handleMessage(session.sessionId, 'Create a React app')) {
   switch (event.type) {
     case 'thinking':
       console.log('💭', event.content);
@@ -134,52 +88,33 @@ for await (const event of runner.handleMessage(session.sessionId, '创建一个 
   }
 }
 
-// 继续对话
-for await (const event of runner.handleMessage(session.sessionId, '把按钮颜色改成蓝色')) {
-  // ...
+// Use slash commands
+for await (const event of runner.handleMessage(session.sessionId, '/undo')) {
+  // Rolls back to previous checkpoint
 }
 
-// 撤销
-for await (const event of runner.handleMessage(session.sessionId, '撤销')) {
-  // ...
+for await (const event of runner.handleMessage(session.sessionId, '/clear')) {
+  // Clears conversation history
 }
-
-// 中断执行
-await runner.interrupt(session.sessionId);
 ```
 
-## 流式事件类型
+## Stream Events
 
-| 事件类型           | 说明           |
-| ------------------ | -------------- |
-| `thinking`         | Agent 思考过程 |
-| `tool_call`        | 工具调用请求   |
-| `tool_result`      | 工具执行结果   |
-| `subtask_complete` | 子任务完成     |
-| `need_user_input`  | 需要用户输入   |
-| `complete`         | 任务完成       |
-| `error`            | 错误发生       |
+| Event Type         | Description            |
+| ------------------ | ---------------------- |
+| `thinking`         | Agent thinking process |
+| `tool_call`        | Tool call request      |
+| `tool_result`      | Tool execution result  |
+| `subtask_complete` | Subtask completed      |
+| `need_user_input`  | User input required    |
+| `complete`         | Task completed         |
+| `error`            | Error occurred         |
 
-## 特性
+## Features
 
-- ✅ **多轮迭代** - 用户可以说 "把按钮改大一点"
-- ✅ **错误恢复** - Agent 可以请求澄清或自动重试
-- ✅ **上下文保持** - 跨轮次记住变量和状态
-- ✅ **可中断执行** - 用户可以随时打断并修改方向
-- ✅ **检查点撤销** - 支持撤销到之前的检查点
-- ✅ **历史压缩** - 长会话自动压缩避免 token 超限
-
-## 与 Orchestrator 的关系
-
-```
-ConversationalRunner
-├── SessionStore          (会话持久化)
-├── IntentAnalyzer        (意图识别)
-├── PromptBuilder         (上下文构建)
-├── FeedbackLoop          (反馈分析)
-└── Orchestrator          (任务执行)
-    ├── Planner           (任务规划)
-    └── WorkerPool        (Worker 池)
-```
-
-`ConversationalRunner` 是对话层的入口，内部调用 `Orchestrator` 来执行具体任务。
+- ✅ **Multi-turn Iteration** - User can say "make the button bigger"
+- ✅ **Slash Commands** - Reliable escape hatch for session control
+- ✅ **Checkpoint Undo** - Roll back to previous states
+- ✅ **Context Persistence** - Remember variables across turns
+- ✅ **Interruptible** - User can interrupt and change direction
+- ✅ **History Compression** - Auto-compress long sessions

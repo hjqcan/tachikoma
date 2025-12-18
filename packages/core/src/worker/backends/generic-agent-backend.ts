@@ -1487,6 +1487,22 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	              break;
 	            }
           }
+        } else if (toolCallsParseFailed) {
+          // 工具调用标记存在但解析失败 — 可能是 LLM 输出被截断
+          console.warn(
+            '[GenericAgentBackend] Tool call marker detected but parsing failed. ' +
+            'This may indicate truncated LLM output. Adding feedback for retry.'
+          );
+          
+          // Add error feedback to context prompting LLM to retry with complete output
+          const truncationFeedback = 
+            '[System] Your previous response contained a tool call, but the output was incomplete/truncated and could not be parsed. ' +
+            'Please output the complete tool call again. If the tool parameters are too long (e.g., large CSS code), ' +
+            'try splitting into multiple calls, modifying a small portion each time.';
+          context.addMessage(createUserMessage(truncationFeedback));
+          
+          // 不标记为完成，让循环继续
+          // done = false (保持默认)
         } else {
           // 没有工具调用，任务完成
           done = true;

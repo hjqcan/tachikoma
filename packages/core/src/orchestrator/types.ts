@@ -290,6 +290,22 @@ export interface WorkerPoolConfig {
   healthCheckInterval: number;
   /** Worker 选择策略 */
   selectionStrategy: WorkerSelectionStrategy;
+  /**
+   * 是否启用降级路由（默认 true）
+   *
+   * 当角色专用 Worker 不可用时，回退到任意空闲 Worker
+   */
+  fallbackToGeneral?: boolean;
+  /**
+   * 等待队列超时（毫秒，默认 0 = 不等待）
+   *
+   * 当没有可用 Worker 时，任务可以排队等待直到超时
+   */
+  waitQueueTimeout?: number;
+  /**
+   * 等待队列轮询间隔（毫秒，默认 500）
+   */
+  waitQueuePollInterval?: number;
 }
 
 /**

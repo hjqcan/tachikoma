@@ -1,223 +1,236 @@
 /**
- * Planner Prompt 模板
+ * Planner Prompt Templates
  *
- * 定义任务规划的 System Prompt 和 User Prompt 模板
+ * Defines System Prompt and User Prompt templates for task planning
  */
 
 import type { PromptVariables, PatchPromptVariables, ErrorFeedbackVariables } from './types';
 import type { SubTask, ExecutionPlan } from '../orchestrator';
 
 // ============================================================================
-// 输出格式定义
+// Output Format Definition
 // ============================================================================
 
 /**
- * 规划输出格式 - 用于 LLM 结构化输出
+ * Planning Output Format - For LLM structured output
  */
 export interface PlanningOutputFormat {
-  /** 任务入口评估（可选：用于是否需要澄清/角色化规划） */
+  /** Task intake assessment (optional: for clarification/role-based planning) */
   intake?: {
-    /** 是否已具备开始执行的必要信息 */
+    /** Whether sufficient information to start execution */
     ready: boolean;
-    /** 识别到的用户意图（可选） */
+    /** Identified user intent (optional) */
     userIntent?: string;
-    /** 情绪/语气（可选） */
+    /** Sentiment/tone (optional) */
     sentiment?: string;
-    /** 缺失信息点（ready=false 时） */
+    /** Missing information points (when ready=false) */
     missingInfo?: string[];
-    /** 需要向用户澄清的问题（ready=false 时） */
+    /** Clarification questions for user (when ready=false) */
     questions?: string[];
   };
-  /** 建议的角色集合（可选：每个角色≈一个 worker） */
+  /** Suggested role set (optional: each role ≈ one worker) */
   roles?: {
-    /** 角色 ID（用于 subtasks.roleId 引用） */
+    /** Role ID (referenced by subtasks.roleId) */
     id: string;
-    /** 角色名称 */
+    /** Role name */
     name: string;
-    /** 角色职责 */
+    /** Role responsibilities */
     responsibilities: string;
-    /** 能力标签（用于 capability 过滤；建议包含稳定的 role:<id>） */
+    /** Capability tags (for capability filtering; recommend including stable role:<id>) */
     capabilities: string[];
   }[];
-  /** 简要说明（不要输出详细逐步推理） */
+  /** Brief explanation (do not output detailed step-by-step reasoning) */
   reasoning: string;
-  /** 子任务列表 */
+  /** Subtask list */
   subtasks: {
-    /** 子任务 ID（格式：subtask-1, subtask-2, ...） */
+    /** Subtask ID (format: subtask-1, subtask-2, ...) */
     id: string;
-    /** 子任务目标 */
+    /** Subtask objective */
     objective: string;
-    /** 子任务角色（可选：从 roles 中选择一个 id） */
+    /** Subtask role (optional: select an id from roles) */
     roleId?: string;
-    /** 子任务所需能力（可选：用于 WorkerPool 路由） */
+    /** Required capabilities (optional: for WorkerPool routing) */
     requiredCapabilities?: string[];
-    /** 约束条件 */
+    /** Constraints */
     constraints: string[];
-    /** 预估执行时间（分钟） */
+    /** Estimated execution time (minutes) */
     estimatedMinutes: number;
-    /** 依赖的其他子任务 ID */
+    /** Dependencies on other subtask IDs */
     dependencies: string[];
   }[];
-  /** 执行计划 */
+  /** Execution plan */
   executionPlan: {
-    /** 是否可并行 */
+    /** Whether parallelizable */
     isParallel: boolean;
-    /** 执行步骤 */
+    /** Execution steps */
     steps: {
-      /** 步骤序号 */
+      /** Step order */
       order: number;
-      /** 该步骤包含的子任务 ID */
+      /** Subtask IDs in this step */
       subtaskIds: string[];
-      /** 是否可并行执行 */
+      /** Whether can execute in parallel */
       parallel: boolean;
     }[];
   };
-  /** 预估总执行时间（分钟） */
+  /** Estimated total execution time (minutes) */
   estimatedTotalMinutes: number;
-  /** 复杂度评估（1-10） */
+  /** Complexity score (1-10) */
   complexityScore: number;
 }
 
 // ============================================================================
-// System Prompt 模板
+// System Prompt Templates
 // ============================================================================
 
 /**
- * 规划 System Prompt
+ * Planning System Prompt
  */
-export const PLANNING_SYSTEM_PROMPT = `你是一个任务规划专家。你的职责是将高层任务分解为可执行的子任务，并制定详细的执行计划。
+export const PLANNING_SYSTEM_PROMPT = `You are a task planning expert. Your responsibility is to decompose high-level tasks into executable subtasks and create detailed execution plans.
 
-## 你的任务
-1. 在开始执行前，先判断用户提供的信息是否足够开始执行（必要时提出澄清问题）
-2. 如果信息足够，决定这个任务需要哪些“角色”（每个角色对应一个 Worker）
-3. 将任务分解为多个独立的、可执行的子任务，并为每个子任务分配合适的角色
-4. 确定子任务之间的依赖关系，并制定执行计划（明确哪些可并行、哪些必须等待）
-5. 估算每个子任务的执行时间
+## Your Tasks
+1. Before starting execution, determine if the user has provided sufficient information to begin (ask clarification questions if necessary)
+2. If information is sufficient, decide which "roles" are needed for this task (each role corresponds to one Worker)
+3. Decompose the task into multiple independent, executable subtasks and assign appropriate roles to each
+4. Determine dependencies between subtasks and create an execution plan (specify which can run in parallel, which must wait)
+5. Estimate execution time for each subtask
 
-## 分解原则
-- 每个子任务应该是独立的、可测试的单元
-- 子任务粒度适中：不要太大（难以执行）也不要太小（过于琐碎）
-- 明确标注子任务之间的依赖关系
-- 尽可能识别可并行执行的子任务
-- 考虑失败场景和回退策略
+## Decomposition Principles
+- Each subtask should be an independent, testable unit
+- Appropriate granularity: not too large (hard to execute) or too small (too trivial)
+- Clearly mark dependencies between subtasks
+- Identify subtasks that can execute in parallel whenever possible
+- Consider failure scenarios and rollback strategies
 
-## 大文件创建策略（重要）
-当任务涉及创建大型代码文件（>80行）时，必须采用分阶段方式：
+## Large File Creation Strategy (Important)
+When tasks involve creating large code files (>80 lines), use a phased approach:
 
-**阶段 1：创建骨架**
-- 子任务：创建文件基本结构（导入、类/函数签名、空实现）
-- 预估：5分钟
+**Phase 1: Create Skeleton**
+- Subtask: Create basic file structure (imports, class/function signatures, empty implementations)
+- Estimate: 5 minutes
 
-**阶段 2+：逐步填充**
-- 每个子任务只负责实现一个函数/方法的完整内容
-- 使用 apply_patch 工具进行增量修改
-- 避免在单个子任务中输出超过 30 行代码
+**Phase 2+: Fill Incrementally**
+- Each subtask only implements complete content of one function/method
+- Use apply_patch tool for incremental modifications
+- Avoid outputting more than 30 lines of code in a single subtask
 
-这种方法可以防止 LLM 输出被截断导致的执行失败。
+This approach prevents execution failures caused by truncated LLM output.
 
-## 输出要求
-你必须以 JSON 格式输出，包含以下字段：
-- intake: 任务入口评估（可选，但建议输出；用于是否需要澄清）
-- roles: 角色列表（可选；每个角色对应一个 Worker）
-- reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
-- subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
-- executionPlan: 执行计划，包含 isParallel、steps
-- estimatedTotalMinutes: 预估总执行时间
-- complexityScore: 复杂度评估（1-10）
+## Output Requirements
+You must output in JSON format with the following fields:
+- intake: Task intake assessment (optional but recommended; for clarification needs)
+- roles: Role list (optional; each role corresponds to one Worker)
+- reasoning: Brief explanation of your decomposition rationale (1-3 sentences, no detailed step-by-step reasoning)
+- subtasks: Subtask list, each containing id, objective, constraints, estimatedMinutes, dependencies
+- executionPlan: Execution plan with isParallel, steps
+- estimatedTotalMinutes: Estimated total execution time
+- complexityScore: Complexity score (1-10)
 
-## 澄清规则（非常重要）
-当且仅当你认为“无法在不猜测关键需求”的情况下开始执行时：
-1) 输出 intake.ready=false，并在 intake.questions 中给出 1-3 个最关键的澄清问题
-2) subtasks 输出空数组，executionPlan.steps 输出空数组，estimatedTotalMinutes=0，complexityScore=1
-3) roles 输出空数组（或不输出）
+## Clarification Rules (Very Important - Default to Proactive Execution)
+**Key Principle**: You are a capable Agent that should solve problems autonomously whenever possible. The user has provided a working directory and task objective, which is usually sufficient to begin execution.
 
-当信息足够开始执行时：
-1) 输出 intake.ready=true
-2) 输出 roles：建议 2-5 个角色（例如：产品经理/架构师/前端/后端/测试）。每个角色必须有稳定 id。
-   - capabilities 建议包含 "role:<roleId>"（例如 role:frontend），用于路由到对应 worker
-3) 每个 subtask 必须指定 roleId，并在 requiredCapabilities 里至少包含对应的 "role:<roleId>"
-4) executionPlan 的并行步骤中，尽量让同一步骤的子任务属于不同 role（否则会因为同一角色只有一个 worker 而变相串行）
+**Default Behavior**: Output intake.ready=true and start planning subtasks.
 
-## 注意事项
-- 严格遵循 JSON 格式，不要添加额外的文本
-- 子任务 ID 格式为 subtask-1, subtask-2, ...
-- dependencies 数组包含依赖的子任务 ID
-- 执行步骤中，同一步骤的子任务可以并行执行`;
+**Only output intake.ready=false in these cases**:
+- Task objective is completely ambiguous, cannot determine what to do (e.g., "help me do something")
+- Missing absolutely essential external information (e.g., user needs to provide API keys or access credentials)
+
+**In these cases, proceed directly (intake.ready=true)**:
+- User requests style improvement/UI beautification → Directly analyze project code and implement improvements
+- User requests bug fix → Diagnose first, then fix
+- User provided working directory → Can read project files to understand context
+- User says "figure it out yourself" → This authorizes autonomous decision-making, not asking more questions
+
+When clarification is truly needed:
+1) Output intake.ready=false, provide 1-2 most critical questions in intake.questions
+2) Output empty array for subtasks, estimatedTotalMinutes=0
+
+When information is sufficient to proceed (this is the default):
+1) Output intake.ready=true
+2) Output roles: Recommend 2-5 roles (e.g., Product Manager/Architect/Frontend/Backend/QA). Each role must have a stable id.
+   - capabilities should include "role:<roleId>" (e.g., role:frontend) for routing to corresponding worker
+3) Each subtask must specify roleId, and include at least the corresponding "role:<roleId>" in requiredCapabilities
+4) In executionPlan parallel steps, try to have subtasks in the same step belong to different roles (otherwise they effectively run serially since each role has only one worker)
+
+## Notes
+- Strictly follow JSON format, do not add extra text
+- Subtask ID format: subtask-1, subtask-2, ...
+- dependencies array contains dependent subtask IDs
+- In execution steps, subtasks in the same step can execute in parallel`;
 
 /**
- * Patch 规划 System Prompt
+ * Patch Planning System Prompt
  *
- * 用于在已有产出基础上做“增量修改”，要求生成最小 delta 计划，避免重做已完成工作。
+ * For making "incremental modifications" based on existing output, generating minimal delta plans to avoid redoing completed work.
  */
-export const PATCH_PLANNING_SYSTEM_PROMPT = `你是一个增量修改（patch）任务规划专家。你的职责是在已有工作成果基础上，生成最小的可执行变更计划。
+export const PATCH_PLANNING_SYSTEM_PROMPT = `You are an incremental modification (patch) task planning expert. Your responsibility is to generate minimal executable change plans based on existing work results.
 
-## 你的任务
-1. 理解用户提出的“修改/调整”目标
-2. 读取“之前的计划与产出上下文”，判断哪些已完成、哪些需要改
-3. 只生成必要的 delta 子任务（避免重做完整实现）
-4. 尽可能复用现有文件与结构，优先使用增量修改（apply_patch）而不是重写
-5. 输出可执行、可测试、可回滚的步骤
+## Your Tasks
+1. Understand the user's "modification/adjustment" objective
+2. Read the "previous plan and output context" to determine what's completed and what needs changing
+3. Only generate necessary delta subtasks (avoid redoing complete implementations)
+4. Reuse existing files and structures as much as possible, prefer incremental modifications (apply_patch) over rewrites
+5. Output executable, testable, rollbackable steps
 
-## 分解原则（增量优先）
-- 默认不要创建新架构，除非修改目标明确要求
-- 优先修改最近受影响的文件/模块
-- 子任务数量尽量少：小改动通常 1-3 个子任务即可
-- 若需要大改动，仍遵循“大文件分阶段策略”，但只覆盖变更相关部分
+## Decomposition Principles (Incremental First)
+- Default: do not create new architecture unless modification objective explicitly requires it
+- Prefer modifying most recently affected files/modules
+- Minimize number of subtasks: small changes usually need only 1-3 subtasks
+- For large changes, still follow "large file phased strategy" but only cover change-related parts
 
-## 输出要求
-你必须以 JSON 格式输出，包含以下字段：
-- intake: 任务入口评估（可选，但建议输出；用于是否需要澄清）
-- roles: 角色列表（可选；每个角色对应一个 Worker）
-- reasoning: 简要说明你的拆解依据（1-3 句即可，不要输出详细逐步推理）
-- subtasks: 子任务列表，每个子任务包含 id、objective、constraints、estimatedMinutes、dependencies
-- executionPlan: 执行计划，包含 isParallel、steps
-- estimatedTotalMinutes: 预估总执行时间
-- complexityScore: 复杂度评估（1-10）
+## Output Requirements
+You must output in JSON format with the following fields:
+- intake: Task intake assessment (optional but recommended; for clarification needs)
+- roles: Role list (optional; each role corresponds to one Worker)
+- reasoning: Brief explanation of your decomposition rationale (1-3 sentences, no detailed step-by-step reasoning)
+- subtasks: Subtask list, each containing id, objective, constraints, estimatedMinutes, dependencies
+- executionPlan: Execution plan with isParallel, steps
+- estimatedTotalMinutes: Estimated total execution time
+- complexityScore: Complexity score (1-10)
 
-## 注意事项
-- 严格遵循 JSON 格式，不要添加额外的文本
-- 子任务 ID 格式为 subtask-1, subtask-2, ...
-- 只生成“必要的修改”相关子任务`;
+## Notes
+- Strictly follow JSON format, do not add extra text
+- Subtask ID format: subtask-1, subtask-2, ...
+- Only generate subtasks related to "necessary modifications"`;
 
 /**
- * 生成规划 User Prompt
+ * Generate Planning User Prompt
  */
 export function generatePlanningUserPrompt(variables: PromptVariables): string {
   const { objective, constraints, availableTools, maxSubtasks, additionalContext } = variables;
 
-  let prompt = `请分析并分解以下任务：
+  let prompt = `Please analyze and decompose the following task:
 
-## 任务目标
+## Task Objective
 ${objective}
 
-## 约束条件
-${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : '无特殊约束'}
+## Constraints
+${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'No special constraints'}
 `;
 
   if (availableTools && availableTools.length > 0) {
     prompt += `
-## 可用工具
+## Available Tools
 ${availableTools.map((t) => `- ${t}`).join('\n')}
 `;
   }
 
   if (maxSubtasks) {
     prompt += `
-## 子任务数量限制
-最多生成 ${maxSubtasks} 个子任务
+## Subtask Limit
+Generate at most ${maxSubtasks} subtasks
 `;
   }
 
   if (additionalContext) {
     prompt += `
-## 额外上下文
+## Additional Context
 ${additionalContext}
 `;
   }
 
   prompt += `
-## 输出格式
-请以 JSON 格式输出，不要包含任何其他文本。JSON 应该包含以下结构：
+## Output Format
+Please output in JSON format without any other text. JSON should have the following structure:
 \`\`\`json
 {
   "intake": {
@@ -227,19 +240,19 @@ ${additionalContext}
   "roles": [
     {
       "id": "frontend",
-      "name": "前端开发者",
-      "responsibilities": "实现 UI/交互与前端工程化",
+      "name": "Frontend Developer",
+      "responsibilities": "Implement UI/interactions and frontend engineering",
       "capabilities": ["role:frontend", "frontend", "react"]
     }
   ],
-  "reasoning": "简要说明你的拆解依据（1-3 句）...",
+  "reasoning": "Brief explanation of your decomposition rationale (1-3 sentences)...",
   "subtasks": [
     {
       "id": "subtask-1",
-      "objective": "子任务目标",
+      "objective": "Subtask objective",
       "roleId": "frontend",
       "requiredCapabilities": ["role:frontend"],
-      "constraints": ["约束1", "约束2"],
+      "constraints": ["constraint1", "constraint2"],
       "estimatedMinutes": 10,
       "dependencies": []
     }
@@ -263,7 +276,7 @@ ${additionalContext}
 }
 
 /**
- * 生成 Patch 规划 User Prompt
+ * Generate Patch Planning User Prompt
  */
 export function generatePatchPlanningUserPrompt(variables: PatchPromptVariables): string {
   const {
@@ -275,54 +288,54 @@ export function generatePatchPlanningUserPrompt(variables: PatchPromptVariables)
     previousContext,
   } = variables;
 
-  let prompt = `请基于已有工作成果，对以下修改请求生成最小的变更计划：
+  let prompt = `Based on existing work results, please generate a minimal change plan for the following modification request:
 
-## 修改目标
+## Modification Objective
 ${objective}
 
-## 约束条件
-${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : '无特殊约束'}
+## Constraints
+${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'No special constraints'}
 `;
 
   if (previousContext) {
     prompt += `
-## 之前的计划与产出上下文（供参考）
+## Previous Plan and Output Context (for reference)
 ${previousContext}
 `;
   }
 
   if (availableTools && availableTools.length > 0) {
     prompt += `
-## 可用工具
+## Available Tools
 ${availableTools.map((t) => `- ${t}`).join('\n')}
 `;
   }
 
   if (maxSubtasks) {
     prompt += `
-## 子任务数量限制
-最多生成 ${maxSubtasks} 个子任务（请尽量少）
+## Subtask Limit
+Generate at most ${maxSubtasks} subtasks (minimize as much as possible)
 `;
   }
 
   if (additionalContext) {
     prompt += `
-## 额外上下文
+## Additional Context
 ${additionalContext}
 `;
   }
 
   prompt += `
-## 输出格式
-请以 JSON 格式输出，不要包含任何其他文本。JSON 应该包含以下结构：
+## Output Format
+Please output in JSON format without any other text. JSON should have the following structure:
 \`\`\`json
 {
-  "reasoning": "简要说明你的拆解依据（1-3 句）...",
+  "reasoning": "Brief explanation of your decomposition rationale (1-3 sentences)...",
   "subtasks": [
     {
       "id": "subtask-1",
-      "objective": "子任务目标",
-      "constraints": ["约束1", "约束2"],
+      "objective": "Subtask objective",
+      "constraints": ["constraint1", "constraint2"],
       "estimatedMinutes": 10,
       "dependencies": []
     }
@@ -346,61 +359,61 @@ ${additionalContext}
 }
 
 // ============================================================================
-// 错误反馈 Prompt
+// Error Feedback Prompt
 // ============================================================================
 
 /**
- * 生成解析错误反馈 Prompt
+ * Generate Parse Error Feedback Prompt
  */
 export function generateErrorFeedbackPrompt(variables: ErrorFeedbackVariables): string {
   const { originalResponse, parseError, retryCount } = variables;
 
-  return `你的上一次响应无法正确解析。请修正并重新输出。
+  return `Your previous response could not be parsed correctly. Please correct and re-output.
 
-## 错误信息
+## Error Message
 ${parseError}
 
-## 你的原始响应
-${originalResponse.slice(0, 1000)}${originalResponse.length > 1000 ? '...(已截断)' : ''}
+## Your Original Response
+${originalResponse.slice(0, 1000)}${originalResponse.length > 1000 ? '...(truncated)' : ''}
 
-## 重试次数
-这是第 ${retryCount} 次重试。
+## Retry Count
+This is retry attempt ${retryCount}.
 
-## 要求
-1. 请确保输出是有效的 JSON 格式
-2. 不要在 JSON 前后添加任何文本或代码块标记
-3. 确保所有必需字段都存在
-4. 确保数据类型正确（字符串、数组、数字等）
+## Requirements
+1. Ensure output is valid JSON format
+2. Do not add any text or code block markers before or after the JSON
+3. Ensure all required fields are present
+4. Ensure correct data types (strings, arrays, numbers, etc.)
 
-请直接输出正确的 JSON：`;
+Please output the correct JSON directly:`;
 }
 
 // ============================================================================
-// 输出解析辅助函数
+// Output Parsing Helper Functions
 // ============================================================================
 
 /**
- * 从 LLM 响应中提取 JSON
+ * Extract JSON from LLM response
  *
- * P1 修复：改进 JSON 边界检测，避免截取不完整的 JSON
+ * P1 Fix: Improved JSON boundary detection to avoid extracting incomplete JSON
  *
- * 支持以下格式：
- * 1. Markdown 代码块包裹的 JSON（优先）
- * 2. 使用括号匹配找到完整的 JSON 对象
- * 3. 带有前后文本的 JSON
+ * Supports the following formats:
+ * 1. JSON wrapped in Markdown code blocks (priority)
+ * 2. Use bracket matching to find complete JSON object
+ * 3. JSON with surrounding text
  */
 export function extractJsonFromResponse(response: string): string {
-  // 1. 优先尝试提取 Markdown 代码块中的 JSON
+  // 1. First try to extract JSON from Markdown code block
   const codeBlockMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch && codeBlockMatch[1]) {
     const content = codeBlockMatch[1].trim();
-    // 确保提取的内容以 { 开头
+    // Ensure extracted content starts with {
     if (content.startsWith('{')) {
       return content;
     }
   }
 
-  // 2. 使用括号匹配找到完整的 JSON 对象边界
+  // 2. Use bracket matching to find complete JSON object boundary
   const startIdx = response.indexOf('{');
   if (startIdx === -1) {
     return response.trim();
@@ -413,7 +426,7 @@ export function extractJsonFromResponse(response: string): string {
   for (let i = startIdx; i < response.length; i++) {
     const char = response[i];
 
-    // 处理转义字符
+    // Handle escape characters
     if (escapeNext) {
       escapeNext = false;
       continue;
@@ -424,38 +437,38 @@ export function extractJsonFromResponse(response: string): string {
       continue;
     }
 
-    // 处理字符串边界
+    // Handle string boundaries
     if (char === '"') {
       inString = !inString;
       continue;
     }
 
-    // 只有在非字符串中才计算括号
+    // Only count brackets outside of strings
     if (!inString) {
       if (char === '{') {
         depth++;
       } else if (char === '}') {
         depth--;
         if (depth === 0) {
-          // 找到完整的 JSON 对象
+          // Found complete JSON object
           return response.slice(startIdx, i + 1);
         }
       }
     }
   }
 
-  // 3. 如果括号匹配失败，回退到贪婪正则
+  // 3. If bracket matching fails, fall back to greedy regex
   const jsonMatch = response.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     return jsonMatch[0];
   }
 
-  // 4. 如果都没找到，返回原始响应
+  // 4. If nothing found, return original response
   return response.trim();
 }
 
 /**
- * 将规划输出转换为 SubTask 数组
+ * Convert planning output to SubTask array
  */
 export function convertToSubTasks(
   output: PlanningOutputFormat,
@@ -470,14 +483,14 @@ export function convertToSubTasks(
       ? { requiredCapabilities: st.requiredCapabilities }
       : {}),
     constraints: st.constraints,
-    estimatedDuration: st.estimatedMinutes * 60 * 1000, // 转换为毫秒
+    estimatedDuration: st.estimatedMinutes * 60 * 1000, // Convert to milliseconds
     dependencies: st.dependencies,
     status: 'pending' as const,
   }));
 }
 
 /**
- * 将规划输出转换为 ExecutionPlan
+ * Convert planning output to ExecutionPlan
  */
 export function convertToExecutionPlan(output: PlanningOutputFormat): ExecutionPlan {
   return {

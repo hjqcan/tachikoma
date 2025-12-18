@@ -253,18 +253,12 @@ export type {
   ConversationMessage,
   ExecutionSummary,
   Checkpoint,
-  IntentAnalysisResult,
-  FeedbackAnalysisResult,
 } from './conversation';
 
 export {
   ConversationalRunner,
   SessionStore,
-  IntentAnalyzer,
-  FeedbackLoop,
   ConversationPromptBuilder,
-  UserIntent,
-  FeedbackAction,
 } from './conversation';
 
 // ============================================================================
