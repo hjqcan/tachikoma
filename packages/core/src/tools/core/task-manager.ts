@@ -155,7 +155,7 @@ export const taskManagerTool: Tool = {
           id: index + 1, // 使用行号作为 ID (1-based)
           line: index,
           status,
-          title: taskText.split(':')[0].trim(),
+          title: (taskText.split(':')[0] ?? '').trim(),
           description: taskText.substring(taskText.indexOf(':') + 1).trim() || taskText,
         });
       }

@@ -227,7 +227,11 @@ Please generate a JSON execution plan in the following format:
       // 尝试提取 JSON 块
       const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || content.match(/```\n([\s\S]*?)\n```/);
       if (jsonMatch) {
-        content = jsonMatch[1];
+        const extracted = jsonMatch[1];
+        if (extracted === undefined) {
+          throw new Error('Matched a fenced code block, but failed to extract the JSON content.');
+        }
+        content = extracted;
       }
 
       let plan: CodePlan;
