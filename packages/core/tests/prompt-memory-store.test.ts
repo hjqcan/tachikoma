@@ -106,7 +106,6 @@ describe('prompt/memory FileSystemMemoryStore + WorkingMemoryManager', () => {
             description: 'do something',
             status: 'pending',
             createdAt: now,
-            updatedAt: now,
           },
         ],
         findings: [],

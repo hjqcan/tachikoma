@@ -832,11 +832,11 @@ describe('LocalSandbox 环境变量继承', () => {
     sandbox = new LocalSandbox(createTestSandboxId(), config);
     await sandbox.initialize();
 
-    const result = await sandbox.runCommand('echo $HOME');
+	    const result = await sandbox.runCommand('echo $HOME');
 
-    expect(result.stdout.trim()).toBe(process.env.HOME);
-  });
-});
+	    expect(result.stdout.trim()).toBe(process.env.HOME!);
+	  });
+	});
 
 // ============================================================================
 // 状态信息测试

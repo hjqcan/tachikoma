@@ -5,9 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import { rm, mkdir } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import {
   // CheckpointManager
   CheckpointManager,
@@ -16,15 +15,6 @@ import {
   // SessionFileManager
   SessionFileManager,
   createAndInitializeSessionFileManager,
-  // 类型
-  type CheckpointData,
-  type CheckpointRestoreResult,
-  type SubtaskSnapshot,
-  type WorkerSnapshot,
-  // 工具
-  SessionPathBuilder,
-  atomicWriteJson,
-  appendJsonlRecord,
   DEFAULT_CHECKPOINT_CONFIG,
 } from '../src/orchestrator/session';
 

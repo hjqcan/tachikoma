@@ -147,12 +147,24 @@ describe('端到端集成测试', () => {
 
       // 记录事件
       const events: OrchestratorEventType[] = [];
-      orchestrator.on('plan:start', () => events.push('plan:start'));
-      orchestrator.on('plan:complete', () => events.push('plan:complete'));
-      orchestrator.on('subtask:assigned', () => events.push('subtask:assigned'));
-      orchestrator.on('subtask:complete', () => events.push('subtask:complete'));
-      orchestrator.on('aggregate:start', () => events.push('aggregate:start'));
-      orchestrator.on('aggregate:complete', () => events.push('aggregate:complete'));
+      orchestrator.on('plan:start', () => {
+        events.push('plan:start');
+      });
+      orchestrator.on('plan:complete', () => {
+        events.push('plan:complete');
+      });
+      orchestrator.on('subtask:assigned', () => {
+        events.push('subtask:assigned');
+      });
+      orchestrator.on('subtask:complete', () => {
+        events.push('subtask:complete');
+      });
+      orchestrator.on('aggregate:start', () => {
+        events.push('aggregate:start');
+      });
+      orchestrator.on('aggregate:complete', () => {
+        events.push('aggregate:complete');
+      });
 
       const task: Task = {
         id: 'task-001',
@@ -232,6 +244,7 @@ describe('端到端集成测试', () => {
         sessionManager,
         config: {
           session: {
+            rootDir: TEST_ROOT_DIR,
             enableWatch: false, // 测试中禁用监控
           },
         },
@@ -615,7 +628,7 @@ describe('端到端集成测试', () => {
       });
 
       let errorEventFired = false;
-      orchestrator.on('plan:error', () => {
+      orchestrator.on('plan:failed', () => {
         errorEventFired = true;
       });
 

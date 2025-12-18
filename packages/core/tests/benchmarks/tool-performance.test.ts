@@ -162,15 +162,16 @@ describe('Tool System Performance Benchmarks', () => {
       expect(end - start).toBeLessThan(10);
     });
 
-    test('should recommend tools efficiently', () => {
-      const start = performance.now();
-      const recommended = progressiveDisclosure.recommend('文件读取', allTools);
-      const end = performance.now();
+	    test('should recommend tools efficiently', () => {
+	      const start = performance.now();
+	      const recommended = progressiveDisclosure.recommend('文件读取', allTools);
+	      const end = performance.now();
 
-      console.log(`Recommendation time: ${(end - start).toFixed(3)}ms`);
-      expect(end - start).toBeLessThan(5);
-    });
-  });
+	      console.log(`Recommendation time: ${(end - start).toFixed(3)}ms`);
+	      expect(recommended.length).toBeGreaterThan(0);
+	      expect(end - start).toBeLessThan(5);
+	    });
+	  });
 
   describe('Overall System Performance', () => {
     test('should handle concurrent queries efficiently', async () => {

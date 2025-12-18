@@ -153,6 +153,9 @@ describe('key-decision', () => {
       name: 'test_tool',
       description: 'A test tool',
       inputSchema: {},
+      async execute(): Promise<unknown> {
+        return { success: true };
+      },
     };
 
     test('should return not key decision when policy disabled', () => {
@@ -212,6 +215,9 @@ describe('key-decision', () => {
         description: 'Requires approval',
         inputSchema: {
           requiresApproval: true,
+        },
+        async execute(): Promise<unknown> {
+          return { success: true };
         },
       };
       

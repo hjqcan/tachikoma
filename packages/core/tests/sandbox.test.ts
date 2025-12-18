@@ -706,16 +706,19 @@ describe('BaseSandbox 抽象基类', () => {
     sandbox.shouldFail = false;
     await sandbox.initialize();
 
-    let errorCaught: Error | null = null;
+	    let errorCaught: any = null;
     sandbox.setHooks({
       onError: async (error) => { errorCaught = error; },
     });
 
-    // 尝试读取不存在的文件
-    await expect(sandbox.readFile('nonexistent.txt')).rejects.toThrow();
-    expect(errorCaught).not.toBeNull();
-    expect(errorCaught?.message).toContain('File not found');
-  });
+	    // 尝试读取不存在的文件
+	    await expect(sandbox.readFile('nonexistent.txt')).rejects.toThrow();
+	    expect(errorCaught).not.toBeNull();
+	    if (!errorCaught) {
+	      throw new Error('Expected onError hook to capture an error');
+	    }
+	    expect(errorCaught.message).toContain('File not found');
+	  });
 
   it('getStateInfo 应返回正确的状态信息', async () => {
     const sandbox = new StubSandbox('test-001', DEFAULT_SANDBOX_CONFIG);

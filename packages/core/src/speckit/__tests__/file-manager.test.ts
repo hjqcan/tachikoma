@@ -131,8 +131,8 @@ describe('SpecKitFileManager', () => {
 
       const specs = await fileManager.listSpecs();
       expect(specs.length).toBe(2);
-      expect(specs[0].specId).toBe('001-feature-a');
-      expect(specs[1].specId).toBe('002-feature-b');
+      expect(specs[0]!.specId).toBe('001-feature-a');
+      expect(specs[1]!.specId).toBe('002-feature-b');
     });
   });
 
@@ -191,7 +191,7 @@ describe('SpecKitFileManager', () => {
 
       expect(result).not.toBeNull();
       expect(result?.tasks.length).toBe(1);
-      expect(result?.tasks[0].title).toBe('Setup project');
+      expect(result?.tasks[0]?.title).toBe('Setup project');
     });
 
     test('should update task status', async () => {
@@ -220,7 +220,7 @@ describe('SpecKitFileManager', () => {
       await fileManager.updateTaskStatus('001-test', 'task-1', 'done');
 
       const result = await fileManager.readTasks('001-test');
-      expect(result?.tasks[0].status).toBe('done');
+      expect(result?.tasks[0]?.status).toBe('done');
     });
   });
 

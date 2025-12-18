@@ -740,9 +740,9 @@ describe('SessionFileManager', () => {
       await manager.registerWorker('worker-001');
     });
 
-    it('应触发进度更新事件', async () => {
-      let eventReceived = false;
-      let eventData: ProgressFile | null = null;
+	    it('应触发进度更新事件', async () => {
+	      let eventReceived = false;
+	      let eventData: any = null;
 
       manager.on('progress_updated', (event: SessionFileEvent<ProgressFile>) => {
         eventReceived = true;
@@ -761,7 +761,11 @@ describe('SessionFileManager', () => {
       });
 
       expect(eventReceived).toBe(true);
-      expect(eventData?.status).toBe('executing');
+      expect(eventData).not.toBeNull();
+      if (!eventData) {
+        throw new Error('Expected progress_updated to provide ProgressFile data');
+      }
+      expect(eventData.status).toBe('executing');
     });
 
     it('应触发 Worker 状态变化事件', async () => {

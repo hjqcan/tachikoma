@@ -732,7 +732,7 @@ describe('Orchestrator 类', () => {
   // 创建 Mock SessionFileManager
   function createMockSessionManager(): ISessionFileManager {
     // 使用简化的 Mock 实现
-    const mockSession: ISessionFileManager = {
+    const mockSession = {
       sessionId: 'test-session',
       config: {
         rootDir: '.tachikoma-test',
@@ -770,14 +770,14 @@ describe('Orchestrator 类', () => {
       stopWatching: () => { /* mock: no-op */ },
       cleanup: async () => { /* mock: no-op */ },
       close: async () => { /* mock: no-op */ },
-    };
+    } as unknown as ISessionFileManager;
 
     return mockSession;
   }
 
   // 创建带 mock 跟踪的 SessionFileManager（用于需要验证调用的测试）
   function createMockSessionManagerForTest(): ISessionFileManager {
-    const mockSession: ISessionFileManager = {
+    const mockSession = {
       sessionId: 'test-session',
       config: {
         rootDir: '.tachikoma-test',
@@ -815,7 +815,7 @@ describe('Orchestrator 类', () => {
       stopWatching: mock(() => { /* mock: no-op */ }),
       cleanup: mock(async () => { /* mock: no-op */ }),
       close: mock(async () => { /* mock: no-op */ }),
-    };
+    } as unknown as ISessionFileManager;
 
     return mockSession;
   }
@@ -1014,8 +1014,12 @@ describe('Orchestrator 类', () => {
 
       const events: OrchestratorEventType[] = [];
 
-      orchestrator.on('plan:start', () => events.push('plan:start'));
-      orchestrator.on('plan:complete', () => events.push('plan:complete'));
+      orchestrator.on('plan:start', () => {
+        events.push('plan:start');
+      });
+      orchestrator.on('plan:complete', () => {
+        events.push('plan:complete');
+      });
 
       const task: Task = {
         id: 'task-001',
@@ -1036,7 +1040,9 @@ describe('Orchestrator 类', () => {
       const orchestrator = createOrchestrator('test-orch');
 
       const events: string[] = [];
-      const handler = () => events.push('called');
+      const handler = () => {
+        events.push('called');
+      };
 
       orchestrator.on('plan:start', handler);
       orchestrator.off('plan:start', handler);
@@ -1271,7 +1277,9 @@ describe('Orchestrator 类', () => {
       });
 
       let retryCount = 0;
-      orchestrator.on('subtask:retrying', () => retryCount++);
+      orchestrator.on('subtask:retrying', () => {
+        retryCount++;
+      });
 
       const task: Task = {
         id: 'task-007',
@@ -1299,9 +1307,7 @@ describe('Orchestrator 类', () => {
     } {
       const watchCalls = { startWatching: 0, stopWatching: 0 };
 
-      const mockSession: ISessionFileManager & {
-        watchCalls: { startWatching: number; stopWatching: number };
-      } = {
+      const mockSession = {
         sessionId: 'test-session',
         config: {
           rootDir: '.tachikoma-test',
@@ -1344,6 +1350,8 @@ describe('Orchestrator 类', () => {
         },
         cleanup: async () => { /* mock: no-op */ },
         close: async () => { /* mock: no-op */ },
+      } as unknown as ISessionFileManager & {
+        watchCalls: { startWatching: number; stopWatching: number };
       };
 
       return mockSession;
@@ -1442,7 +1450,7 @@ describe('Orchestrator 类', () => {
       // 队列中的审批请求，会在处理器注册时自动触发
       const pendingApprovals: PendingApprovalFile[] = [];
 
-      const mockSession: ApprovalMockSessionManager = {
+      const mockSession = {
         sessionId: 'test-session',
         config: {
           rootDir: '.tachikoma-test',
@@ -1524,7 +1532,7 @@ describe('Orchestrator 类', () => {
             });
           }
         },
-      };
+      } as unknown as ApprovalMockSessionManager;
 
       return mockSession;
     }

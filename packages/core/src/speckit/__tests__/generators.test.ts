@@ -200,8 +200,8 @@ describe('TaskGenerator', () => {
     });
 
     expect(result.tasks).toHaveLength(2);
-    expect(result.tasks[0].title).toBe('Setup project');
-    expect(result.tasks[1].testFirst).toBe(true);
+    expect(result.tasks[0]!.title).toBe('Setup project');
+    expect(result.tasks[1]!.testFirst).toBe(true);
   });
 
   test('should validate task breakdown', () => {

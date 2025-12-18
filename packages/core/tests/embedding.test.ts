@@ -27,7 +27,7 @@ describe('OpenRouterEmbeddingService', () => {
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await service.embed('hello');
     await service.embed('hello'); // Same text, should NOT be cached
@@ -42,7 +42,7 @@ describe('OpenRouterEmbeddingService', () => {
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result1 = await service.embed('hello');
     const result2 = await service.embed('hello'); // Same text, should be cached
@@ -58,7 +58,7 @@ describe('OpenRouterEmbeddingService', () => {
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await service.embed('hello');
     expect(fetchCallCount).toBe(1);
@@ -73,7 +73,7 @@ describe('OpenRouterEmbeddingService', () => {
         return new Response('Rate limited', { status: 429 });
       }
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await service.embed('hello');
     
@@ -90,7 +90,7 @@ describe('OpenRouterEmbeddingService', () => {
         return new Response('Server error', { status: 500 });
       }
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await service.embed('hello');
     
@@ -104,7 +104,7 @@ describe('OpenRouterEmbeddingService', () => {
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return new Response('Rate limited', { status: 429 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await expect(service.embed('hello')).rejects.toThrow('429');
     expect(fetchCallCount).toBe(2);
@@ -121,7 +121,7 @@ describe('OpenRouterEmbeddingService', () => {
         model: 'model',
         usage: { prompt_tokens: 10, total_tokens: 10 },
       }), { status: 200 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     // Request 2 embeddings but get 1 back
     await expect(service.embedBatch(['hello', 'world'])).rejects.toThrow('length mismatch');
@@ -134,13 +134,13 @@ describe('OpenRouterEmbeddingService', () => {
       fetchCallCount++;
       // Only return embeddings for uncached texts
       return mockSuccessResponse([[0.4, 0.5, 0.6]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     // First call caches 'hello'
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return mockSuccessResponse([[0.1, 0.2, 0.3]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     await service.embed('hello');
     expect(fetchCallCount).toBe(1);
 
@@ -148,7 +148,7 @@ describe('OpenRouterEmbeddingService', () => {
     globalThis.fetch = mock(async () => {
       fetchCallCount++;
       return mockSuccessResponse([[0.4, 0.5, 0.6]]);
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     
     const results = await service.embedBatch(['hello', 'world']);
     expect(fetchCallCount).toBe(2); // Only one more call for 'world'

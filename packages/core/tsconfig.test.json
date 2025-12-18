@@ -3,7 +3,10 @@
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true,
-    "types": ["bun", "node"]
+    "types": ["bun", "node"],
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noUncheckedIndexedAccess": false
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]

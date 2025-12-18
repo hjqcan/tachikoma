@@ -17,7 +17,7 @@ import {
   CollaborationManager,
   BUILTIN_TOPICS,
 } from '../src/collaboration';
-import type { AgentRegistration, CollaborationRequest } from '../src/collaboration';
+import type { CollaborationRequest } from '../src/collaboration';
 
 describe('FileAgentRegistry', () => {
   let tmpDir: string;
@@ -295,28 +295,28 @@ describe('FileBlackboard', () => {
     expect(value).toEqual({ theme: 'dark' });
   });
 
-  test('should delete keys', async () => {
-    await bb1.set('temp', 'data');
-    expect(await bb1.get('temp')).toBe('data');
+	  test('should delete keys', async () => {
+	    await bb1.set('temp', 'data');
+	    expect(await bb1.get<string>('temp')).toBe('data');
 
     const deleted = await bb1.delete('temp');
     expect(deleted).toBe(true);
     expect(await bb1.get('temp')).toBeNull();
   });
 
-  test('should support compareAndSet', async () => {
-    await bb1.set('counter', 0);
+	  test('should support compareAndSet', async () => {
+	    await bb1.set('counter', 0);
 
     // 成功的 CAS
-    const success1 = await bb1.compareAndSet('counter', 1, 10);
-    expect(success1).toBe(true);
-    expect(await bb1.get('counter')).toBe(10);
+	    const success1 = await bb1.compareAndSet('counter', 1, 10);
+	    expect(success1).toBe(true);
+	    expect(await bb1.get<number>('counter')).toBe(10);
 
     // 失败的 CAS（版本不匹配）
-    const success2 = await bb1.compareAndSet('counter', 1, 20);
-    expect(success2).toBe(false);
-    expect(await bb1.get('counter')).toBe(10);
-  });
+	    const success2 = await bb1.compareAndSet('counter', 1, 20);
+	    expect(success2).toBe(false);
+	    expect(await bb1.get<number>('counter')).toBe(10);
+	  });
 
   test('should list keys with pattern', async () => {
     await bb1.set('user:1:name', 'Alice');

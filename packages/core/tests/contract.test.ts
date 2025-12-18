@@ -22,7 +22,6 @@ import type {
   PlanFile,
   ProgressFile,
 } from '../src/orchestrator/session/types';
-import type { PlannerOutput, SubTask } from '../src/orchestrator/types';
 
 // ============================================================================
 // 测试数据工厂
