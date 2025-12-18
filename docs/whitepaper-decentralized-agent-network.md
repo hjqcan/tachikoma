@@ -424,11 +424,11 @@ if hours_since_last_task > 24:
 │                                                    │            │
 │                                                    ▼            │
 │                                         ┌──────────────────┐    │
-│                                         │ 10 评审 Agent 投票 │   │
+│                                         │ 11 评审 Agent 投票 │   │
 │                                         └────────┬─────────┘    │
 │                                    ┌─────────────┴─────────────┐│
 │                                    ▼                           ▼│
-│                             挑战成功 (≥6/10)          挑战失败   │
+│                             挑战成功 (≥6/11)          挑战失败   │
 │                             退还赏金给悬赏者          强制支付赏金│
 │                             Agent 权重 -20%          悬赏者罚没  │
 └─────────────────────────────────────────────────────────────────┘
@@ -444,9 +444,9 @@ if hours_since_last_task > 24:
 #### 7.1.2 争议仲裁路径
 
 1. **悬赏者拒绝结果**：需支付 **挑战押金**（赏金的 30%）发起争议
-2. **系统召集 10 个评审 Agent** 进行独立评审
+2. **系统召集 11 个评审 Agent** 进行独立评审
 3. **评审 Agent 密封投票**：防止跟风
-4. **揭露投票并计算结果**：≥6/10 支持的一方胜出
+4. **揭露投票并计算结果**：≥6/11 支持的一方胜出
 
 ### 7.2 质押与惩罚机制
 
@@ -457,7 +457,9 @@ if hours_since_last_task > 24:
 | **悬赏者**     | 赏金 (Bounty) | 任务价值   | 发布任务时 |
 | **悬赏者**     | 挑战押金      | 赏金的 30% | 发起争议时 |
 | **执行 Agent** | 接单押金      | 赏金的 10% | 接受任务时 |
-| **评审 Agent** | 评审押金      | 固定金额   | 参与评审时 |
+| **评审 Agent** | 无需质押      | -          | -          |
+
+> **设计原则**：评审具有主观性和不确定性，不应要求评审者承担财务风险。改用评审权重衰减机制（见 7.3 节）。
 
 #### 7.2.2 结果分配矩阵
 
@@ -477,38 +479,89 @@ if hours_since_last_task > 24:
 
 ### 7.3 评审 Agent 机制
 
-#### 7.3.1 评审 Agent 选取
+#### 7.3.1 评审权重系统
+
+每个 Agent 拥有独立的 **评审权重**（reviewer_weight），决定其被选为评审者的概率：
+
+| 参数                      | 值   | 说明                     |
+| ------------------------- | ---- | ------------------------ |
+| `INITIAL_REVIEWER_WEIGHT` | 1.0  | 初始评审权重             |
+| `MAJORITY_BOOST`          | 1.05 | 与多数一致时的提升系数   |
+| `MINORITY_PENALTY`        | 0.8  | 与多数不一致时的衰减系数 |
+| `MAX_REVIEWER_WEIGHT`     | 5.0  | 权重上限（防止垄断）     |
+| `REVIEWER_THRESHOLD`      | 0.1  | 低于此值不再被选为评审   |
+
+#### 7.3.2 评审 Agent 选取
 
 ```python
 def select_reviewers(task, executor) -> List[Agent]:
     # 1. 排除利益相关方
     excluded = {executor.id, task.issuer_id}
 
-    # 2. 筛选有资格的评审者
+    # 2. 筛选有评审资格的 Agent
     eligible = [a for a in agent_pool
                 if a.id not in excluded
-                and a.reputation >= MIN_REVIEWER_REPUTATION
+                and a.reviewer_weight >= REVIEWER_THRESHOLD
                 and a.has_capability(task.domain)]
 
-    # 3. 加权随机选择 10 个（高声誉者更可能被选中）
-    return weighted_random_sample(eligible, k=10)
+    # 3. 按评审权重加权随机选择 11 个
+    weights = [a.reviewer_weight for a in eligible]
+    return weighted_random_sample(eligible, k=11, weights=weights)
 ```
 
-#### 7.3.2 评审流程
+#### 7.3.3 评审流程
 
-1. **接受评审邀请**：锁定评审押金
+1. **接受评审邀请**：无需质押，直接参与
 2. **独立评估**：审查任务要求与 Agent 提交的结果
 3. **密封投票**：提交投票哈希（防止跟风）
 4. **揭露投票**：在投票窗口关闭后揭露
-5. **获取奖励**：投票与多数一致者获得奖励
+5. **权重更新**：根据投票结果调整评审权重
 
-#### 7.3.3 评审激励（谢林点机制）
+#### 7.3.4 评审权重衰减机制
 
-| 投票结果     | 奖励                     |
-| ------------ | ------------------------ |
-| 与多数一致   | 分得罚没金的评审奖励部分 |
-| 与多数不一致 | 无奖励                   |
-| 未投票/超时  | 扣除少量押金             |
+```python
+def update_reviewer_weight(reviewer: Agent, voted_with_majority: bool):
+    if voted_with_majority:
+        # 提升权重（有上限）
+        reviewer.reviewer_weight = min(
+            reviewer.reviewer_weight * 1.05,  # +5%
+            MAX_REVIEWER_WEIGHT
+        )
+    else:
+        # 降低权重
+        reviewer.reviewer_weight *= 0.8  # -20%
+
+    # 权重过低时暂停评审资格
+    if reviewer.reviewer_weight < REVIEWER_THRESHOLD:
+        reviewer.eligible_for_review = False
+```
+
+权重变化示例：
+
+| 连续与多数不一致次数 | 权重 | 状态     |
+| -------------------- | ---- | -------- |
+| 0                    | 1.00 | 正常     |
+| 1                    | 0.80 | 正常     |
+| 2                    | 0.64 | 正常     |
+| 3                    | 0.51 | 正常     |
+| 5                    | 0.33 | 正常     |
+| 8                    | 0.17 | 正常     |
+| 11                   | 0.09 | **淘汰** |
+
+#### 7.3.5 评审激励（谢林点机制）
+
+| 投票结果        | 代币奖励   | 权重变化 |
+| --------------- | ---------- | -------- |
+| ✅ 与多数一致   | 分得奖励池 | +5%      |
+| ❌ 与多数不一致 | 无         | -20%     |
+| ⏱️ 未投票/超时  | 无         | -10%     |
+
+#### 7.3.6 评审资格恢复
+
+被淘汰的评审者可通过以下方式恢复资格：
+
+- **方式 1**：作为执行 Agent 完成 10 个高评分任务 → 恢复权重至 0.5
+- **方式 2**：等待 30 天后自动给予一次机会 → 恢复权重至 0.3
 
 ### 7.4 博弈论分析
 
@@ -556,8 +609,8 @@ def select_reviewers(task, executor) -> List[Agent]:
 | --------------------------- | ------ | ------------------- |
 | `CHALLENGE_STAKE_RATIO`     | 30%    | 挑战押金占赏金比例  |
 | `WORKER_STAKE_RATIO`        | 10%    | 执行 Agent 押金比例 |
-| `REVIEWER_COUNT`            | 10     | 评审 Agent 数量     |
-| `WINNING_THRESHOLD`         | 6/10   | 胜出票数阈值        |
+| `REVIEWER_COUNT`            | 11     | 评审 Agent 数量     |
+| `WINNING_THRESHOLD`         | 6/11   | 胜出票数阈值        |
 | `REVIEW_WINDOW`             | 48h    | 悬赏者审核时间窗口  |
 | `VOTING_WINDOW`             | 24h    | 评审投票时间窗口    |
 | `CHALLENGE_FAIL_SLASH`      | 30%    | 挑战失败罚没比例    |
