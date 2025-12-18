@@ -118,7 +118,8 @@ export class ConversationalRunner {
     if (intent.intent === UserIntent.UNDO && session.checkpoints.length === 0) {
       const trimmed = userMessage.trim();
       const startsWithUndo =
-        /^(撤销|回退|回滚|还原|恢复|undo|rollback|revert)\b/i.test(trimmed);
+        /^(撤销|回退|回滚|还原|恢复)/.test(trimmed) ||
+        /^(undo|rollback|revert)\b/i.test(trimmed);
       if (!startsWithUndo) {
         yield* this.handleNewTask(session, userMessage);
         return;
@@ -430,7 +431,7 @@ export class ConversationalRunner {
       planner,
       config: {
         session: {
-          rootDir: resolve(this.config.sessionDir, session.sessionId, 'orch'),
+          rootDir: resolve(this.config.sessionDir),
           enableWatch: true,
           watchPollInterval: 300,
         },
@@ -459,9 +460,11 @@ export class ConversationalRunner {
       type: 'composite',
       objective,
       constraints: [
-        `当前工作目录: ${resolve(this.config.workDir)}`,
-        '所有文件操作使用相对路径',
-        ...(contextText ? [`对话上下文（仅供参考，不要逐字复述）:\n${contextText}`] : []),
+        `Current working directory: ${resolve(this.config.workDir)}`,
+        'All file operations must use relative paths.',
+        ...(contextText
+          ? [`Conversation context (for reference only; do not quote verbatim):\n${contextText}`]
+          : []),
       ],
       context: {
         parentTaskId: session.sessionId,
@@ -507,6 +510,113 @@ export class ConversationalRunner {
     };
 
     const filesAffected: string[] = [];
+    const plannerRoles = new Map<string, string>(); // Cache role names
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null;
+    const truncate = (text: string, max: number): string => {
+      if (text.length <= max) return text;
+      return `${text.slice(0, max)}…[truncated]`;
+    };
+    const summarizeToolOutput = (
+      tool: string,
+      output: unknown
+    ): { result?: unknown; outputPreview?: string } => {
+      const MAX_PREVIEW = 2000;
+      const MAX_STDIO = 1500;
+
+      if (tool === 'shell_run' && isRecord(output)) {
+        const success = typeof output.success === 'boolean' ? output.success : undefined;
+        const error = typeof output.error === 'string' ? output.error : undefined;
+        const data = isRecord(output.data) ? (output.data as Record<string, unknown>) : null;
+
+        const stdout = typeof data?.stdout === 'string' ? data.stdout.trim() : '';
+        const stderr = typeof data?.stderr === 'string' ? data.stderr.trim() : '';
+        const exitCode = typeof data?.exitCode === 'number' ? data.exitCode : undefined;
+
+        const stdoutPreview = stdout ? truncate(stdout, MAX_STDIO) : '';
+        const stderrPreview = stderr ? truncate(stderr, MAX_STDIO) : '';
+
+        const safeData: Record<string, unknown> = {};
+        if (exitCode !== undefined) safeData.exitCode = exitCode;
+        if (stdoutPreview) safeData.stdout = stdoutPreview;
+        if (stderrPreview) safeData.stderr = stderrPreview;
+        if (typeof data?.stdoutTruncated === 'boolean') safeData.stdoutTruncated = data.stdoutTruncated;
+        if (typeof data?.stderrTruncated === 'boolean') safeData.stderrTruncated = data.stderrTruncated;
+
+        const safe: Record<string, unknown> = {};
+        if (success !== undefined) safe.success = success;
+        if (Object.keys(safeData).length > 0) safe.data = safeData;
+        if (error) safe.error = error;
+
+        const previewParts: string[] = [];
+        if (exitCode !== undefined) previewParts.push(`exitCode=${exitCode}`);
+        if (stdoutPreview) previewParts.push(`stdout:\n${stdoutPreview}`);
+        if (stderrPreview) previewParts.push(`stderr:\n${stderrPreview}`);
+
+        const summarized: { result?: unknown; outputPreview?: string } = {};
+        if (Object.keys(safe).length > 0) summarized.result = safe;
+        if (previewParts.length > 0) summarized.outputPreview = truncate(previewParts.join('\n'), MAX_PREVIEW);
+        return summarized;
+      }
+
+      if (tool === 'file_read' && isRecord(output)) {
+        const success = typeof output.success === 'boolean' ? output.success : undefined;
+        const error = typeof output.error === 'string' ? output.error : undefined;
+        const data = isRecord(output.data) ? (output.data as Record<string, unknown>) : null;
+        const size = typeof data?.size === 'number' ? data.size : undefined;
+
+        const safe: Record<string, unknown> = {};
+        if (success !== undefined) safe.success = success;
+        if (size !== undefined) safe.data = { size };
+        if (error) safe.error = error;
+
+        const summarized: { result?: unknown; outputPreview?: string } = {};
+        if (Object.keys(safe).length > 0) summarized.result = safe;
+        summarized.outputPreview = size !== undefined ? `size=${size} bytes (content omitted)` : 'content omitted';
+        return summarized;
+      }
+
+      if (tool === 'file_list' && isRecord(output)) {
+        const success = typeof output.success === 'boolean' ? output.success : undefined;
+        const error = typeof output.error === 'string' ? output.error : undefined;
+        const data = isRecord(output.data) ? (output.data as Record<string, unknown>) : null;
+        const count = typeof data?.count === 'number' ? data.count : undefined;
+
+        const safe: Record<string, unknown> = {};
+        if (success !== undefined) safe.success = success;
+        if (count !== undefined) safe.data = { count };
+        if (error) safe.error = error;
+
+        const summarized: { result?: unknown; outputPreview?: string } = {};
+        if (Object.keys(safe).length > 0) summarized.result = safe;
+        if (count !== undefined) summarized.outputPreview = `count=${count}`;
+        return summarized;
+      }
+
+      if (typeof output === 'string') {
+        const summarized: { result?: unknown; outputPreview?: string } = {
+          outputPreview: truncate(output, MAX_PREVIEW),
+        };
+        if (output.length <= MAX_PREVIEW) summarized.result = output;
+        return summarized;
+      }
+
+      if (isRecord(output)) {
+        try {
+          const json = JSON.stringify(output);
+          const summarized: { result?: unknown; outputPreview?: string } = {
+            outputPreview: truncate(json, MAX_PREVIEW),
+          };
+          if (json.length <= MAX_PREVIEW) summarized.result = output;
+          return summarized;
+        } catch {
+          return {};
+        }
+      }
+
+      return {};
+    };
+
     const onPlanStart = () => {
       push({ type: 'thinking', content: '正在规划任务...', timestamp: Date.now() });
     };
@@ -519,22 +629,61 @@ export class ConversationalRunner {
       session.completedSubtasks = [];
       void this.sessionStore.saveSession(session);
 
+      // Cache roles
+      if (plan.roles) {
+        for (const role of plan.roles) {
+          plannerRoles.set(role.id, role.name);
+        }
+      }
+
+      const roles = plan.roles?.map((r) => ({
+        id: r.id,
+        name: r.name,
+        responsibilities: r.responsibilities,
+      }));
+      push({
+        type: 'plan_generated',
+        subtasks: plan.subtasks,
+        ...(roles && { roles }),
+        timestamp: Date.now(),
+      });
+
       push({
         type: 'thinking',
-        content: `已规划 ${plan.subtasks.length} 个子任务`,
+        content: `已规划 ${plan.subtasks.length} 个子任务${
+          plan.roles ? `，分配给 ${plan.roles.length} 个角色` : ''
+        }`,
         timestamp: Date.now(),
       });
     };
-    const onSubtaskAssigned = (subtaskId: string, subtaskObjective: string) => {
-      push({ type: 'thinking', content: `执行: ${subtaskObjective}`, timestamp: Date.now() });
+    const onSubtaskAssigned = (
+      subtaskId: string,
+      subtaskObjective: string,
+      workerId: string,
+      roleName?: string
+    ) => {
+      push({
+        type: 'subtask_start',
+        subtaskId,
+        subtaskObjective,
+        workerId,
+        ...(roleName && { role: roleName }),
+        timestamp: Date.now(),
+      });
       if (!session.pendingSubtasks.includes(subtaskId)) {
         session.pendingSubtasks.push(subtaskId);
         void this.sessionStore.saveSession(session);
       }
     };
-    const onSubtaskDone = (subtaskId: string, success: boolean) => {
+    const onSubtaskDone = (subtaskId: string, success: boolean, error?: string) => {
       if (!subtaskId) return;
-      push({ type: 'subtask_complete', subtaskId, success, timestamp: Date.now() });
+      push({
+        type: 'subtask_complete',
+        subtaskId,
+        success,
+        ...(typeof error === 'string' && { error }),
+        timestamp: Date.now(),
+      });
       session.pendingSubtasks = session.pendingSubtasks.filter((id) => id !== subtaskId);
       if (success && !session.completedSubtasks.includes(subtaskId)) {
         session.completedSubtasks.push(subtaskId);
@@ -572,7 +721,19 @@ export class ConversationalRunner {
       if (resultMatch) {
         const tool = resultMatch[1] ?? 'unknown';
         const success = record.result?.success ?? false;
-        push({ type: 'tool_result', tool, success, timestamp: Date.now() });
+        const durationMs = record.result?.duration;
+        const error = record.result?.error;
+        const { result, outputPreview } = summarizeToolOutput(tool, record.result?.output);
+        push({
+          type: 'tool_result',
+          tool,
+          success,
+          ...(durationMs !== undefined && { durationMs }),
+          ...(typeof error === 'string' && { error }),
+          ...(typeof outputPreview === 'string' && { outputPreview }),
+          ...(result !== undefined && { result }),
+          timestamp: Date.now(),
+        });
       }
     };
 
@@ -580,12 +741,46 @@ export class ConversationalRunner {
     const planCompleteHandler = (evt: OrchestratorEvent<{ plan: PlannerOutput }>) =>
       onPlanComplete(evt.data.plan);
     const subtaskAssignedHandler = (
-      evt: OrchestratorEvent<{ subtaskId: string; subtask: { objective: string } }>
-    ) => onSubtaskAssigned(evt.data.subtaskId, evt.data.subtask.objective);
-    const subtaskCompleteHandler = (evt: OrchestratorEvent<{ result: TaskResult }>) =>
+      evt: OrchestratorEvent<{
+        subtaskId: string;
+        subtask: { objective: string; roleId?: string };
+        workerId?: string;
+      }>
+    ) => {
+      const roleId = evt.data.subtask.roleId;
+      const roleName = roleId ? plannerRoles.get(roleId) ?? roleId : undefined;
+      onSubtaskAssigned(
+        evt.data.subtaskId,
+        evt.data.subtask.objective,
+        evt.data.workerId || 'unknown',
+        roleName
+      );
+    };
+    const subtaskCompleteHandler = (evt: OrchestratorEvent<{ result: TaskResult }>) => {
+      const output = evt.data.result.output;
+      const asText = (() => {
+        if (typeof output === 'string') return output.trim();
+        if (!isRecord(output)) return '';
+        const candidates = ['content', 'text', 'message', 'output'];
+        for (const key of candidates) {
+          const value = output[key];
+          if (typeof value === 'string' && value.trim()) return value.trim();
+        }
+        return '';
+      })();
+
+      if (asText) {
+        push({
+          type: 'subtask_output',
+          subtaskId: evt.subtaskId ?? '',
+          content: asText,
+          timestamp: Date.now(),
+        });
+      }
       onSubtaskDone(evt.subtaskId ?? '', true);
+    };
     const subtaskFailedHandler = (evt: OrchestratorEvent<{ error: string; retryCount: number }>) =>
-      onSubtaskDone(evt.subtaskId ?? '', false);
+      onSubtaskDone(evt.subtaskId ?? '', false, evt.data.error);
     const workerThinkingHandler = (evt: OrchestratorEvent<{ workerId: string; record: ThinkingRecord }>) =>
       onWorkerThinking(evt.data.workerId, evt.data.record);
     const workerActionHandler = (evt: OrchestratorEvent<{ workerId: string; record: ActionRecord }>) =>
@@ -664,7 +859,15 @@ export class ConversationalRunner {
         push({
           type: 'complete',
           success: result.status === 'success',
-          summary: `已完成 ${summary.subtasksCompleted} 个子任务，修改了 ${filesAffected.length} 个文件`,
+          summary: `已完成 ${summary.subtasksCompleted} 个子任务，修改了 ${filesAffected.length} 个文件${
+            filesAffected.length > 0
+              ? `:\n${filesAffected.map((f) => `  - ${f}`).join('\n')}`
+              : ''
+          }${
+            result.status !== 'success' && session.variables.lastRunError
+              ? `\n失败原因: ${session.variables.lastRunError}`
+              : ''
+          }`,
           timestamp: Date.now(),
         });
       })

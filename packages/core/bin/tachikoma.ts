@@ -129,9 +129,107 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
     const session = await runner.createSession();
 
+    // =========================================================================
+    // 审批流处理 (Side-channel)
+    //
+    // 由于后端在 waitForApproval 时会阻塞 generator，导致事件无法冒泡到 runner。
+    // 我们需要通过 SessionFileManager 监控 pending_approval 文件，并通过侧通过道交互。
+    // =========================================================================
+    
+    // 动态导入以避免循环依赖问题
+    const { SessionFileManager } = await import('../src/orchestrator/session/session-file-manager');
+    const sessionManager = new SessionFileManager(session.sessionId, {
+      rootDir: resolve(workdir, '.tachikoma', 'conversations'),
+    });
+    
+    // 追踪已处理的请求，避免重复弹窗
+    const handledRequests = new Set<string>();
+
     const rl = process.stdin.isTTY
       ? createInterface({ input: process.stdin, output: process.stdout })
       : null;
+
+    // Prompt 互斥锁：避免审批轮询和主循环同时调用 rl.question
+    let isPrompting = false;
+    const withPromptLock = async <T>(fn: () => Promise<T>): Promise<T> => {
+      while (isPrompting) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      isPrompting = true;
+      try {
+        return await fn();
+      } finally {
+        isPrompting = false;
+      }
+    };
+
+    // approval polling timer
+    let approvalPollTimer: ReturnType<typeof setInterval> | null = null;
+    let isApproving = false; // 互斥锁，避免轮询重入
+
+    if (rl) {
+      approvalPollTimer = setInterval(async () => {
+        if (isApproving || isPrompting) return; // 也检查 prompting 状态
+        isApproving = true;
+
+        try {
+          const workers = await sessionManager.listPeerWorkers();
+
+          for (const workerId of workers) {
+            const pending = await sessionManager.readPendingApproval(workerId);
+            
+            if (pending && !handledRequests.has(pending.requestId)) {
+              handledRequests.add(pending.requestId);
+
+              // 打印告警
+              console.log('');
+              logWarn('🛑 关键决策需要审批');
+              logInfo(`工具: ${pending.description}`);
+              
+              // 安全截断 details 输出（最多 2KB）
+              if (pending.details) {
+                const detailsStr = JSON.stringify(pending.details, null, 2);
+                const truncated = detailsStr.length > 2048 
+                  ? detailsStr.slice(0, 2048) + '\n... (truncated)' 
+                  : detailsStr;
+                console.log(`${colors.dim}${truncated}${colors.reset}`);
+              }
+              
+              // 安全获取 riskLevel（类型保护）
+              const riskLevel = pending.details?.metadata?.riskLevel;
+              const riskStr = typeof riskLevel === 'string' ? riskLevel.toUpperCase() : 'UNKNOWN';
+              console.log(`${colors.yellow}风险等级: ${riskStr}${colors.reset}`);
+              
+              // 交互询问（通过互斥锁）
+              const answer = await withPromptLock(async () =>
+                (await rl.question(`${colors.bold}是否批准执行? (y/N) > ${colors.reset}`)).trim()
+              );
+
+              const approved = /^(y|yes)$/i.test(answer);
+              
+              if (approved) {
+                logSuccess('已批准');
+              } else {
+                logError('已拒绝');
+              }
+
+              // 写入响应
+              await sessionManager.writeApprovalResponse(workerId, {
+                requestId: pending.requestId,
+                approved,
+                respondedBy: 'human',
+                respondedAt: Date.now(),
+                reason: approved ? 'User approved via CLI' : 'User rejected via CLI',
+              });
+            }
+          }
+        } catch (err) {
+          // 忽略轮询错误，避免刷屏
+        } finally {
+          isApproving = false;
+        }
+      }, 1000); 
+    }
 
     try {
       let nextUserMessage: string | null = task;
@@ -144,20 +242,96 @@ ${colors.bold}${colors.cyan}╔════════════════�
         for await (const evt of runner.handleMessage(session.sessionId, nextUserMessage)) {
           switch (evt.type) {
             case 'thinking':
-              logStep(compactLine(evt.content, 200));
+              logStep(`${colors.cyan}[Thinking] ${compactLine(evt.content, 200)}${colors.reset}`);
+              break;
+            case 'plan_generated': {
+              const { subtasks, roles } = evt;
+              console.log(`${colors.cyan}  [Plan] Generated ${subtasks.length} subtasks${colors.reset}`);
+              if (roles && roles.length > 0) {
+                console.log(`${colors.cyan}  [Roles] ${roles.map((r) => `${r.name} (${r.id})`).join(', ')}${colors.reset}`);
+                roles.forEach(r => {
+                  console.log(`${colors.dim}    - ${r.name}: ${compactLine(r.responsibilities, 100)}${colors.reset}`);
+                });
+              }
+              subtasks.forEach((t, i) => {
+                const roleInfo = t.roleId ? ` [${roles?.find(r => r.id === t.roleId)?.name ?? t.roleId}]` : '';
+                console.log(`${colors.dim}    ${i + 1}. ${t.objective}${roleInfo}${colors.reset}`);
+              });
+              break;
+            }
+            case 'subtask_start':
+              console.log(
+                `${colors.magenta}  [Subtask Start] ${evt.subtaskId} ${
+                  evt.role ? `(${evt.role})` : `[${evt.workerId}]`
+                } => ${evt.subtaskObjective}${colors.reset}`
+              );
               break;
             case 'tool_call':
-              console.log(`${colors.yellow}  [tool] ${evt.tool}${colors.reset}`);
+              console.log(`${colors.yellow}  [Tool Call] ${evt.tool}${colors.reset}`);
+              // 特殊处理 shell_run 命令显示，便于调试死循环
+              if (evt.tool === 'shell_run' || evt.tool === 'run_command' || evt.tool === 'execute_command') {
+                const cmd = (evt.input as any).command || (evt.input as any).CommandLine || (evt.input as any).cmd;
+                if (cmd) {
+                   console.log(`${colors.cyan}    $ ${cmd}${colors.reset}`);
+                }
+              }
+              if (verbose) {
+                console.log(`${colors.dim}    Args: ${JSON.stringify(evt.input)}${colors.reset}`);
+              }
               break;
             case 'tool_result':
               console.log(
-                `${colors.dim}  [tool] ${evt.tool} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
+                `${colors.dim}  [Tool Result] ${evt.tool} ${
+                  evt.success ? colors.green + '✓ Success' : colors.red + '✗ Failed'
+                }${colors.reset}`
               );
+              // 优先使用 outputPreview（已安全截断）
+              if (evt.outputPreview) {
+                console.log(`${colors.dim}    Preview: ${evt.outputPreview}${colors.reset}`);
+              }
+              if (evt.error) {
+                console.log(`${colors.red}    Error: ${evt.error}${colors.reset}`);
+              }
+              // shell 命令特殊处理 stdout/stderr
+              if (['shell_run', 'run_command', 'execute_command'].includes(evt.tool)) {
+                const data = (evt.result as any)?.data;
+                if (data) {
+                  if (data.stdout && data.stdout.trim() && !evt.outputPreview) {
+                    const out = data.stdout.trim();
+                    console.log(
+                      `${colors.dim}    stdout: ${
+                        out.length > 500 ? out.slice(0, 500) + '...' : out
+                      }${colors.reset}`
+                    );
+                  }
+                  if (data.stderr && data.stderr.trim()) {
+                    const err = data.stderr.trim();
+                    console.log(
+                      `${colors.red}    stderr: ${
+                        err.length > 500 ? err.slice(0, 500) + '...' : err
+                      }${colors.reset}`
+                    );
+                  }
+                }
+              }
+              break;
+            case 'subtask_output':
+              // 显示 Agent 的文字输出（任务结果）
+              console.log(`${colors.cyan}  [Output] ${evt.subtaskId}${colors.reset}`);
+              console.log(`${colors.dim}${evt.content}${colors.reset}`);
               break;
             case 'subtask_complete':
-              console.log(
-                `${colors.dim}  [subtask] ${evt.subtaskId} ${evt.success ? colors.green + '✓' : colors.red + '✗'}${colors.reset}`
-              );
+              if (evt.success) {
+                console.log(
+                  `${colors.magenta}  [Subtask End] ${evt.subtaskId} Completed${colors.reset}`
+                );
+              } else {
+                console.log(
+                  `${colors.red}  [Subtask Failed] ${evt.subtaskId} ${
+                    evt.error || 'Unknown error'
+                  }${colors.reset}`
+                );
+              }
               break;
             case 'need_user_input':
               needUserInputQuestion = evt.question;
@@ -192,7 +366,9 @@ ${colors.bold}${colors.cyan}╔════════════════�
             logError('当前环境非交互式，无法继续输入。请在交互式终端运行该命令后按提示回答问题。');
             process.exit(2);
           }
-          const answer = (await rl.question(`${colors.bold}> ${colors.reset}`)).trim();
+          const answer = await withPromptLock(async () => 
+            (await rl.question(`${colors.bold}> ${colors.reset}`)).trim()
+          );
           if (!answer) {
             logError('未提供回答，已退出。');
             process.exit(2);
@@ -209,7 +385,9 @@ ${colors.bold}${colors.cyan}╔════════════════�
           }
 
           logInfo('请输入下一条指令/任务（或输入 exit 退出）');
-          const next = (await rl.question(`${colors.bold}> ${colors.reset}`)).trim();
+          const next = await withPromptLock(async () =>
+            (await rl.question(`${colors.bold}> ${colors.reset}`)).trim()
+          );
           if (!next || /^(exit|quit|q)$/i.test(next)) {
             if (lastExitCode !== 0) process.exit(lastExitCode);
             return;
@@ -224,6 +402,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
         return;
       }
     } finally {
+      if (approvalPollTimer) clearInterval(approvalPollTimer);
       rl?.close();
     }
   } catch (error) {
