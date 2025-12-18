@@ -13,12 +13,14 @@ import {
   browserScreenshotTool,
   browserTools,
 } from './core/browser-tools';
+import { browserVerifyTool } from './core/browser-verify';
 
 export {
   browserNavigateTool,
   browserClickTool,
   browserInputTool,
   browserScreenshotTool,
+  browserVerifyTool,
   browserTools,
 };
 
@@ -27,5 +29,5 @@ export const browserToolsArray: Tool[] = [
   browserClickTool,
   browserInputTool,
   browserScreenshotTool,
+  browserVerifyTool,
 ];
-

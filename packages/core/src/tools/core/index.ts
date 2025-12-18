@@ -30,6 +30,9 @@ export { dockerizeTool } from './dockerize';
 // 技能工具
 export { createSkillTool } from './create-skill';
 
+// 开发服务器工具（不含 browserVerifyTool，浏览器工具应从 browser.ts opt-in）
+export { devServerTool, cleanupAllServers } from './dev-server';
+
 // 安全工具函数
 export {
   DEFAULT_ENV_WHITELIST,

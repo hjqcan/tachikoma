@@ -6,7 +6,6 @@
 
 import type { Tool } from '../types';
 
-// 核心工具导入
 import {
   fileReadTool,
   fileWriteTool,
@@ -19,6 +18,8 @@ import {
   typeCheckTool,
   packageInfoTool,
   envGetTool,
+  // devServerTool 从 core 导入但不放入 baseTools
+  devServerTool,
 } from './core';
 
 // RAG 工具导入
@@ -97,6 +98,7 @@ export {
   fileWriteTool,
   fileListTool,
   shellRunTool,
+  devServerTool,
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
@@ -142,9 +144,10 @@ export {
 } from '../mcp';
 
 /**
- * 基础工具集（无外部依赖，离线可用）
+ * 基础工具集（无外部依赖，离线可用，低风险）
  *
  * 这些工具只依赖本地文件系统和Shell，不需要网络或外部服务
+ * 不包含长期进程管理（devServer）或浏览器自动化
  */
 export const baseTools: Tool[] = [
   // 文件系统工具
@@ -196,6 +199,16 @@ export const networkTools: Tool[] = [
 ];
 
 /**
+ * 开发服务器工具集（高副作用，需显式启用）
+ *
+ * 这些工具涉及长期进程管理和端口监听，具有较高副作用
+ * 需要通过 getToolsByCapability({ devServer: true }) 显式启用
+ */
+export const devTools: Tool[] = [
+  devServerTool,
+];
+
+/**
  * 默认工具集（基础 + Agent 工具）
  *
  * 只包含基础工具 + Agent工具，不包含网络/浏览器工具
@@ -220,10 +233,15 @@ export const allTools: Tool[] = [
 
 /**
  * 按能力获取工具集
+ *
+ * @param capabilities.network - 启用网络工具（web_search, deep_research）
+ * @param capabilities.agent - 启用 Agent 工具（默认 true）
+ * @param capabilities.devServer - 启用开发服务器工具（默认 false，高副作用）
  */
 export function getToolsByCapability(capabilities: {
   network?: boolean;
   agent?: boolean;
+  devServer?: boolean;
 }): Tool[] {
   const tools = [...baseTools];
 
@@ -232,6 +250,9 @@ export function getToolsByCapability(capabilities: {
   }
   if (capabilities.network) {
     tools.push(...networkTools);
+  }
+  if (capabilities.devServer) {
+    tools.push(...devTools);
   }
   // Browser tools are opt-in and live in a separate module to avoid pulling Playwright
   // into bundles that don't need it (e.g. CLI single-run).
