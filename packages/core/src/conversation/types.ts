@@ -4,7 +4,7 @@
  * 多轮对话系统的核心类型定义
  */
 
-import type { SubTask } from '../orchestrator/types';
+import type { PlannerRole, SubTask } from '../orchestrator/types';
 
 // =============================================================================
 // 用户意图类型
@@ -227,7 +227,19 @@ export interface ToolResultEvent extends BaseStreamEvent {
   type: 'tool_result';
   tool: string;
   success: boolean;
+  durationMs?: number;
+  error?: string;
+  outputPreview?: string;
   result?: unknown;
+}
+
+/**
+ * 子任务输出事件（Agent 完成任务时的文本输出）
+ */
+export interface SubtaskOutputEvent extends BaseStreamEvent {
+  type: 'subtask_output';
+  subtaskId: string;
+  content: string;
 }
 
 /**
@@ -237,6 +249,7 @@ export interface SubtaskCompleteEvent extends BaseStreamEvent {
   type: 'subtask_complete';
   subtaskId: string;
   success: boolean;
+  error?: string;
 }
 
 /**
@@ -266,12 +279,35 @@ export interface ErrorEvent extends BaseStreamEvent {
 }
 
 /**
+ * 计划生成事件（携带详细规划信息）
+ */
+export interface PlanGeneratedEvent extends BaseStreamEvent {
+  type: 'plan_generated';
+  subtasks: SubTask[];
+  roles?: Pick<PlannerRole, 'id' | 'name' | 'responsibilities'>[];
+}
+
+/**
+ * 子任务开始事件（携带分配信息）
+ */
+export interface SubtaskStartEvent extends BaseStreamEvent {
+  type: 'subtask_start';
+  subtaskId: string;
+  subtaskObjective: string;
+  workerId: string;
+  role?: string;
+}
+
+/**
  * 流式事件联合类型
  */
 export type StreamEvent =
   | ThinkingEvent
+  | PlanGeneratedEvent
+  | SubtaskStartEvent
   | ToolCallEvent
   | ToolResultEvent
+  | SubtaskOutputEvent
   | SubtaskCompleteEvent
   | NeedUserInputEvent
   | CompleteEvent

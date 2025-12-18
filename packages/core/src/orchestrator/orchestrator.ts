@@ -27,6 +27,7 @@ import {
   calculateRetryDelay,
   shouldRetry,
   createOrchestratorConfig,
+  type PartialOrchestratorConfig,
 } from './config';
 import { Planner, type PlanResult, createLLMClient } from '../planner';
 import {
@@ -51,7 +52,6 @@ import {
   type DecisionRecord,
   type CheckpointRestoreOptions,
   type RecoveryStrategy,
-  type CheckpointData,
 } from './session';
 import { MemoryService } from '../memory';
 import { CollaborationManager } from '../collaboration';
@@ -77,7 +77,7 @@ type PlannerMetadata = z.infer<typeof PLANNER_METADATA_SCHEMA>;
  */
 export interface OrchestratorOptions {
   /** 配置 */
-  config?: Partial<OrchestratorConfig>;
+  config?: PartialOrchestratorConfig;
   /** Planner 实例（可选，用于注入测试） */
   planner?: Planner;
   /** WorkerPool 实例（可选，用于注入测试） */
@@ -466,7 +466,10 @@ export class Orchestrator extends BaseAgent {
           (Array.isArray(roles) && roles.length > 0)
             ? roles.length
             : (planData.plannerOutput.delegation?.workerCount ?? this.orchestratorConfig.delegation.workerCount);
-        await this.registerDefaultWorkers({ workerCount, roles });
+        await this.registerDefaultWorkers({
+          workerCount,
+          ...(Array.isArray(roles) ? { roles } : {}),
+        });
       }
 
       // 5. 如果需要，可根据快照更新现有 WorkerPool 的状态（不创建新 worker）
@@ -622,11 +625,8 @@ export class Orchestrator extends BaseAgent {
       const role = normalizedRoles.find((r) => r.id === mapped);
       const roleExists = !!role;
       if (!roleExists) {
-        return {
-          ...st,
-          roleId: undefined,
-          requiredCapabilities: undefined,
-        };
+        const { roleId: _roleId, requiredCapabilities: _requiredCapabilities, ...rest } = st;
+        return rest as SubTask;
       }
 
       const stableCap = `role:${mapped}`;
@@ -821,7 +821,7 @@ export class Orchestrator extends BaseAgent {
       // 确保 Worker 已注册（增量注册：已存在的跳过，缺少的补充）
       await this.registerDefaultWorkers({
         workerCount: normalizedPlan.delegation.workerCount,
-        roles: normalizedPlan.roles,
+        ...(Array.isArray(normalizedPlan.roles) ? { roles: normalizedPlan.roles } : {}),
       });
 
       // 阶段 2: 执行（分配与聚合）
@@ -1870,8 +1870,6 @@ Is this a genuine deviation? Answer YES or NO only.`,
     this.executionState!.runningSubtasks.add(subtaskId);
     subtask.status = 'running';
 
-    this.emit('subtask:assigned', taskId, { subtaskId, subtask }, subtaskId);
-
     let retryCount = 0;
     let lastError: string | undefined;
 
@@ -1923,6 +1921,9 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
         const workerId = assignResult.workerId!;
         subtask.assignedWorkerId = workerId;
+
+        // Emit after a concrete worker is chosen so consumers can display accurate routing info.
+        this.emit('subtask:assigned', taskId, { subtaskId, subtask, workerId }, subtaskId);
 
         // 等待 Worker 完成（WorkerAgent 驱动）
         const result = await this.waitForWorkerCompletion(subtask, workerId, timeout, signal);
