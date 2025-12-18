@@ -135,6 +135,16 @@ export interface IWorkerPool {
   selectWorker(capabilities?: string[]): string | undefined;
 
   /**
+   * 按能力筛选可用 Worker（用于协作路由）
+   * 
+   * 返回满足能力要求的空闲 Worker 列表，按优先级降序排列。
+   * 
+   * @param capabilities - 可选的能力要求，为空时返回所有空闲 Worker
+   * @returns 符合条件的 Worker 信息列表
+   */
+  getWorkersByCapability(capabilities?: string[]): WorkerInfo[];
+
+  /**
    * 分配任务给 Worker
    * @param subtask - 子任务
    * @param timeout - 超时时间（毫秒）
@@ -388,6 +398,19 @@ export class DefaultWorkerPool implements IWorkerPool {
       default:
         return this.selectLeastLoaded(availableWorkers);
     }
+  }
+
+  /**
+   * 按能力筛选可用 Worker（用于协作路由）
+   * 
+   * 注意：返回副本以防止外部修改内部状态
+   */
+  getWorkersByCapability(capabilities?: string[]): WorkerInfo[] {
+    const available = this.getAvailableWorkers(capabilities);
+    // 创建副本后按优先级降序排列（priority 越大越优先）
+    return [...available]
+      .map(w => ({ ...w })) // 浅拷贝每个 WorkerInfo
+      .sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5));
   }
 
   /**

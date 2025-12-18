@@ -973,6 +973,10 @@ export class Orchestrator extends BaseAgent {
           status: 'online',
           priority: 10,
         });
+        
+        // 注册协作请求处理器
+        this.registerCollaborationRequestHandler();
+        
         console.debug('[Orchestrator] Collaboration started');
       } catch (error) {
         console.warn('[Orchestrator] Failed to start collaboration (non-fatal):', error);
@@ -2354,6 +2358,10 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
         continue;
       }
+      
+      // 获取协作配置（如果启用）
+      const collaborationConfig = this.buildWorkerCollaborationConfig(workerId, desiredCapabilities);
+      
       const agent = canUseRealWorkerAgent
         ? new WorkerAgent(
             workerId,
@@ -2370,6 +2378,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
                 ...(llm?.apiKey && { apiKey: llm.apiKey }),
                 ...(llm?.baseUrl && { baseUrl: llm.baseUrl }),
               },
+              // 传递协作配置
+              ...(collaborationConfig && { collaborationConfig }),
             }
           )
         : {
@@ -2435,6 +2445,189 @@ Is this a genuine deviation? Answer YES or NO only.`,
       ...(typeof llm.baseUrl === 'string' && llm.baseUrl ? { baseUrl: llm.baseUrl } : {}),
     };
   }
+
+  /**
+   * 为 Worker 构建协作配置
+   * 
+   * 确保 Worker 使用与 Orchestrator 相同的 rootDir，
+   * 使得所有 Agent 能够通过共享文件系统互相发现和通信。
+   * 
+   * @param workerId - Worker ID
+   * @param capabilities - Worker 能力列表
+   * @returns 协作配置，如果协作未启用则返回 undefined
+   */
+  private buildWorkerCollaborationConfig(
+    workerId: string,
+    capabilities: string[]
+  ): {
+    enabled: boolean;
+    agentId: string;
+    sessionId: string;
+    capabilities: string[];
+    priority: number;
+    backend: 'file' | 'redis';
+    rootDir: string;
+    redis?: { url: string; prefix?: string };
+  } | undefined {
+    const config = this.orchestratorConfig.collaborationConfig;
+    if (!config?.enabled) return undefined;
+
+    return {
+      enabled: true,
+      agentId: workerId,
+      sessionId: this.currentSessionId ?? 'default',
+      capabilities,
+      priority: 5, // Worker 默认优先级（Orchestrator 是 10）
+      backend: config.backend ?? 'file',
+      rootDir: this.orchestratorConfig.session.rootDir, // 使用相同的 rootDir
+      ...(config.redis && { redis: config.redis }),
+    };
+  }
+
+  /**
+   * 注册 Orchestrator 协作请求处理器
+   * 
+   * Orchestrator 作为协作中心，接收 Worker 的协作请求并路由到合适的 Worker。
+   * 处理策略：
+   * 1. 根据请求的 requiredCapabilities 查找合适的空闲 Worker
+   * 2. 优先选择能力匹配且优先级高的 Worker
+   * 3. 发出协作事件用于追踪
+   */
+  private registerCollaborationRequestHandler(): void {
+    if (!this.collaborationManager) return;
+
+    this.collaborationManager.onRequest(async (request) => {
+      const taskId = this.currentTask?.id ?? 'unknown';
+      
+      // 发出请求接收事件
+      this.emit('collaboration:request_received', taskId, {
+        requestId: request.id,
+        fromAgent: request.fromAgentId,
+        type: request.type,
+      });
+
+      // 解析请求要求（兼容旧 payload）
+      const payload = request.payload as {
+        kind?: string;
+        requiredCapabilities?: string[];
+        taskDescription?: string;
+        taskPayload?: unknown;
+        preferredWorkerId?: string;
+        strictPreferredWorker?: boolean;
+        // legacy
+        description?: string;
+        data?: unknown;
+        targetAgentId?: string;
+      } | undefined;
+
+      const requiredCapabilities = Array.isArray(payload?.requiredCapabilities)
+        ? payload!.requiredCapabilities.filter((c): c is string => typeof c === 'string' && c.length > 0)
+        : undefined;
+
+      const taskDescription =
+        (typeof payload?.taskDescription === 'string' && payload.taskDescription.trim())
+          ? payload.taskDescription.trim()
+          : (typeof payload?.description === 'string' && payload.description.trim())
+              ? payload.description.trim()
+              : undefined;
+
+      const taskPayload =
+        payload?.taskPayload !== undefined ? payload.taskPayload : payload?.data;
+
+      const preferredWorkerId =
+        (typeof payload?.preferredWorkerId === 'string' && payload.preferredWorkerId.trim())
+          ? payload.preferredWorkerId.trim()
+          : (typeof payload?.targetAgentId === 'string' && payload.targetAgentId.trim())
+              ? payload.targetAgentId.trim()
+              : undefined;
+
+      const strictPreferredWorker = payload?.strictPreferredWorker === true;
+
+      const availableWorkers = this.workerPool.getWorkersByCapability(requiredCapabilities);
+
+      if (availableWorkers.length === 0) {
+        console.debug(
+          `[Orchestrator] No available workers for collaboration request: ${request.id}`
+        );
+        this.emit('collaboration:request_completed', taskId, {
+          requestId: request.id,
+          workerId: undefined,
+          success: false,
+        });
+        return {
+          success: false,
+          error: 'No available workers matching the required capabilities',
+          payload: { 
+            requestId: request.id,
+            ...(requiredCapabilities && { requiredCapabilities }),
+            ...(preferredWorkerId && { preferredWorkerId }),
+          },
+        };
+      }
+
+      // 选择 Worker：
+      // - preferredWorkerId 命中：优先返回该 worker（best-effort，除非 strict）
+      // - 否则：返回优先级最高的 worker
+      const preferredMatch = preferredWorkerId
+        ? availableWorkers.find((w) => w.id === preferredWorkerId) ?? null
+        : null;
+
+      if (!preferredMatch && preferredWorkerId && strictPreferredWorker) {
+        this.emit('collaboration:request_completed', taskId, {
+          requestId: request.id,
+          workerId: undefined,
+          success: false,
+        });
+        return {
+          success: false,
+          error: `Preferred worker ${preferredWorkerId} is not available`,
+          payload: {
+            requestId: request.id,
+            ...(requiredCapabilities && { requiredCapabilities }),
+            preferredWorkerId,
+            strictPreferredWorker: true,
+          },
+        };
+      }
+
+      const selectedWorker = preferredMatch ?? availableWorkers[0];
+      
+      // 发出路由事件
+      this.emit('collaboration:request_routed', taskId, {
+        requestId: request.id,
+        targetWorkerId: selectedWorker?.id,
+        workerCount: availableWorkers.length,
+      });
+
+      console.debug(
+        `[Orchestrator] Routed collaboration request ${request.id} to worker ${selectedWorker?.id}`
+      );
+
+      // 当前仅返回路由信息，实际执行由请求发起方自行协调（不在此处执行）。
+      this.emit('collaboration:request_completed', taskId, {
+        requestId: request.id,
+        workerId: selectedWorker?.id,
+        success: true,
+      });
+
+      // 返回路由结果
+      return {
+        success: true,
+        payload: {
+          routed: true,
+          targetWorkerId: selectedWorker?.id,
+          targetCapabilities: selectedWorker?.capabilities,
+          availableWorkerCount: availableWorkers.length,
+          ...(requiredCapabilities && { requiredCapabilities }),
+          ...(taskDescription && { taskDescription }),
+          ...(taskPayload !== undefined && { taskPayload }),
+          ...(preferredWorkerId && { preferredWorkerId }),
+          ...(preferredWorkerId && { preferredMatched: selectedWorker?.id === preferredWorkerId }),
+        },
+      };
+    });
+  }
+
 
   /**
    * 等待 Worker 完成

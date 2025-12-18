@@ -753,6 +753,8 @@ export class GenericAgentBackend implements IWorkerBackend {
   private collaborationManager?: CollaborationManager;
   private peerAssistTool?: CollaborationTool;
   private collaborationAgentId?: string;
+  /** 协作请求处理器引用（用于取消注册） */
+  private collaborationRequestHandlerRegistered = false;
 
   constructor(config: GenericBackendConfig) {
     this.config = config;
@@ -923,6 +925,19 @@ export class GenericAgentBackend implements IWorkerBackend {
         }
         const hasPeerAssist = providedTools.some((t) => t.name === this.peerAssistTool!.name);
         tools = hasPeerAssist ? providedTools : [...providedTools, this.peerAssistTool];
+        
+        // 注册请求处理器（仅注册一次）
+        if (!this.collaborationRequestHandlerRegistered) {
+          this.registerCollaborationHandler();
+          this.collaborationRequestHandlerRegistered = true;
+        }
+
+        // 更新协作注册状态为 busy（P1: 状态同步）
+        try {
+          await this.collaborationManager.updateStatus('busy');
+        } catch {
+          console.debug('[GenericAgentBackend] Failed to update collaboration status to busy');
+        }
       }
     }
 
@@ -1833,6 +1848,15 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	    } finally {
 	      this.isExecuting = false;
 	      this.abortController = null;
+
+	      // 更新协作注册状态回 online（P1: 状态同步）
+	      if (this.collaborationManager?.isStarted()) {
+	        try {
+	          await this.collaborationManager.updateStatus('online');
+	        } catch {
+	          console.debug('[GenericAgentBackend] Failed to update collaboration status to online');
+	        }
+	      }
 	    }
 
 	    // Emit final status once, consistently.
@@ -1895,6 +1919,33 @@ When the task is complete, provide a final summary of what was accomplished.`));
       await this.sandbox.destroy();
       this.sandbox = null;
     }
+    // 重置协作处理器注册状态
+    this.collaborationRequestHandlerRegistered = false;
+  }
+
+  /**
+   * 注册协作请求处理器
+   * 
+   * 当其他 Agent 发起协作请求时，此处理器会被调用。
+   *
+   * 当前协作能力定位为“路由/发现”（由 Orchestrator 返回 targetWorkerId 供调用方协调），
+   * Worker 不直接处理协作请求，避免出现“接受但不执行”的假阳性响应。
+   */
+  private registerCollaborationHandler(): void {
+    if (!this.collaborationManager) return;
+
+    this.collaborationManager.onRequest(async (request) => {
+      console.debug(`[GenericAgentBackend] Collaboration request rejected: ${request.id}`);
+      return {
+        success: false,
+        error: 'Worker does not handle collaboration requests directly. Route via orchestrator and coordinate externally.',
+        payload: {
+          workerId: this.collaborationAgentId,
+          requestId: request.id,
+          type: request.type,
+        },
+      };
+    });
   }
 
   // ============================================================================

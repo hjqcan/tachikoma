@@ -271,6 +271,19 @@ const backend = new GenericAgentBackend({
 
 启用后，Worker 会自动获得 `request_peer_assist` 工具。
 
+### `request_peer_assist` 的路由语义（协议收敛）
+
+为避免 “assign 只是占位但看起来像执行了” 的假阳性，协作请求默认采用 **Orchestrator 路由**：
+
+- Worker 调用 `request_peer_assist` → 请求发给 Orchestrator
+- Orchestrator 选择合适的 Worker，并返回 `targetWorkerId`
+- **实际执行由调用方自行协调**（例如把子任务通过正常的任务分配流程投递给该 worker）
+
+`PeerAssistInput.targetAgentId` 的语义做了最小侵入收敛：
+
+- 如果它指向 `orchestrator` 类型的 Agent：视为指定路由器（router）
+- 否则：视为 `preferredWorkerId`（路由约束/偏好），由 Orchestrator 决策；可配合 `strictTarget: true` 要求必须命中
+
 ## 与 Orchestrator 集成
 
 ```typescript
@@ -283,10 +296,49 @@ const orchestrator = new Orchestrator('orch-1', {
 });
 ```
 
-Orchestrator 会自动注册为 `orchestrator` 类型的 Agent。
+Orchestrator 会自动注册为 `orchestrator` 类型的 Agent，并：
 
-> **注意**: 当前 Orchestrator 只注册自己，不会自动下发配置给 Worker。Worker 需要单独配置
-> `collaborationConfig` 使用相同的 `rootDir` 以实现互相发现。
+1. **自动传递配置给 Worker** - 创建 Worker 时会自动传递协作配置，确保使用相同的 `rootDir`
+2. **注册请求处理器** - 作为协作中心，接收 Worker 的协作请求并路由到合适的 Worker
+3. **发出协作事件** -
+   `collaboration:request_received`、`collaboration:request_routed`、`collaboration:request_completed`
+
+### 协作流程
+
+```mermaid
+sequenceDiagram
+    participant WA as Worker A
+    participant Orch as Orchestrator
+    participant WB as Worker B
+
+    Note over WA: 执行任务时需要帮助
+    WA->>WA: 调用 request_peer_assist 工具
+    WA->>Orch: CollaborationRequest
+
+    Orch->>Orch: handleCollaborationRequest()
+    Orch->>Orch: getWorkersByCapability()
+
+    alt Worker B 空闲
+        Orch->>WA: CollaborationResponse (routed to WB)
+        Note over WA: 通过正常任务分配流程<br/>将任务发给 WB
+    else 无可用 Worker
+        Orch->>WA: CollaborationResponse (error)
+    end
+```
+
+## 故障排查
+
+### Worker 无法互相发现
+
+1. **检查 rootDir 一致性** - 确保所有 Agent 使用相同的 `rootDir`（默认 `.tachikoma`）
+2. **检查协作是否启用** - 确认 `collaborationConfig.enabled: true`
+3. **检查 session 目录** - 查看 `.tachikoma/collaboration/registry/` 下是否有 Agent 注册文件
+
+### 请求超时
+
+1. **检查目标 Agent 状态** - 目标可能已离线或处于 busy 状态
+2. **增加超时时间** - 默认 30 秒，可通过 `timeout` 参数调整
+3. **检查请求处理器** - 确认目标 Agent 已注册 `onRequest` 处理器
 
 ## 类型导出
 

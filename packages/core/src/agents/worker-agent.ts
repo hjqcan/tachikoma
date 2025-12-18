@@ -19,6 +19,7 @@ import { coreTools } from '../tools';
 import type { ISessionFileManager } from '../orchestrator/session/types';
 import type { MCPClientManager } from '../mcp';
 import type { Logger, Tracer, MetricsCollector } from '../observability';
+import type { CollaborationIntegrationConfig } from '../worker/types';
 
 import { BaseAgent } from '../abstracts/base-agent';
 
@@ -42,6 +43,14 @@ export interface WorkerAgentOptions {
   mcpClient?: MCPClientManager;
   /** 是否自动注册 MCP 工具到 ToolRegistry（默认 true） */
   autoRegisterMCPTools?: boolean;
+
+  /**
+   * 协作配置（可选）
+   * 
+   * 如果提供，Worker 将启用 Multi-Agent 协作功能，
+   * 自动注册到协作管理器并获得 request_peer_assist 工具
+   */
+  collaborationConfig?: CollaborationIntegrationConfig;
 
   /** 可观测性注入（可选） */
   logger?: Logger;
@@ -87,6 +96,10 @@ export class WorkerAgent extends BaseAgent {
       model: config.model,
       maxTokens: config.maxTokens,
       ...(options.backendConfig ?? {}),
+      // 合并协作配置（如果提供）
+      ...(options.collaborationConfig && {
+        collaborationConfig: options.collaborationConfig,
+      }),
     };
 
     this.executor = new WorkerExecutor({

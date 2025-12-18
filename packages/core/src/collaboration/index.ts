@@ -62,3 +62,9 @@ export {
   createPeerAssistExecutor,
   createPeerAssistTool,
 } from './peer-assist-tool';
+
+// Protocol payloads (centralized schemas)
+export type {
+  PeerAssistRequestPayload,
+  PeerAssistRoutedResultPayload,
+} from './protocol';

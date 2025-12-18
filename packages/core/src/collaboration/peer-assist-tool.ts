@@ -10,6 +10,7 @@ import type { Tool } from '../types';
 import type { ToolResult } from '../tools/types';
 import type { AgentRegistration } from './types';
 import type { CollaborationManager } from './collaboration-manager';
+import type { PeerAssistRequestPayload } from './protocol';
 
 /**
  * Peer Assist 工具输入
@@ -17,12 +18,20 @@ import type { CollaborationManager } from './collaboration-manager';
 export interface PeerAssistInput {
   /** 目标能力要求（可选） */
   requiredCapabilities?: string[];
-  /** 指定目标 Agent ID（可选，优先于 capabilities） */
+  /**
+   * 指定目标 Agent ID（可选）
+   *
+   * 语义（最小侵入收敛）：
+   * - 如果该 ID 指向 orchestrator，则视为指定路由器（routerAgentId）
+   * - 否则视为 preferredWorkerId：一个路由约束/偏好（best-effort），由 orchestrator 决策
+   */
   targetAgentId?: string;
   /** 任务描述 */
   taskDescription: string;
   /** 任务负载（传给目标 Agent） */
   taskPayload?: unknown;
+  /** 如果 targetAgentId 被解析为 preferredWorkerId，则是否必须命中（默认 false） */
+  strictTarget?: boolean;
   /** 请求优先级（0-10，默认 5） */
   priority?: number;
   /** 超时时间（毫秒，默认 30000） */
@@ -116,72 +125,69 @@ export function createPeerAssistExecutor(
       targetAgentId,
       taskDescription,
       taskPayload,
+      strictTarget = false,
       priority = 5,
       timeout = 30000,
     } = input;
 
     try {
-      // 1. 确定目标 Agent
-      let target: AgentRegistration | null = null;
+      let routerAgentId: string | undefined;
+      let preferredWorkerId: string | undefined;
 
       if (targetAgentId) {
-        // 直接指定
-        target = await collaboration.registry.getAgent(targetAgentId);
-        if (!target || target.status !== 'online') {
-          return {
-            success: false,
-            error: `Target agent ${targetAgentId} not available`,
-          };
-        }
-      } else {
-        // 通过能力发现 - 包含 busy 状态以便回退
-        const peers = await collaboration.discoverPeers(requiredCapabilities, true);
-        const selfId = collaboration.getAgentId();
-
-        // 排除自己
-        const candidates = peers.filter((p: AgentRegistration) => p.agentId !== selfId);
-
-        if (candidates.length === 0) {
-          return {
-            success: false,
-            error: 'No suitable peers found',
-            data: {
-              success: false,
-              error: 'No suitable peers found',
-              availablePeers: peers,
-            },
-          };
-        }
-
-        // 选择优先级最高的空闲 Agent
-        target = candidates
-          .filter((p: AgentRegistration) => p.status === 'online')
-          .sort((a: AgentRegistration, b: AgentRegistration) => b.priority - a.priority)[0] ?? null;
-
-        if (!target) {
-          // 没有空闲的，选择 busy 中优先级最高的（可能正在处理其他请求）
-          target = candidates
-            .filter((p: AgentRegistration) => p.status === 'busy')
-            .sort((a: AgentRegistration, b: AgentRegistration) => b.priority - a.priority)[0] ?? null;
+        const reg = await collaboration.registry.getAgent(targetAgentId);
+        if (reg?.type === 'orchestrator') {
+          routerAgentId = reg.agentId;
+        } else {
+          preferredWorkerId = targetAgentId;
         }
       }
 
-      if (!target) {
+      const payload: PeerAssistRequestPayload = {
+        kind: 'peer_assist',
+        ...(requiredCapabilities && { requiredCapabilities }),
+        taskDescription,
+        ...(taskPayload !== undefined && { taskPayload }),
+        ...(preferredWorkerId && { preferredWorkerId }),
+        ...(preferredWorkerId && strictTarget ? { strictPreferredWorker: true } : {}),
+      };
+
+      // Route via orchestrator (hub) and let caller coordinate next steps.
+      const selfId = collaboration.getAgentId();
+      const self = selfId ? await collaboration.registry.getAgent(selfId) : null;
+      const sessionId = self?.sessionId;
+
+      const orchestrators = await collaboration.registry.listAgents({
+        ...(sessionId && { sessionId }),
+        type: 'orchestrator',
+      });
+
+      const onlineRouters = orchestrators
+        .filter((a: AgentRegistration) => a.status === 'online')
+        .sort((a: AgentRegistration, b: AgentRegistration) => b.priority - a.priority);
+
+      const router =
+        (routerAgentId
+          ? onlineRouters.find((r) => r.agentId === routerAgentId) ?? null
+          : null) ?? onlineRouters[0] ?? null;
+
+      if (!router) {
         return {
           success: false,
-          error: 'No target agent found',
+          error: 'No orchestrator router available for peer assist',
+          data: {
+            success: false,
+            error: 'No orchestrator router available for peer assist',
+            availablePeers: orchestrators,
+          },
         };
       }
 
-      // 2. 发送协作请求
       const response = await collaboration.broker.request({
         fromAgentId: collaboration.getAgentId() ?? 'unknown',
-        toAgentId: target.agentId,
+        toAgentId: router.agentId,
         type: 'assist',
-        payload: {
-          description: taskDescription,
-          data: taskPayload,
-        },
+        payload,
         timeout,
         priority,
       });
@@ -218,4 +224,3 @@ export function createPeerAssistTool(
     execute: createPeerAssistExecutor(collaboration),
   } as Tool;
 }
-

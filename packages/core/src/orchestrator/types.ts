@@ -246,6 +246,10 @@ export interface WorkerInfo {
   /** 能力标签（可执行的任务类型） */
   capabilities?: string[];
   /**
+   * Worker 优先级（用于协作路由，数值越大优先级越高，默认 5）
+   */
+  priority?: number;
+  /**
    * 绑定的 WorkerAgent（或兼容 Agent）
    *
    * 说明：WorkerPool “管理 + 调度”，执行由绑定的 Agent 负责。
@@ -725,10 +729,13 @@ export type OrchestratorEventType =
   | 'aggregate:complete'
   | 'checkpoint:created'
   | 'checkpoint:restored'
-  | 'approval:received'     // 收到审批请求
-  | 'approval:complete'     // 审批处理完成
-  | 'deviation:detected'    // 检测到偏离
-  | 'deviation:intervention'; // 发送干预指令
+  | 'approval:received'           // 收到审批请求
+  | 'approval:complete'           // 审批处理完成
+  | 'deviation:detected'          // 检测到偏离
+  | 'deviation:intervention'      // 发送干预指令
+  | 'collaboration:request_received'  // 收到协作请求
+  | 'collaboration:request_routed'    // 协作请求已路由
+  | 'collaboration:request_completed'; // 协作请求处理完成
 
 /**
  * Orchestrator 事件
