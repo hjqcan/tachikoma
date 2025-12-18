@@ -54,18 +54,16 @@ export class RedisAgentRegistry implements IAgentRegistry {
   private subscribeClient: IRedisClient | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly offlineThreshold: number;
-  private readonly heartbeatInterval: number;
 
   constructor(
     private readonly config: RedisConfig,
     private readonly createClient: (url: string) => Promise<IRedisClient>,
-    options: { offlineThreshold?: number; heartbeatInterval?: number } = {}
+    options: { offlineThreshold?: number } = {}
   ) {
     this.prefix = config.prefix ?? 'tachikoma:collab';
     this.registryKey = `${this.prefix}:agents`;
     this.changeChannel = `${this.prefix}:agent_changes`;
     this.offlineThreshold = options.offlineThreshold ?? 15000;
-    this.heartbeatInterval = options.heartbeatInterval ?? 5000;
   }
 
   /**
@@ -328,7 +326,7 @@ export class RedisAgentRegistry implements IAgentRegistry {
 export function createRedisAgentRegistry(
   config: RedisConfig,
   createClient: (url: string) => Promise<IRedisClient>,
-  options?: { offlineThreshold?: number; heartbeatInterval?: number }
+  options?: { offlineThreshold?: number }
 ): RedisAgentRegistry {
   return new RedisAgentRegistry(config, createClient, options);
 }

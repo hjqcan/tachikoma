@@ -320,7 +320,7 @@ export class Planner {
     } catch (error) {
       if (error instanceof LLMClientError && error.retryable) {
         const degradationResult = await this.tryDegradation(
-          { mode: 'patch', previousContext },
+          { mode: 'patch', ...(previousContext ? { previousContext } : {}) },
           input,
           totalTokens,
           totalRetries

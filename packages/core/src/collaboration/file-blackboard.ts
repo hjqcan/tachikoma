@@ -40,18 +40,6 @@ function base64urlEncode(str: string): string {
 }
 
 /**
- * Base64url 解码
- */
-function base64urlDecode(encoded: string): string {
-  // 恢复 padding
-  let base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
-  while (base64.length % 4) {
-    base64 += '=';
-  }
-  return Buffer.from(base64, 'base64').toString('utf-8');
-}
-
-/**
  * 文件系统 Blackboard
  */
 export class FileBlackboard implements IBlackboard {
@@ -80,19 +68,6 @@ export class FileBlackboard implements IBlackboard {
   private getEntryPath(key: string): string {
     const encodedKey = base64urlEncode(key);
     return join(this.blackboardDir, `${encodedKey}.json`);
-  }
-
-  /**
-   * 从文件名解码 key
-   */
-  private decodeKeyFromFilename(filename: string): string | null {
-    if (!filename.endsWith('.json')) return null;
-    const encoded = filename.slice(0, -5); // 移除 .json
-    try {
-      return base64urlDecode(encoded);
-    } catch {
-      return null;
-    }
   }
 
   /**

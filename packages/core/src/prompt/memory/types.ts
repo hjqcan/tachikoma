@@ -144,7 +144,9 @@ export interface IMemoryStore {
 export function createMemoryEntry(
   type: MemoryType,
   content: string,
-  options: Partial<Omit<MemoryEntry, 'id' | 'type' | 'content'>> = {}
+  options: Partial<Omit<MemoryEntry, 'id' | 'type' | 'content' | 'metadata'>> & {
+    metadata?: Partial<MemoryMetadata>;
+  } = {}
 ): MemoryEntry {
   const now = Date.now();
 

@@ -519,7 +519,9 @@ export class SpecKitFileManager {
         const trimmed = line.trim();
         if (trimmed.startsWith('Files:')) {
           // Files: `a`, `b`
-          const files = [...trimmed.matchAll(/`([^`]+)`/g)].map((m) => m[1]).filter(Boolean);
+          const files = [...trimmed.matchAll(/`([^`]+)`/g)]
+            .map((m) => m[1])
+            .filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
           currentTask.filePaths = files;
         } else if (trimmed.startsWith('Depends on:')) {
           const deps = trimmed
