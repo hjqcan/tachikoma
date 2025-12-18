@@ -156,10 +156,20 @@ export class WorkerAgent extends BaseAgent {
     const tools = this.options.tools ?? coreTools;
     const workDir = this.options.workDir ?? process.cwd();
 
+    // 从 task metadata 提取 noApproval 配置
+    const metadata = task.context?.metadata as Record<string, unknown> | undefined;
+    const noApproval = metadata?.noApproval === true;
+
     const execOptions: Partial<WorkerExecutionOptions> = {
       workDir,
       abortSignal: signal,
       ...(this.options.executionOptions ?? {}),
+      // 禁用关键决策审批（测试模式）
+      ...(noApproval && {
+        keyDecisionPolicy: {
+          enabled: false,
+        },
+      }),
     };
 
     const result = await this.executor.executeAndCollect(subtask, tools, execOptions);

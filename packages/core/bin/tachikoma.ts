@@ -22,6 +22,7 @@ interface RunOptions {
   task: string;
   workdir: string;
   verbose: boolean;
+  noApproval: boolean;
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
   model?: string | undefined;
@@ -85,7 +86,7 @@ function compactLine(text: string, maxLen = 160): string {
 // =============================================================================
 
 async function runCommand(options: RunOptions): Promise<void> {
-  const { task, workdir, verbose, apiKey, baseUrl, model } = options;
+  const { task, workdir, verbose, noApproval, apiKey, baseUrl, model } = options;
 
   console.log(`
 ${colors.bold}${colors.cyan}╔════════════════════════════════════════════════════════════╗
@@ -98,6 +99,9 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
   if (verbose) {
     logInfo('详细模式已启用');
+  }
+  if (noApproval) {
+    logWarn('审批已禁用（测试模式）');
   }
 
   console.log('');
@@ -125,6 +129,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
       },
       verbose,
       enableCheckpoints: false,
+      noApproval,
     });
 
     const session = await runner.createSession();
@@ -720,12 +725,14 @@ ${colors.bold}命令:${colors.reset}
   help        显示帮助信息
 
 ${colors.bold}选项 (run 命令):${colors.reset}
-  --task, -t      任务描述 (必需)
-  --workdir, -w   工作目录 (默认: ./workspace)
-  --verbose, -v   详细输出
-  --api-key       API Key（或设置 OPENROUTER_API_KEY/OPENAI_API_KEY）
-  --base-url      自定义端点（可选）
-  --model         模型名称（可选）
+  --task, -t        任务描述 (必需)
+  --workdir, -w     工作目录 (默认: ./workspace)
+  --verbose, -v     详细输出
+  --auto-approve    自动批准所有操作（测试模式，生产环境禁用）
+  --no-approval     --auto-approve 的别名
+  --api-key         API Key（或设置 OPENROUTER_API_KEY/OPENAI_API_KEY）
+  --base-url        自定义端点（可选）
+  --model           模型名称（可选）
 
 ${colors.bold}示例:${colors.reset}
   bun run packages/core/bin/tachikoma.ts run \\
@@ -769,12 +776,23 @@ async function main(): Promise<void> {
           task: { type: 'string', short: 't' },
           workdir: { type: 'string', short: 'w', default: './workspace' },
           verbose: { type: 'boolean', short: 'v', default: false },
+          'no-approval': { type: 'boolean', default: false },
+          'auto-approve': { type: 'boolean', default: false }, // 别名
           'api-key': { type: 'string' },
           'base-url': { type: 'string' },
           model: { type: 'string' },
         },
         strict: true,
       });
+
+      // 合并 --no-approval 和 --auto-approve
+      const autoApprove = values['no-approval'] || values['auto-approve'];
+
+      // 生产环境保护
+      if (autoApprove && process.env.NODE_ENV === 'production') {
+        logError('在生产环境中禁止使用 --no-approval/--auto-approve');
+        process.exit(1);
+      }
 
       if (!values.task) {
         logError('缺少 --task 参数');
@@ -786,6 +804,7 @@ async function main(): Promise<void> {
         task: values.task,
         workdir: values.workdir ?? './workspace',
         verbose: values.verbose ?? false,
+        noApproval: autoApprove,
         apiKey: values['api-key'],
         baseUrl: values['base-url'],
         model: values.model,

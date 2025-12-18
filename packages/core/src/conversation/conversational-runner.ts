@@ -435,6 +435,23 @@ export class ConversationalRunner {
           enableWatch: true,
           watchPollInterval: 300,
         },
+        // 禁用审批：自动批准所有请求
+        ...(this.config.noApproval && {
+          approval: {
+            defaultDecision: 'approve' as const,
+            autoApproveTypes: [
+              'file_deletion',
+              'multi_file_refactor',
+              'external_api_call',
+              'dangerous_operation',
+              'resource_intensive',
+            ],
+            autoRejectTypes: [],
+            lowImpactAutoApprove: true,
+            reversibleAutoApprove: true,
+            timeout: 1000, // 1秒超时
+          },
+        }),
       },
     });
 
@@ -488,6 +505,8 @@ export class ConversationalRunner {
               : {}),
           },
           memorySync: { strategy: 'selective' },
+          // 禁用关键决策审批（测试模式）
+          ...(this.config.noApproval && { noApproval: true }),
         },
       },
     };

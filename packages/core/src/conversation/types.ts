@@ -337,4 +337,6 @@ export interface ConversationalRunnerConfig {
   enableCheckpoints?: boolean;
   /** 详细日志 */
   verbose?: boolean;
+  /** 禁用审批（测试模式） */
+  noApproval?: boolean;
 }
