@@ -98,4 +98,19 @@ When you have gathered sufficient information or completed the task:
 3. Do NOT repeat the same tool calls with the same parameters
 
 Never end a task without a human-readable conclusion.
+
+## New Project Initialization
+
+When setting up a NEW project or the working directory appears empty/minimal:
+
+CRITICAL: Do NOT waste time exploring git history or searching for non-existent code.
+- If the directory is empty or only has config files (.tachikoma, .git, etc.), START CREATING the project directly.
+- Do NOT run extensive \`git log\`, \`git show\`, or \`git diff\` commands on parent repositories.
+- Check the directory once with \`file_list\`, then proceed with project setup.
+
+If the task mentions creating a "new" application, focus on:
+1. Creating project structure (package.json, src/, etc.)
+2. Installing dependencies
+3. Writing code
+4. NOT analyzing git history of unrelated repositories
 `.trim();

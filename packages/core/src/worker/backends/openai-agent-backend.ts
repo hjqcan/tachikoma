@@ -134,10 +134,28 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
       );
     case 'array': {
       const items = schema.items as Record<string, unknown> | undefined;
-      if (items) {
-        return z.array(jsonSchemaToZod(items)).nullable().optional();
-      }
-      return z.array(z.unknown()).nullable().optional();
+      // Use preprocess to handle LLM sending arrays as JSON strings (e.g. "[\"a\",\"b\"]")
+      return z.preprocess(
+        (val) => {
+          if (val === null || val === undefined) return val;
+          if (Array.isArray(val)) return val;
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+              try {
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed)) return parsed;
+              } catch {
+                // Not valid JSON, return undefined
+              }
+            }
+          }
+          return undefined;
+        },
+        items
+          ? z.array(jsonSchemaToZod(items)).nullable().optional()
+          : z.array(z.unknown()).nullable().optional()
+      );
     }
     case 'object': {
       const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
@@ -196,6 +214,31 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
               z.boolean()
             );
             zodProp = isRequired ? boolPreprocess : boolPreprocess.nullable().optional();
+            break;
+          }
+          case 'array': {
+            const items = propSchema.items as Record<string, unknown> | undefined;
+            const arraySchema = items ? z.array(jsonSchemaToZod(items)) : z.array(z.unknown());
+            const arrayPreprocess = z.preprocess(
+              (val) => {
+                if (val === null || val === undefined) return val;
+                if (Array.isArray(val)) return val;
+                if (typeof val === 'string') {
+                  const trimmed = val.trim();
+                  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+                    try {
+                      const parsed = JSON.parse(trimmed);
+                      if (Array.isArray(parsed)) return parsed;
+                    } catch {
+                      // Not valid JSON, return undefined
+                    }
+                  }
+                }
+                return undefined;
+              },
+              arraySchema
+            );
+            zodProp = isRequired ? arrayPreprocess : arrayPreprocess.nullable().optional();
             break;
           }
           default:
@@ -527,6 +570,12 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           }
 
           // 运行 Agent（流式模式）
+          // Use maxThinkingRounds from resourceLimits if available
+          const maxTurnsInput = options.resourceLimits?.maxThinkingRounds;
+          const configuredMaxTurns =
+            Number.isFinite(maxTurnsInput) && (maxTurnsInput as number) > 0
+              ? (maxTurnsInput as number)
+              : 50;
           interface RunOptionsType { 
             stream: true; 
             signal?: AbortSignal; 
@@ -534,7 +583,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           }
           const runOptions: RunOptionsType = {
             stream: true,
-            maxTurns: 50,
+            maxTurns: configuredMaxTurns,
           };
           // 只有当 signal 存在时才添加
           if (this.executionController.signal) {
@@ -607,7 +656,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
               yield createThinkingMessage('Resuming agent execution after approval...');
               const resumeOptions: RunOptionsType = {
                 stream: true,
-                maxTurns: 50, // Reset turns for resume
+                maxTurns: configuredMaxTurns, // Use same configured limit for resume
               };
               if (this.executionController.signal) {
                 resumeOptions.signal = this.executionController.signal;

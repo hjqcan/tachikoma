@@ -119,9 +119,12 @@ ${colors.bold}${colors.cyan}╔════════════════�
   console.log('');
 
   try {
+    // IMPORTANT: Resolve workdir to absolute path to prevent execution in wrong directory
+    const absoluteWorkDir = resolve(workdir);
+    
     const runner = new ConversationalRunner({
-      sessionDir: resolve(workdir, '.tachikoma', 'conversations'),
-      workDir: workdir,
+      sessionDir: resolve(absoluteWorkDir, '.tachikoma', 'conversations'),
+      workDir: absoluteWorkDir,
       llm: {
         apiKey: resolvedApiKey,
         baseUrl: baseUrl ?? process.env.OPENROUTER_BASE_URL,
