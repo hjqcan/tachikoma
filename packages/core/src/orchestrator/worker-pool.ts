@@ -145,6 +145,22 @@ export interface IWorkerPool {
   getWorkersByCapability(capabilities?: string[]): WorkerInfo[];
 
   /**
+   * 查找具有指定能力的空闲 Worker（用于懒加载分配）
+   * 
+   * @param capability - 需要匹配的能力标签（如 "role:frontend"）
+   * @returns 匹配的空闲 Worker，如无则返回 null
+   */
+  findIdleByCapability(capability: string): WorkerInfo | null;
+
+  /**
+   * 获取指定角色的所有 Worker（用于生成唯一 Worker ID）
+   * 
+   * @param roleId - 角色 ID（如 "frontend"）
+   * @returns 该角色的所有 Worker 列表
+   */
+  getWorkersByRole(roleId: string): WorkerInfo[];
+
+  /**
    * 分配任务给 Worker
    * @param subtask - 子任务
    * @param timeout - 超时时间（毫秒）
@@ -411,6 +427,28 @@ export class DefaultWorkerPool implements IWorkerPool {
     return [...available]
       .map(w => ({ ...w })) // 浅拷贝每个 WorkerInfo
       .sort((a, b) => (b.priority ?? 5) - (a.priority ?? 5));
+  }
+
+  /**
+   * 查找具有指定能力的空闲 Worker（用于懒加载分配）
+   */
+  findIdleByCapability(capability: string): WorkerInfo | null {
+    for (const worker of this.workers.values()) {
+      if (worker.status === 'idle' && worker.capabilities?.includes(capability)) {
+        return { ...worker }; // 返回副本
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 获取指定角色的所有 Worker
+   */
+  getWorkersByRole(roleId: string): WorkerInfo[] {
+    const cap = `role:${roleId}`;
+    return Array.from(this.workers.values())
+      .filter(w => w.capabilities?.includes(cap))
+      .map(w => ({ ...w })); // 返回副本
   }
 
   /**

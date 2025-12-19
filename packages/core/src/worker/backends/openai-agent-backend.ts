@@ -247,7 +247,7 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
         shapeEntries.push([key, zodProp]);
       }
 
-      return z.object(Object.fromEntries(shapeEntries));
+      return z.object(Object.fromEntries(shapeEntries)).strict();
     }
     default:
       return z.unknown();

@@ -55,6 +55,7 @@ import {
 } from './session';
 import { MemoryService } from '../memory';
 import { CollaborationManager } from '../collaboration';
+import type { MCPClientManager } from '../mcp';
 import { z } from 'zod';
 
 // ============================================================================
@@ -84,6 +85,8 @@ export interface OrchestratorOptions {
   workerPool?: IWorkerPool;
   /** SessionFileManager 实例（可选，用于注入测试） */
   sessionManager?: ISessionFileManager;
+  /** MCP 客户端管理器（可选，用于 Worker MCP 工具集成） */
+  mcpClient?: MCPClientManager;
 }
 
 /**
@@ -218,11 +221,17 @@ export class Orchestrator extends BaseAgent {
   /** 审批请求缓存 TTL（5 分钟） */
   private static readonly REQUEST_CACHE_TTL = 5 * 60 * 1000;
 
+  /** 角色定义缓存（用于懒加载 Worker 创建） */
+  private roleDefinitions: PlannerRole[] = [];
+
   /** Memory 服务（跨会话记忆） */
   private memoryService?: MemoryService;
 
   /** 协作管理器 */
   private collaborationManager?: CollaborationManager;
+
+  /** MCP 客户端管理器（用于 Worker MCP 工具集成） */
+  private mcpClient: MCPClientManager | undefined;
 
   /** 当前运行上下文（从 task.context.metadata 派生） */
   private currentRunMetadata: Record<string, unknown> | null = null;
@@ -297,6 +306,9 @@ export class Orchestrator extends BaseAgent {
       });
       console.debug('[Orchestrator] CollaborationManager created');
     }
+
+    // 保存 MCP 客户端管理器（用于 Worker MCP 工具集成）
+    this.mcpClient = options.mcpClient;
   }
 
   // ============================================================================
@@ -2188,22 +2200,162 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   /**
-   * 分配子任务给 Worker
+   * 分配子任务给 Worker（懒加载模式）
+   * 
+   * 工作流程：
+   * 1. 尝试找到具有匹配能力的空闲 Worker
+   * 2. 如果没有空闲 Worker 且池未满，按需创建新 Worker
+   * 3. 如果池已满，通过 WorkerPool 等待队列处理
    */
   private async assignToWorker(
     subtask: SubTask,
     timeout: number,
     retryPolicy: RetryPolicy
   ): Promise<AssignmentResult> {
+    const roleId = subtask.roleId;
+    const roleCap = roleId ? `role:${roleId}` : undefined;
+    
     const requiredCapabilities = Array.isArray(subtask.requiredCapabilities) && subtask.requiredCapabilities.length > 0
       ? subtask.requiredCapabilities
       : undefined;
-    const preferredWorkerId = subtask.roleId ? `worker-${subtask.roleId}` : undefined;
+    
+    // 1. 尝试找到匹配的空闲 Worker
+    if (roleCap) {
+      const idleWorker = this.workerPool.findIdleByCapability(roleCap);
+      if (idleWorker) {
+        console.debug(`[Orchestrator] Reusing idle worker ${idleWorker.id} for subtask ${subtask.id}`);
+        return this.workerPool.assign(subtask, timeout, retryPolicy, {
+          preferredWorkerId: idleWorker.id,
+          ...(requiredCapabilities && { requiredCapabilities }),
+        });
+      }
+    }
 
+    // 2. 如果没有空闲 Worker，尝试按需创建
+    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
+    if (this.workerPool.workerCount < maxWorkers && roleId) {
+      const newWorkerId = this.generateWorkerId(roleId);
+      const capabilities = this.getRoleCapabilities(roleId);
+      
+      await this.createAndRegisterWorker(newWorkerId, roleId, capabilities);
+      console.debug(`[Orchestrator] Created new worker ${newWorkerId} for subtask ${subtask.id}`);
+      
+      return this.workerPool.assign(subtask, timeout, retryPolicy, {
+        preferredWorkerId: newWorkerId,
+        ...(requiredCapabilities && { requiredCapabilities }),
+      });
+    }
+
+    // 3. 池已满或无角色信息，通过 WorkerPool 标准分配流程处理
+    const preferredWorkerId = roleId ? `worker-${roleId}` : undefined;
     return this.workerPool.assign(subtask, timeout, retryPolicy, {
       ...(requiredCapabilities && { requiredCapabilities }),
       ...(preferredWorkerId && { preferredWorkerId }),
     });
+  }
+
+  /**
+   * 生成唯一的 Worker ID
+   */
+  private generateWorkerId(roleId: string): string {
+    const existing = this.workerPool.getWorkersByRole(roleId);
+    if (existing.length === 0) return `worker-${roleId}`;
+    return `worker-${roleId}-${existing.length}`;
+  }
+
+  /**
+   * 获取角色对应的能力列表
+   */
+  private getRoleCapabilities(roleId: string): string[] {
+    const role = this.roleDefinitions.find(r => r.id === roleId);
+    const stableRoleCap = `role:${roleId}`;
+    if (role) {
+      return [
+        'general',
+        ...role.capabilities,
+        ...(role.capabilities.includes(stableRoleCap) ? [] : [stableRoleCap]),
+      ];
+    }
+    // 如果没有找到角色定义，返回基本能力
+    return ['general', stableRoleCap];
+  }
+
+  /**
+   * 按需创建并注册 Worker
+   */
+  private async createAndRegisterWorker(
+    workerId: string,
+    _roleId: string,
+    capabilities: string[]
+  ): Promise<void> {
+    const llm = this.extractLLMFromMetadata();
+    const workDir = this.extractWorkDirFromMetadata();
+    const canUseRealWorkerAgent = !!(llm && llm.apiKey);
+
+    // 获取协作配置（如果启用）
+    const collaborationConfig = this.buildWorkerCollaborationConfig(workerId, capabilities);
+
+    const agent = canUseRealWorkerAgent
+      ? new WorkerAgent(
+          workerId,
+          {
+            provider: llm?.provider ?? this.config.provider,
+            model: llm?.model ?? this.config.model,
+            maxTokens: this.config.maxTokens,
+            ...(this.config.temperature !== undefined && { temperature: this.config.temperature }),
+          },
+          {
+            ...(workDir !== undefined && { workDir }),
+            ...(this.sessionManager && { sessionManager: this.sessionManager }),
+            backendConfig: {
+              ...(llm?.apiKey && { apiKey: llm.apiKey }),
+              ...(llm?.baseUrl && { baseUrl: llm.baseUrl }),
+            },
+            ...(collaborationConfig && { collaborationConfig }),
+            // MCP 工具集成
+            ...(this.mcpClient && { mcpClient: this.mcpClient }),
+          }
+        )
+      : {
+          id: workerId,
+          type: 'worker' as const,
+          config: { provider: 'mock', model: 'mock', maxTokens: 0 },
+          run: async (t: Task): Promise<TaskResult> => ({
+            taskId: t.id,
+            status: 'success',
+            output: { objective: t.objective, message: 'mock worker' },
+            artifacts: [],
+            metrics: {
+              startTime: Date.now(),
+              endTime: Date.now(),
+              duration: 0,
+              tokensUsed: 0,
+              toolCallCount: 0,
+              retryCount: 0,
+            },
+            trace: {
+              traceId: generateTimestampId('trace'),
+              spanId: generateTimestampId('span'),
+              operation: `mock-worker.${workerId}.run`,
+              attributes: {},
+              events: [],
+              duration: 0,
+            },
+          }),
+          stop: async () => undefined,
+        };
+
+    this.workerPool.register({
+      id: workerId,
+      status: 'idle',
+      capabilities,
+      agent,
+    });
+
+    // 注册到 SessionManager
+    if (this.sessionManager) {
+      await this.sessionManager.registerWorker(workerId);
+    }
   }
 
   /**
@@ -2255,174 +2407,33 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   /**
-   * 注册默认 Workers
+   * 初始化 Worker 配置（懒加载模式）
    *
-   * @param planWorkerCount - 计划指定的 worker 数量（可选，默认使用配置值）
+   * 在懒加载模式下，此方法只存储角色定义，不再预创建 Workers。
+   * Workers 将在 assignToWorker 中按需创建。
+   * 
+   * @param opts.roles - 角色定义列表
    */
   private async registerDefaultWorkers(opts?: {
     workerCount?: number;
     roles?: PlannerRole[];
-    /** 每个角色需要的最大并发 Worker 数（来自执行计划分析） */
+    /** 每个角色需要的最大并发 Worker 数（已废弃，懒加载模式下忽略） */
     parallelRequirements?: Map<string, number>;
   }): Promise<void> {
-    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
     const roles = Array.isArray(opts?.roles) && opts.roles.length > 0 ? opts.roles : null;
-    const parallelReqs = opts?.parallelRequirements ?? new Map<string, number>();
 
-    // 计算每个角色需要的 Worker 数量
-    // 角色化 worker：每个角色至少 1 个，如果有并行需求则更多
-    let totalWorkersNeeded = 0;
-    const roleWorkerCounts = new Map<string, number>();
-    
+    // 懒加载模式：只存储角色定义，不预创建 Workers
+    // Workers 将在 assignToWorker 中按需创建
     if (roles) {
-      for (const role of roles) {
-        const parallelCount = parallelReqs.get(role.id) ?? 1;
-        roleWorkerCounts.set(role.id, parallelCount);
-        totalWorkersNeeded += parallelCount;
-      }
+      this.roleDefinitions = roles;
+      console.debug(`[Orchestrator] Lazy worker mode: stored ${roles.length} role definitions`);
     } else {
-      totalWorkersNeeded = opts?.workerCount ?? this.orchestratorConfig.delegation.workerCount;
+      // 非角色化模式：清空角色定义
+      this.roleDefinitions = [];
     }
 
-    // 限制最大 Worker 数
-    const workerCount = Math.min(totalWorkersNeeded, maxWorkers);
-
-    const llm = this.extractLLMFromMetadata();
-    const workDir = this.extractWorkDirFromMetadata();
-    const canUseRealWorkerAgent = !!(llm && llm.apiKey);
-
-    // 获取已注册的 worker IDs（用于增量注册）
-    const existingWorkerIds = new Set(this.workerPool.getAllWorkers().map((w) => w.id));
-
-    // 生成需要注册的 Worker 列表
-    interface WorkerToRegister {
-      workerId: string;
-      roleId?: string;
-      capabilities: string[];
-    }
-    const workersToRegister: WorkerToRegister[] = [];
-
-    if (roles) {
-      // 角色化模式：每个角色注册 parallelCount 个 Worker
-      for (const role of roles) {
-        const parallelCount = roleWorkerCounts.get(role.id) ?? 1;
-        for (let i = 0; i < parallelCount && workersToRegister.length < workerCount; i++) {
-          const workerId = i === 0 ? `worker-${role.id}` : `worker-${role.id}-${i}`;
-          const stableRoleCap = `role:${role.id}`;
-          workersToRegister.push({
-            workerId,
-            roleId: role.id,
-            capabilities: [
-              'general',
-              ...role.capabilities,
-              ...(role.capabilities.includes(stableRoleCap) ? [] : [stableRoleCap]),
-            ],
-          });
-        }
-      }
-    } else {
-      // 非角色化模式：注册通用 Worker
-      for (let i = 0; i < workerCount; i++) {
-        workersToRegister.push({
-          workerId: `worker-${i}`,
-          capabilities: ['general'],
-        });
-      }
-    }
-
-    // 注册 Workers
-    for (const { workerId, capabilities: desiredCapabilities } of workersToRegister) {
-
-      // 增量注册：已存在则“更新能力 + 确保 session 注册”，避免跨 run/角色变化导致路由失败
-      if (existingWorkerIds.has(workerId)) {
-        const existing = this.workerPool.getWorker(workerId);
-        if (existing) {
-          const mergedCaps = Array.from(
-            new Set([...(existing.capabilities ?? []), ...desiredCapabilities])
-          );
-
-          // DefaultWorkerPool 不提供直接更新 agent/capabilities 的 API
-          // 这里用 unregister/register 做 best-effort 更新（仅在 idle 时）
-          if (existing.status === 'idle') {
-            this.workerPool.unregister(workerId);
-            this.workerPool.register({
-              ...existing,
-              status: 'idle',
-              capabilities: mergedCaps,
-            });
-          }
-        }
-
-        if (this.sessionManager) {
-          await this.sessionManager.registerWorker(workerId);
-        }
-        continue;
-      }
-      
-      // 获取协作配置（如果启用）
-      const collaborationConfig = this.buildWorkerCollaborationConfig(workerId, desiredCapabilities);
-      
-      const agent = canUseRealWorkerAgent
-        ? new WorkerAgent(
-            workerId,
-            {
-              provider: llm?.provider ?? this.config.provider,
-              model: llm?.model ?? this.config.model,
-              maxTokens: this.config.maxTokens,
-              ...(this.config.temperature !== undefined && { temperature: this.config.temperature }),
-            },
-            {
-              ...(workDir !== undefined && { workDir }),
-              ...(this.sessionManager && { sessionManager: this.sessionManager }),
-              backendConfig: {
-                ...(llm?.apiKey && { apiKey: llm.apiKey }),
-                ...(llm?.baseUrl && { baseUrl: llm.baseUrl }),
-              },
-              // 传递协作配置
-              ...(collaborationConfig && { collaborationConfig }),
-            }
-          )
-        : {
-            id: workerId,
-            type: 'worker' as const,
-            config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-            run: async (t: Task): Promise<TaskResult> => ({
-              taskId: t.id,
-              status: 'success',
-              output: { objective: t.objective, message: 'mock worker' },
-              artifacts: [],
-              metrics: {
-                startTime: Date.now(),
-                endTime: Date.now(),
-                duration: 0,
-                tokensUsed: 0,
-                toolCallCount: 0,
-                retryCount: 0,
-              },
-              trace: {
-                traceId: generateTimestampId('trace'),
-                spanId: generateTimestampId('span'),
-                operation: `mock-worker.${workerId}.run`,
-                attributes: {},
-                events: [],
-                duration: 0,
-              },
-            }),
-            stop: async () => undefined,
-          };
-
-      this.workerPool.register({
-        id: workerId,
-        status: 'idle',
-        capabilities: desiredCapabilities,
-        agent,
-      });
-
-      // 注册到 SessionManager
-      if (this.sessionManager) {
-        await this.sessionManager.registerWorker(workerId);
-      }
-    }
+    // 注意：不再在这里预创建任何 Worker
+    // 所有 Worker 创建都通过 assignToWorker -> createAndRegisterWorker 按需进行
   }
 
   private extractWorkDirFromMetadata(): string | undefined {

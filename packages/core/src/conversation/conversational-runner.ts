@@ -23,6 +23,7 @@ import {
   type ExecutionSummary,
 } from './types';
 import type { ActionRecord, ThinkingRecord } from '../orchestrator/session/types';
+import { MCPClientManager, loadMCPConfig } from '../mcp';
 
 type UserLanguage = 'en' | 'zh';
 
@@ -39,6 +40,8 @@ export class ConversationalRunner {
   private readonly promptBuilder: ConversationPromptBuilder;
   private readonly contextManagers = new Map<string, ConversationContextManager>();
   private readonly orchestrators = new Map<string, Orchestrator>();
+  private mcpClient: MCPClientManager | undefined;
+  private mcpInitialized = false;
 
   constructor(config: ConversationalRunnerConfig) {
     this.config = config;
@@ -614,7 +617,10 @@ All other messages are sent to the AI for processing.`,
   /**
    * 获取/创建 Orchestrator（每个会话复用）
    */
-  private getOrchestrator(session: SessionState): Orchestrator {
+  private async getOrchestrator(session: SessionState): Promise<Orchestrator> {
+    // 初始化 MCP 客户端（懒加载）
+    await this.initializeMCPClient();
+
     const existing = this.orchestrators.get(session.sessionId);
     if (existing) return existing;
 
@@ -669,10 +675,56 @@ All other messages are sent to the AI for processing.`,
           },
         }),
       },
+      // 传递 MCP 客户端（仅在已初始化时）
+      ...(this.mcpClient && { mcpClient: this.mcpClient }),
     });
 
     this.orchestrators.set(session.sessionId, orchestrator);
     return orchestrator;
+  }
+
+  /**
+   * 初始化 MCP 客户端管理器（懒加载，只初始化一次）
+   */
+  private async initializeMCPClient(): Promise<void> {
+    if (this.mcpInitialized) return;
+    this.mcpInitialized = true;
+
+    try {
+      // 从工作目录加载 mcp.json 配置
+      const mcpConfig = await loadMCPConfig(this.config.workDir);
+      
+      if (!mcpConfig || !mcpConfig.servers || mcpConfig.servers.length === 0) {
+        console.debug('[ConversationalRunner] No MCP servers configured');
+        return;
+      }
+
+      // 创建 MCP 客户端管理器
+      this.mcpClient = new MCPClientManager(mcpConfig);
+
+      // 连接所有配置的服务器（并行）
+      const servers = mcpConfig.servers;
+      const client = this.mcpClient;
+      
+      const connectionPromises = servers
+        .filter(server => server.enabled !== false)
+        .map(async (serverConfig) => {
+          try {
+            await client.connect(serverConfig);
+            console.debug(`[ConversationalRunner] Connected to MCP server: ${serverConfig.name}`);
+            return { name: serverConfig.name, status: 'fulfilled' };
+          } catch (err) {
+            console.warn(`[ConversationalRunner] Failed to connect to MCP server ${serverConfig.name}:`, err);
+            return { name: serverConfig.name, status: 'rejected', reason: err };
+          }
+        });
+
+      await Promise.allSettled(connectionPromises);
+
+      console.info(`[ConversationalRunner] MCP client initialized with ${client.getConnectedServers().length} servers`);
+    } catch (err) {
+      console.warn('[ConversationalRunner] Failed to initialize MCP client:', err);
+    }
   }
 
   /**
@@ -683,7 +735,7 @@ All other messages are sent to the AI for processing.`,
     objective: string,
     options: { plannerMode: 'full' | 'patch'; maxSubtasks?: number } = { plannerMode: 'full' }
   ): AsyncGenerator<StreamEvent> {
-    const orchestrator = this.getOrchestrator(session);
+    const orchestrator = await this.getOrchestrator(session);
     const taskId = `task-${randomUUID().substring(0, 8)}`;
 
     const contextText = this.promptBuilder.buildContext(session);
