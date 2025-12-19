@@ -11,6 +11,7 @@ import {
   fileWriteTool,
   fileListTool,
   shellRunTool,
+  shellBgTool,
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
@@ -156,6 +157,7 @@ export const baseTools: Tool[] = [
   fileListTool,
   // Shell工具
   shellRunTool,
+  shellBgTool,
   // 代码工具
   codeSearchTool,
   applyPatchTool,

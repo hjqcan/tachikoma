@@ -38,6 +38,58 @@ When using \`file_list\`:
 - Results are capped to prevent context overflow.
 - Prefer non-recursive listing first, then drill down into specific directories.
 
+## Web Development Workflow
+
+When developing web applications:
+
+### Starting Dev Servers
+CRITICAL: Do NOT use \`shell_run\` for long-running commands like \`npm run dev\`, \`vite\`, \`uvicorn\`, etc.
+
+Use one of these approaches instead:
+1. **\`dev_server\` tool** (recommended): Manages server lifecycle with health checks
+   \`\`\`
+   { "action": "start", "command": "npm run dev", "port": 3000 }
+   \`\`\`
+2. **\`shell_run\` with \`background: true\`**: For simpler background processes
+   \`\`\`
+   { "command": "npm run dev", "background": true }
+   \`\`\`
+
+### Managing Background Processes
+Use \`shell_bg\` to list, kill, or get logs from background processes:
+- \`{ "action": "list" }\` - List all background processes
+- \`{ "action": "kill", "processId": "bg-1" }\` - Kill a process
+- \`{ "action": "logs", "processId": "bg-1" }\` - Get process output
+
+### Verifying Web Applications (using Chrome DevTools MCP)
+After starting a server, use Chrome DevTools MCP tools to verify the page:
+
+1. **Navigate to URL**:
+   \`\`\`
+   mcp_chrome-devtools_navigate_page { "url": "http://localhost:3000" }
+   \`\`\`
+
+2. **Take a screenshot** to visually verify:
+   \`\`\`
+   mcp_chrome-devtools_take_screenshot {}
+   \`\`\`
+
+3. **Check console for errors**:
+   \`\`\`
+   mcp_chrome-devtools_list_console_messages {}
+   \`\`\`
+
+### Other Useful Chrome DevTools MCP Tools:
+- \`mcp_chrome-devtools_evaluate_script\` - Execute JavaScript
+- \`mcp_chrome-devtools_click\` - Click an element
+- \`mcp_chrome-devtools_fill\` - Fill an input field
+- \`mcp_chrome-devtools_list_network_requests\` - Check network activity
+
+### DO NOT:
+- Run \`npm run dev\` with regular \`shell_run\` (will timeout after 30s)
+- Skip verification after starting a server
+- Ignore console errors in verification output
+
 ## Task Completion Rules
 
 When you have gathered sufficient information or completed the task:

@@ -22,6 +22,8 @@ import { noopLogger, createTracer, noopMetrics, WORKER_METRICS } from '../observ
 import type { MCPClientManager } from '../mcp';
 import { MCPToolRegistrar } from '../mcp';
 import { globalToolRegistry } from '../tools/registry';
+import { cleanupBackgroundProcessesForTask } from '../tools/core/shell-run';
+import { cleanupServersForTask } from '../tools/core/dev-server';
 
 // ============================================================================
 // 类型定义
@@ -449,6 +451,16 @@ export class WorkerExecutor {
       this.logger.error('Subtask execution failed', { ...logContext, error: error instanceof Error ? error.message : 'Unknown error' });
 
       throw error;
+    } finally {
+      try {
+        cleanupBackgroundProcessesForTask(subtask.id);
+        cleanupServersForTask(subtask.id);
+      } catch (cleanupError) {
+        this.logger.warn('Failed to cleanup task processes', {
+          ...logContext,
+          error: cleanupError instanceof Error ? cleanupError.message : 'Unknown error',
+        });
+      }
     }
 
     // 构建最终指标（用于调试日志）

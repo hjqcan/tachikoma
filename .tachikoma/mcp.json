@@ -4,6 +4,10 @@
       "command": "npx",
       "args": ["-y", "@anthropic-ai/mcp-server-playwright"],
       "env": {}
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"]
     }
   }
 }

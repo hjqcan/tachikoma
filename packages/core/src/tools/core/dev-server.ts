@@ -58,6 +58,8 @@ interface ServerInstance {
   command: string;
   startedAt: number;
   logs: string[];
+  taskId: string;
+  agentId: string;
 }
 
 // =============================================================================
@@ -203,6 +205,8 @@ async function startServer(
     command,
     startedAt: Date.now(),
     logs,
+    taskId: context.taskId,
+    agentId: context.agentId,
   };
   runningServers.set(serverId, instance);
 
@@ -451,6 +455,16 @@ Returns pid/url and a short startup log preview.`,
  */
 export function cleanupAllServers(): void {
   for (const [serverId, instance] of runningServers.entries()) {
+    if (instance.process.pid && !instance.process.killed) {
+      killProcessGroup(instance.process.pid, 'SIGKILL');
+    }
+    runningServers.delete(serverId);
+  }
+}
+
+export function cleanupServersForTask(taskId: string): void {
+  for (const [serverId, instance] of runningServers.entries()) {
+    if (instance.taskId !== taskId) continue;
     if (instance.process.pid && !instance.process.killed) {
       killProcessGroup(instance.process.pid, 'SIGKILL');
     }

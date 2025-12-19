@@ -51,11 +51,15 @@ const DEFAULT_RETRY_POLICY: RetryPolicy = {
 
 function resolveRetryPolicy(policy?: RetryPolicy): RetryPolicy {
   if (!policy) return DEFAULT_RETRY_POLICY;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- DEFAULT values are always defined
+  const backoffFactor: number = policy.backoffFactor ?? DEFAULT_RETRY_POLICY.backoffFactor!;
+  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- DEFAULT values are always defined
+  const maxDelay: number = policy.maxDelay ?? DEFAULT_RETRY_POLICY.maxDelay!;
   return {
     maxRetries: policy.maxRetries,
     baseDelay: policy.baseDelay,
-    backoffFactor: policy.backoffFactor ?? DEFAULT_RETRY_POLICY.backoffFactor,
-    maxDelay: policy.maxDelay ?? DEFAULT_RETRY_POLICY.maxDelay,
+    backoffFactor,
+    maxDelay,
   };
 }
 

@@ -30,8 +30,23 @@ export { dockerizeTool } from './dockerize';
 // 技能工具
 export { createSkillTool } from './create-skill';
 
-// 开发服务器工具（不含 browserVerifyTool，浏览器工具应从 browser.ts opt-in）
-export { devServerTool, cleanupAllServers } from './dev-server';
+// 开发服务器工具
+export { devServerTool, cleanupAllServers, cleanupServersForTask } from './dev-server';
+
+// 后台进程管理工具 (Agent-facing, like Claude Code /bashes)
+export { shellBgTool } from './shell-bg';
+
+// 浏览器验证工具 (需要 playwright)
+export { browserVerifyTool } from './browser-verify';
+
+// 后台进程管理 (Claude Code-like /bashes)
+export { 
+  listBackgroundProcesses, 
+  killBackgroundProcess, 
+  getBackgroundProcessOutput,
+  cleanupBackgroundProcesses,
+  cleanupBackgroundProcessesForTask,
+} from './shell-run';
 
 // 安全工具函数
 export {
