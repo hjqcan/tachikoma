@@ -100,9 +100,38 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
       return z.string().nullable().optional();
     case 'number':
     case 'integer':
-      return z.number().nullable().optional();
+      // Use preprocess to handle LLM sending numbers as strings (e.g. "10000")
+      // Also handle empty strings → undefined, non-finite values → reject
+      return z.preprocess(
+        (val) => {
+          if (val === null || val === undefined) return val;
+          if (typeof val === 'number') return Number.isFinite(val) ? val : undefined;
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (trimmed === '') return undefined;
+            const num = Number(trimmed);
+            return Number.isFinite(num) ? num : undefined;
+          }
+          return undefined;
+        },
+        z.number().nullable().optional()
+      );
     case 'boolean':
-      return z.boolean().nullable().optional();
+      // Use preprocess to handle LLM sending booleans as strings (e.g. "False", " true ", "0", "1")
+      return z.preprocess(
+        (val) => {
+          if (val === null || val === undefined) return val;
+          if (typeof val === 'boolean') return val;
+          if (typeof val === 'number') return Number.isFinite(val) ? val !== 0 : undefined;
+          if (typeof val === 'string') {
+            const trimmed = val.trim().toLowerCase();
+            if (['true', '1', 'yes'].includes(trimmed)) return true;
+            if (['false', '0', 'no'].includes(trimmed)) return false;
+          }
+          return undefined;
+        },
+        z.boolean().nullable().optional()
+      );
     case 'array': {
       const items = schema.items as Record<string, unknown> | undefined;
       if (items) {
@@ -131,12 +160,44 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
             zodProp = isRequired ? z.string() : z.string().nullable().optional();
             break;
           case 'number':
-          case 'integer':
-            zodProp = isRequired ? z.number() : z.number().nullable().optional();
+          case 'integer': {
+            // Use preprocess for robust number coercion with validation
+            const numPreprocess = z.preprocess(
+              (val) => {
+                if (val === null || val === undefined) return val;
+                if (typeof val === 'number') return Number.isFinite(val) ? val : undefined;
+                if (typeof val === 'string') {
+                  const trimmed = val.trim();
+                  if (trimmed === '') return undefined;
+                  const num = Number(trimmed);
+                  return Number.isFinite(num) ? num : undefined;
+                }
+                return undefined;
+              },
+              z.number()
+            );
+            zodProp = isRequired ? numPreprocess : numPreprocess.nullable().optional();
             break;
-          case 'boolean':
-            zodProp = isRequired ? z.boolean() : z.boolean().nullable().optional();
+          }
+          case 'boolean': {
+            // Use preprocess to handle LLM sending booleans as strings (e.g. "False", " True ", "0", "1")
+            const boolPreprocess = z.preprocess(
+              (val) => {
+                if (val === null || val === undefined) return val;
+                if (typeof val === 'boolean') return val;
+                if (typeof val === 'number') return Number.isFinite(val) ? val !== 0 : undefined;
+                if (typeof val === 'string') {
+                  const trimmed = val.trim().toLowerCase();
+                  if (['true', '1', 'yes'].includes(trimmed)) return true;
+                  if (['false', '0', 'no'].includes(trimmed)) return false;
+                }
+                return undefined;
+              },
+              z.boolean()
+            );
+            zodProp = isRequired ? boolPreprocess : boolPreprocess.nullable().optional();
             break;
+          }
           default:
             zodProp = isRequired ? z.unknown() : z.unknown().nullable().optional();
         }
