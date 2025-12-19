@@ -25,7 +25,7 @@ import type {
   KeyDecisionPolicy,
   RiskPolicy,
 } from '../types';
-import type { Tool } from '../../types';
+import type { RetryPolicy, Tool } from '../../types';
 import { isKeyDecision } from '../key-decision';
 import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 
@@ -41,6 +41,31 @@ import {
   createToolResultMessage,
   isRetryableError,
 } from './base-backend';
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxRetries: 1,
+  baseDelay: 1000,
+  backoffFactor: 2,
+  maxDelay: 10000,
+};
+
+function resolveRetryPolicy(policy?: RetryPolicy): RetryPolicy {
+  if (!policy) return DEFAULT_RETRY_POLICY;
+  return {
+    maxRetries: policy.maxRetries,
+    baseDelay: policy.baseDelay,
+    backoffFactor: policy.backoffFactor ?? DEFAULT_RETRY_POLICY.backoffFactor,
+    maxDelay: policy.maxDelay ?? DEFAULT_RETRY_POLICY.maxDelay,
+  };
+}
+
+function calculateRetryDelay(retryPolicy: RetryPolicy, attemptNumber: number): number {
+  const { baseDelay, backoffFactor = 1, maxDelay } = retryPolicy;
+  const delay = baseDelay * Math.pow(backoffFactor, attemptNumber - 1);
+  const jitter = delay * 0.1 * (Math.random() * 2 - 1);
+  const finalDelay = Math.round(delay + jitter);
+  return maxDelay ? Math.min(finalDelay, maxDelay) : finalDelay;
+}
 
 // ============================================================================
 // JSON Schema to Zod 转换辅助
@@ -327,6 +352,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     // 开始执行
     this.executionController.start();
     let abortHandler: (() => void) | undefined;
+    const retryPolicy = resolveRetryPolicy(options.retryPolicy);
+    const maxRetries = Math.max(0, retryPolicy.maxRetries);
+    let attempt = 0;
 
     try {
       // 集成外部 abortSignal（如果提供）
@@ -343,225 +371,281 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         options.abortSignal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      // 发出初始化状态
-      yield createStatusMessage('initializing');
+      while (true) {
+        let toolCallsInAttempt = 0;
 
-      // 重置任务状态
-      this.memoryManager.reset();
-      this.toolMap.clear();
-
-      // 构建工具映射和 SDK 工具
-      for (const tool of tools) {
-        this.toolMap.set(tool.name, tool);
-      }
-
-      // 跟踪最终结果（用于记忆保存）
-      let finalResult = '';
-      let lastAssistantContent = '';
-      // Memory: 自动检索相关记忆
-      const memoryContext = await this.memoryManager.retrieve(
-        task.objective,
-        this.config.memoryConfig?.topK ?? 5,
-        this.config.memoryConfig?.retrievalCooldownMs ?? 10000
-      );
-
-      // 构建系统提示
-      const systemPrompt = this.buildSystemPrompt(memoryContext);
-
-      // 转换工具为 SDK tool() 格式
-      const sdkTools = this.convertToolsToSDKFormat(tools, sdkTool, options, task);
-
-      // 创建 Agent 实例
-      const agent = new Agent({
-        name: 'TachikomaWorker',
-        instructions: systemPrompt,
-        tools: sdkTools,
-        model: this.config.model,
-      });
-
-      // 配置 OpenAI 客户端（避免 env 污染）
-      // SDK 使用 setDefaultOpenAIClient() 而非 OpenAIProvider constructor
-      if (this.config.apiKey || this.config.baseUrl) {
         try {
-          // @ts-expect-error - openai is an optional peer dependency
-          const openaiSdk = await import('openai');
-          const OpenAIClass = openaiSdk.default || openaiSdk.OpenAI;
-          const client = new OpenAIClass({
-            apiKey: this.config.apiKey || process.env.OPENAI_API_KEY,
-            baseURL: this.config.baseUrl || process.env.OPENAI_BASE_URL,
-          });
-          
-          // 使用 SDK 的 setDefaultOpenAIClient
-          const agentsSdk = await import('@openai/agents');
-          if (agentsSdk.setDefaultOpenAIClient) {
-            agentsSdk.setDefaultOpenAIClient(client);
-            console.debug('[OpenAIAgentsBackend] Custom OpenAI client configured');
-          } else if (agentsSdk.setDefaultOpenAIKey && this.config.apiKey) {
-            // 备选: setDefaultOpenAIKey
-            agentsSdk.setDefaultOpenAIKey(this.config.apiKey);
-            console.debug('[OpenAIAgentsBackend] Custom API key configured');
+          // 发出初始化状态
+          yield createStatusMessage('initializing');
+
+          // 重置任务状态
+          this.memoryManager.reset();
+          this.toolMap.clear();
+
+          // 构建工具映射和 SDK 工具
+          for (const tool of tools) {
+            this.toolMap.set(tool.name, tool);
           }
-        } catch (err) {
-          console.warn('[OpenAIAgentsBackend] Could not configure custom OpenAI client:', err);
-        }
-      }
 
-      // 运行 Agent（流式模式）
-      interface RunOptionsType { 
-        stream: true; 
-        signal?: AbortSignal; 
-        maxTurns: number;
-      }
-      const runOptions: RunOptionsType = {
-        stream: true,
-        maxTurns: 50,
-      };
-      // 只有当 signal 存在时才添加
-      if (this.executionController.signal) {
-        runOptions.signal = this.executionController.signal;
-      }
-      const streamResult = await run(agent, task.objective, runOptions);
-
-      // 处理流式事件
-      // streamResult 在 stream: true 时是 AsyncIterable
-      const eventStream = streamResult as AsyncIterable<SDKStreamEvent>;
-
-      for await (const event of eventStream) {
-        // 检查是否已中断
-        if (this.executionController.isAborted) {
-          yield createStatusMessage('interrupted');
-          break;
-        }
-
-        // 转换 SDK 事件为 WorkerMessage
-        const messages = this.mapSDKEvent(event);
-        for (const msg of messages) {
-          // 跟踪内容
-          if (msg.type === 'output') {
-            finalResult = msg.content;
-          } else if (msg.type === 'thinking') {
-            lastAssistantContent = msg.content;
-          }
-          yield msg;
-        }
-      }
-
-      // ========================================
-      // Phase 4: SDK 审批中断 Resume 流程
-      // ========================================
-      // 将 streamResult 转为 SDKRunResult 以访问 interruptions
-      const runResult = streamResult as unknown as SDKRunResult;
-      let hasInterruptions = (runResult.interruptions?.length ?? 0) > 0;
-      let currentState = runResult.state;
-      let currentResult = runResult;
-
-      while (hasInterruptions && !this.executionController.isAborted) {
-        yield createThinkingMessage('Processing tool approval requests...');
-
-        for (const interruption of currentResult.interruptions ?? []) {
-          // 创建审批请求消息（带 policy 参数）
-          const approvalRequest = this.createApprovalRequestFromInterruption(
-            interruption, 
-            task, 
-            options.keyDecisionPolicy, 
-            options.riskPolicy
+          // 跟踪最终结果（用于记忆保存）
+          let finalResult = '';
+          let lastAssistantContent = '';
+          // Memory: 自动检索相关记忆
+          const memoryContext = await this.memoryManager.retrieve(
+            task.objective,
+            this.config.memoryConfig?.topK ?? 5,
+            this.config.memoryConfig?.retrievalCooldownMs ?? 10000
           );
-          yield approvalRequest;
 
-          // 等待审批（传入 taskId 用于审计追踪）
-          // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
-          const approved = await this.waitForApproval(approvalRequest, options, 300000, 'reject', task.id);
+          // 构建系统提示
+          const systemPrompt = this.buildSystemPrompt(memoryContext);
 
-          // 在 state 上标记批准/拒绝
-          if (currentState) {
-            if (approved) {
-              currentState.approve(interruption);
-            } else {
-              currentState.reject(interruption);
+          // 转换工具为 SDK tool() 格式
+          const sdkTools = this.convertToolsToSDKFormat(
+            tools,
+            sdkTool,
+            options,
+            task,
+            () => {
+              toolCallsInAttempt += 1;
+            }
+          );
+
+          // 创建 Agent 实例
+          const agent = new Agent({
+            name: 'TachikomaWorker',
+            instructions: systemPrompt,
+            tools: sdkTools,
+            model: this.config.model,
+          });
+
+          // 配置 OpenAI 客户端
+          // SDK 使用 setDefaultOpenAIClient() 而非 OpenAIProvider constructor
+          const openRouterApiKey = options.env?.OPENROUTER_API_KEY || process.env.OPENROUTER_API_KEY;
+          const openAiApiKey = options.env?.OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+          const apiKey = this.config.apiKey || openRouterApiKey || openAiApiKey;
+
+          const openRouterBaseUrl = options.env?.OPENROUTER_BASE_URL || process.env.OPENROUTER_BASE_URL;
+          const openAiBaseUrl = options.env?.OPENAI_BASE_URL || process.env.OPENAI_BASE_URL;
+          const baseUrl = this.config.baseUrl || (apiKey === openRouterApiKey ? openRouterBaseUrl : openAiBaseUrl);
+
+          if (apiKey) {
+            try {
+              // @ts-ignore - openai is an optional peer dependency
+              const openaiSdk = await import('openai');
+              const OpenAIClass = openaiSdk.default || openaiSdk.OpenAI;
+              const client = new OpenAIClass({
+                apiKey: apiKey,
+                baseURL: baseUrl,
+              });
+              
+              // 使用 SDK 的 setDefaultOpenAIClient
+              const agentsSdk = await import('@openai/agents');
+              if (agentsSdk.setDefaultOpenAIClient) {
+                // @ts-expect-error - version mismatch between dynamic import and agents sdk
+                agentsSdk.setDefaultOpenAIClient(client);
+                console.debug('[OpenAIAgentsBackend] Custom OpenAI client configured');
+              } else if (agentsSdk.setDefaultOpenAIKey) {
+                // 备选: setDefaultOpenAIKey
+                agentsSdk.setDefaultOpenAIKey(apiKey);
+                console.debug('[OpenAIAgentsBackend] Custom API key configured');
+              }
+
+              // 修复: 如果没有设置 OPENAI_API_KEY (例如使用 OpenRouter)，SDK 默认的 Tracing Exporter 会报警告
+              // 手动禁用 Tracing (清空 processors)
+              if (!process.env.OPENAI_API_KEY && agentsSdk.setTraceProcessors) {
+                agentsSdk.setTraceProcessors([]);
+              }
+            } catch (err) {
+              console.warn('[OpenAIAgentsBackend] Could not configure custom OpenAI client:', err);
             }
           }
-        }
 
-        // 恢复执行：run(agent, state) 需要带 signal 保持中断能力
-        if (currentState) {
-          yield createThinkingMessage('Resuming agent execution after approval...');
-          const resumeOptions: RunOptionsType = {
+          // 运行 Agent（流式模式）
+          interface RunOptionsType { 
+            stream: true; 
+            signal?: AbortSignal; 
+            maxTurns: number;
+          }
+          const runOptions: RunOptionsType = {
             stream: true,
-            maxTurns: 50, // Reset turns for resume
+            maxTurns: 50,
           };
+          // 只有当 signal 存在时才添加
           if (this.executionController.signal) {
-            resumeOptions.signal = this.executionController.signal;
+            runOptions.signal = this.executionController.signal;
           }
-          const resumeResult = await run(agent, currentState as unknown, resumeOptions);
-          
-          // Resume result is also a stream if stream: true
-          const resumeEventStream = resumeResult as unknown as AsyncIterable<SDKStreamEvent>;
-          for await (const event of resumeEventStream) {
-             if (this.executionController.isAborted) {
-               yield createStatusMessage('interrupted');
-               break;
-             }
-             const messages = this.mapSDKEvent(event);
-             for (const msg of messages) {
-               // Track content from resumed stream
-               if (msg.type === 'output') {
-                 finalResult = msg.content;
-               } else if (msg.type === 'thinking') {
-                 lastAssistantContent = msg.content;
-               }
-               yield msg;
-             }
+          const streamResult = await run(agent, task.objective, runOptions);
+
+          // 处理流式事件
+          // streamResult 在 stream: true 时是 AsyncIterable
+          const eventStream = streamResult as AsyncIterable<SDKStreamEvent>;
+
+          for await (const event of eventStream) {
+            // 检查是否已中断
+            if (this.executionController.isAborted) {
+              yield createStatusMessage('interrupted');
+              break;
+            }
+
+            // 转换 SDK 事件为 WorkerMessage
+            const messages = this.mapSDKEvent(event);
+            for (const msg of messages) {
+              // 跟踪内容
+              if (msg.type === 'output') {
+                finalResult = msg.content;
+              } else if (msg.type === 'thinking') {
+                lastAssistantContent = msg.content;
+              }
+              yield msg;
+            }
           }
 
-          // After stream finishes, get latest result/state
-          currentResult = resumeResult as unknown as SDKRunResult;
-          currentState = currentResult.state;
-          hasInterruptions = (currentResult.interruptions?.length ?? 0) > 0;
+          // ========================================
+          // Phase 4: SDK 审批中断 Resume 流程
+          // ========================================
+          // 将 streamResult 转为 SDKRunResult 以访问 interruptions
+          const runResult = streamResult as unknown as SDKRunResult;
+          let hasInterruptions = (runResult.interruptions?.length ?? 0) > 0;
+          let currentState = runResult.state;
+          let currentResult = runResult;
 
-          // 如果有最终输出，更新
-          if (currentResult.finalOutput) {
-            finalResult = currentResult.finalOutput;
-            // mapSDKEvent already emitted output, so we don't need to emit again strictly, 
-            // but finalOutput might update. Duplicate output is better than missing.
-            // Actually mapSDKEvent handles message_output_created. 
-            // If finalOutput is just the accumulated text, we might skip emitting here if already emitted.
-            // But let's keep it safe.
-            // yield createOutputMessage(finalResult); 
-            // Better to rely on stream events.
+          while (hasInterruptions && !this.executionController.isAborted) {
+            yield createThinkingMessage('Processing tool approval requests...');
+
+            for (const interruption of currentResult.interruptions ?? []) {
+              // 创建审批请求消息（带 policy 参数）
+              const approvalRequest = this.createApprovalRequestFromInterruption(
+                interruption, 
+                task, 
+                options.keyDecisionPolicy, 
+                options.riskPolicy
+              );
+              yield approvalRequest;
+
+              // 等待审批（传入 taskId 用于审计追踪）
+              // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
+              const approved = await this.waitForApproval(approvalRequest, options, 300000, 'reject', task.id);
+
+              // 在 state 上标记批准/拒绝
+              if (currentState) {
+                if (approved) {
+                  currentState.approve(interruption);
+                } else {
+                  currentState.reject(interruption);
+                }
+              }
+            }
+
+            // 恢复执行：run(agent, state) 需要带 signal 保持中断能力
+            if (currentState) {
+              yield createThinkingMessage('Resuming agent execution after approval...');
+              const resumeOptions: RunOptionsType = {
+                stream: true,
+                maxTurns: 50, // Reset turns for resume
+              };
+              if (this.executionController.signal) {
+                resumeOptions.signal = this.executionController.signal;
+              }
+              const resumeResult = await run(agent, currentState as unknown, resumeOptions);
+              
+              // Resume result is also a stream if stream: true
+              const resumeEventStream = resumeResult as unknown as AsyncIterable<SDKStreamEvent>;
+              for await (const event of resumeEventStream) {
+                 if (this.executionController.isAborted) {
+                   yield createStatusMessage('interrupted');
+                   break;
+                 }
+                 const messages = this.mapSDKEvent(event);
+                 for (const msg of messages) {
+                   // Track content from resumed stream
+                   if (msg.type === 'output') {
+                     finalResult = msg.content;
+                   } else if (msg.type === 'thinking') {
+                     lastAssistantContent = msg.content;
+                   }
+                   yield msg;
+                 }
+              }
+
+              // After stream finishes, get latest result/state
+              currentResult = resumeResult as unknown as SDKRunResult;
+              currentState = currentResult.state;
+              hasInterruptions = (currentResult.interruptions?.length ?? 0) > 0;
+
+              // 如果有最终输出，更新
+              if (currentResult.finalOutput) {
+                finalResult = currentResult.finalOutput;
+                // mapSDKEvent already emitted output, so we don't need to emit again strictly, 
+                // but finalOutput might update. Duplicate output is better than missing.
+                // Actually mapSDKEvent handles message_output_created. 
+                // If finalOutput is just the accumulated text, we might skip emitting here if already emitted.
+                // But let's keep it safe.
+                // yield createOutputMessage(finalResult); 
+                // Better to rely on stream events.
+              }
+            } else {
+              break;
+            }
           }
-        } else {
-          break;
+
+          // 检查是否在审批循环中被中断
+          if (this.executionController.isAborted) {
+            yield createStatusMessage('interrupted');
+            return;
+          }
+
+          // 使用最终结果，否则回退到最后的助手内容
+          const resultToSave = finalResult || lastAssistantContent;
+
+          // Memory: 自动保存任务结果（仅在未中断时）
+          if (resultToSave) {
+            await this.memoryManager.save(task.objective, resultToSave, {
+              sessionId: task.sessionId,
+              taskId: task.id,
+            });
+          }
+
+          // Phase 6: 提取 token 指标
+          const totalTokens = currentResult.usage?.totalTokens;
+
+          // 发出完成状态（带 token 指标）
+          const statusMsg: WorkerMessage = {
+            type: 'status' as const,
+            status: 'completed' as const,
+            timestamp: Date.now(),
+            ...(totalTokens !== undefined && { tokensUsed: totalTokens }),
+          };
+          yield statusMsg;
+          return;
+        } catch (error) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          const retryable = isRetryableError(err);
+          const shouldRetry =
+            retryable &&
+            attempt < maxRetries &&
+            toolCallsInAttempt === 0 &&
+            !this.executionController.isAborted &&
+            options.abortSignal?.aborted !== true;
+
+          if (!shouldRetry) {
+            throw err;
+          }
+
+          const delay = calculateRetryDelay(retryPolicy, attempt + 1);
+          yield createThinkingMessage(
+            `Transient error: ${err.message}. Retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries}).`
+          );
+          await new Promise(resolve => setTimeout(resolve, delay));
+
+          if (this.executionController.isAborted) {
+            yield createStatusMessage('interrupted');
+            return;
+          }
+
+          attempt += 1;
         }
       }
-
-      // 检查是否在审批循环中被中断
-      if (this.executionController.isAborted) {
-        yield createStatusMessage('interrupted');
-        return;
-      }
-
-      // 使用最终结果，否则回退到最后的助手内容
-      const resultToSave = finalResult || lastAssistantContent;
-
-      // Memory: 自动保存任务结果（仅在未中断时）
-      if (resultToSave) {
-        await this.memoryManager.save(task.objective, resultToSave, {
-          sessionId: task.sessionId,
-          taskId: task.id,
-        });
-      }
-
-      // Phase 6: 提取 token 指标
-      const totalTokens = currentResult.usage?.totalTokens;
-
-      // 发出完成状态（带 token 指标）
-      const statusMsg: WorkerMessage = {
-        type: 'status' as const,
-        status: 'completed' as const,
-        timestamp: Date.now(),
-        ...(totalTokens !== undefined && { tokensUsed: totalTokens }),
-      };
-      yield statusMsg;
     } catch (error) {
       const err = error as Error;
       console.error('[OpenAIAgentsBackend] Execution error:', err);
@@ -654,7 +738,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     tools: Tool[],
     sdkTool: SDKToolFunction,
     options: WorkerExecutionOptions,
-    task: WorkerTask
+    task: WorkerTask,
+    onToolCall?: () => void
   ): unknown[] {
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
@@ -674,6 +759,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         execute: async (params: unknown) => {
           // 调用 Tachikoma Tool.execute，使用 try/catch 封装错误
           try {
+            onToolCall?.();
             const result = await tachikomaTool.execute(
               params,
               executionContext

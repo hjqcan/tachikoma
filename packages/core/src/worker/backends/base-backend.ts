@@ -325,6 +325,12 @@ export function isRetryableError(error: Error): boolean {
   return (
     message.includes('rate limit') ||
     message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('connection error') ||
+    message.includes('econnreset') ||
+    message.includes('econnrefused') ||
+    message.includes('enotfound') ||
+    message.includes('socket connection was closed') ||
     message.includes('503') ||
     message.includes('529') ||
     message.includes('overloaded') ||
