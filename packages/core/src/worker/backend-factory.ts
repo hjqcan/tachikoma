@@ -9,8 +9,9 @@ import type {
   WorkerBackendConfig,
   ClaudeAgentSDKBackendConfig,
   GenericBackendConfig,
+  OpenAIAgentsBackendConfig,
 } from './types';
-import { shouldUseAgentSDK } from './types';
+import { shouldUseAgentSDK, shouldUseOpenAIAgents } from './types';
 
 // ============================================================================
 // 错误类型
@@ -43,6 +44,19 @@ export class AgentSDKNotInstalledError extends WorkerBackendError {
   }
 }
 
+/**
+ * OpenAI Agents SDK 未安装错误
+ */
+export class OpenAIAgentsSDKNotInstalledError extends WorkerBackendError {
+  constructor() {
+    super(
+      'OpenAI Agents SDK is not installed. Run: bun add @openai/agents',
+      'SDK_NOT_INSTALLED',
+      'openai'
+    );
+  }
+}
+
 // ============================================================================
 // 后端加载器
 // ============================================================================
@@ -68,6 +82,26 @@ async function loadClaudeAgentSDKBackend(): Promise<
 }
 
 /**
+ * 延迟加载 OpenAI Agents SDK Backend
+ *
+ * 使用动态 import 避免在不使用时报错
+ */
+async function loadOpenAIAgentsBackend(): Promise<
+  new (config: OpenAIAgentsBackendConfig) => IWorkerBackend
+> {
+  try {
+    const module = await import('./backends/openai-agent-backend');
+    return module.OpenAIAgentsBackend;
+  } catch (error) {
+    // 检查是否是模块未找到错误
+    if (error instanceof Error && error.message.includes('Cannot find module')) {
+      throw new OpenAIAgentsSDKNotInstalledError();
+    }
+    throw error;
+  }
+}
+
+/**
  * 加载通用后端
  */
 async function loadGenericBackend(): Promise<
@@ -85,7 +119,8 @@ async function loadGenericBackend(): Promise<
  * 创建 Worker Backend
  *
  * 根据配置自动选择后端：
- * - Claude 模型默认使用 Agent SDK（除非明确禁用）
+ * - Claude 模型默认使用 Claude Agent SDK（除非明确禁用）
+ * - OpenAI 模型默认使用 OpenAI Agents SDK（可通过 backend='generic' 禁用）
  * - 其他模型使用通用后端
  *
  * @param config - 后端配置
@@ -93,18 +128,26 @@ async function loadGenericBackend(): Promise<
  *
  * @example
  * ```ts
- * // Claude 模型 - 自动使用 Agent SDK
+ * // Claude 模型 - 自动使用 Claude Agent SDK
  * const claudeBackend = await createWorkerBackend({
  *   provider: 'anthropic',
  *   model: 'claude-3-5-sonnet-20241022',
  *   apiKey: process.env.ANTHROPIC_API_KEY,
  * });
  *
- * // OpenAI 模型 - 使用通用后端
+ * // OpenAI 模型 - 自动使用 OpenAI Agents SDK
  * const openaiBackend = await createWorkerBackend({
  *   provider: 'openai',
  *   model: 'gpt-4o',
  *   apiKey: process.env.OPENAI_API_KEY,
+ * });
+ *
+ * // OpenAI 模型 - 强制使用通用后端
+ * const genericOpenAIBackend = await createWorkerBackend({
+ *   provider: 'openai',
+ *   model: 'gpt-4o',
+ *   apiKey: process.env.OPENAI_API_KEY,
+ *   backend: 'generic',
  * });
  *
  * // 强制 Claude 使用通用后端
@@ -124,9 +167,8 @@ export async function createWorkerBackend(config: WorkerBackendConfig): Promise<
     throw new WorkerBackendError('Model is required', 'MISSING_MODEL');
   }
 
-  // 根据配置选择后端
+  // 1. 检查 Claude Agent SDK
   if (shouldUseAgentSDK(config)) {
-    // Claude 模型 + 使用 Agent SDK
     try {
       const BackendClass = await loadClaudeAgentSDKBackend();
       return new BackendClass(config as ClaudeAgentSDKBackendConfig);
@@ -140,17 +182,34 @@ export async function createWorkerBackend(config: WorkerBackendConfig): Promise<
       const BackendClass = await loadGenericBackend();
       return new BackendClass(config as GenericBackendConfig);
     }
-  } else {
-    // 其他模型或强制使用通用后端
-    const BackendClass = await loadGenericBackend();
-    return new BackendClass(config as GenericBackendConfig);
   }
+
+  // 2. 检查 OpenAI Agents SDK
+  if (shouldUseOpenAIAgents(config)) {
+    try {
+      const BackendClass = await loadOpenAIAgentsBackend();
+      return new BackendClass(config as OpenAIAgentsBackendConfig);
+    } catch (error) {
+      // SDK 加载失败，自动降级到通用后端
+      console.warn(
+        '[createWorkerBackend] OpenAI Agents SDK load failed, falling back to GenericAgentBackend. ' +
+        `Reason: ${error instanceof Error ? error.message : 'Unknown error'}. ` +
+        'Install SDK with: bun add @openai/agents'
+      );
+      const BackendClass = await loadGenericBackend();
+      return new BackendClass(config as GenericBackendConfig);
+    }
+  }
+
+  // 3. 其他模型或强制使用通用后端
+  const BackendClass = await loadGenericBackend();
+  return new BackendClass(config as GenericBackendConfig);
 }
 
 /**
  * 同步创建 Worker Backend（使用默认通用后端）
  *
- * 适用于不需要 Claude Agent SDK 的场景
+ * 适用于不需要 Agent SDK 的场景
  */
 export function createWorkerBackendSync(config: GenericBackendConfig): IWorkerBackend {
   // 同步导入通用后端
@@ -190,6 +249,15 @@ export function getBackendInfo(config: WorkerBackendConfig): WorkerBackendInfo {
     };
   }
 
+  if (shouldUseOpenAIAgents(config)) {
+    return {
+      type: 'agent-sdk',
+      provider: 'openai',
+      requiresExtraDependency: true,
+      dependencyPackage: '@openai/agents',
+    };
+  }
+
   return {
     type: 'generic',
     provider: config.provider,
@@ -198,7 +266,7 @@ export function getBackendInfo(config: WorkerBackendConfig): WorkerBackendInfo {
 }
 
 /**
- * 检查 Agent SDK 是否已安装
+ * 检查 Claude Agent SDK 是否已安装
  */
 export async function isAgentSDKInstalled(): Promise<boolean> {
   try {
@@ -209,3 +277,16 @@ export async function isAgentSDKInstalled(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * 检查 OpenAI Agents SDK 是否已安装
+ */
+export async function isOpenAIAgentsSDKInstalled(): Promise<boolean> {
+  try {
+    await import('./backends/openai-agent-backend');
+    return true;
+  } catch {
+    return false;
+  }
+}
+

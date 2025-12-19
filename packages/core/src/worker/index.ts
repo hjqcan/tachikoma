@@ -8,6 +8,7 @@
 export type {
   // 后端类型
   WorkerBackendType,
+  WorkerBackend,
   WorkerCapability,
   WorkerStatus,
   // 消息类型
@@ -28,6 +29,7 @@ export type {
   WorkerBackendBaseConfig,
   ClaudeAgentSDKBackendConfig,
   GenericBackendConfig,
+  OpenAIAgentsBackendConfig,
   // 接口
   IWorkerBackend,
   // 结果类型
@@ -40,6 +42,8 @@ export {
   createWorkerMessage,
   isClaudeProvider,
   shouldUseAgentSDK,
+  isOpenAIProvider,
+  shouldUseOpenAIAgents,
 } from './types';
 
 // 工厂函数导出
@@ -48,14 +52,18 @@ export {
   createWorkerBackendSync,
   getBackendInfo,
   isAgentSDKInstalled,
+  isOpenAIAgentsSDKInstalled,
   WorkerBackendError,
   AgentSDKNotInstalledError,
+  OpenAIAgentsSDKNotInstalledError,
 } from './backend-factory';
 export type { WorkerBackendInfo } from './backend-factory';
 
 // 后端实现导出
 export { ClaudeAgentSDKBackend } from './backends/claude-agent-backend';
 export { GenericAgentBackend, GenericBackendError } from './backends/generic-agent-backend';
+export { OpenAIAgentsBackend } from './backends/openai-agent-backend';
+export { BaseWorkerBackend } from './backends/base-backend';
 
 // 执行器导出
 export { WorkerExecutor, createWorkerExecutor } from './worker-executor';
@@ -77,3 +85,4 @@ export {
 // 关键决策检测
 export type { KeyDecisionResult, RiskLevel } from './key-decision';
 export { isKeyDecision, isDeleteOperation, isLargeModification, isMultiFileOperation, isExternalApiCall, isHighRiskTool, getRiskScore } from './key-decision';
+

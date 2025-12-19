@@ -6,7 +6,6 @@
  */
 
 import type {
-  IWorkerBackend,
   WorkerBackendType,
   WorkerCapability,
   WorkerMessage,
@@ -16,6 +15,7 @@ import type {
   GenericBackendConfig,
   WorkerApprovalRequestMessage,
 } from '../types';
+import { BaseWorkerBackend } from './base-backend';
 import { 
   DEFAULT_RESOURCE_LIMITS, 
   DEFAULT_KEY_DECISION_POLICY,
@@ -725,7 +725,7 @@ function createConcurrencyLimiter(maxConcurrency: number) {
  * }
  * ```
  */
-export class GenericAgentBackend implements IWorkerBackend {
+export class GenericAgentBackend extends BaseWorkerBackend {
   readonly provider: string;
   readonly backendType: WorkerBackendType = 'generic';
 
@@ -741,7 +741,7 @@ export class GenericAgentBackend implements IWorkerBackend {
   private skills: SkillMetadata[] = [];
   private skillLoadErrors: SkillLoadOutcome['errors'] = [];
 
-  // Memory 支持
+  // Memory 支持 (local implementation, not using base class)
   private memoryService?: MemoryService;
   private lastMemoryRetrievalAt?: number;
   private injectedMemoryIds = new Set<string>();
@@ -757,6 +757,8 @@ export class GenericAgentBackend implements IWorkerBackend {
   private collaborationRequestHandlerRegistered = false;
 
   constructor(config: GenericBackendConfig) {
+    // 调用基类构造函数（不使用基类 Memory，保留本地实现）
+    super(undefined, 'GenericAgentBackend');
     this.config = config;
     this.provider = config.provider;
 
@@ -1427,7 +1429,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
 
               // 等待审批（阻塞 + 超时）
               // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
-              const approved = await this.waitForApproval(approvalRequest, options, task.id);
+              const approved = await this.waitForApprovalWithSubtask(approvalRequest, options, task.id);
               if (!approved) {
                 const rejectedResult = `Tool call ${call.name} was rejected by approval process (${keyDecisionResult.reason}).`;
                 context.addMessage(createToolMessage(call.callId, rejectedResult));
@@ -1736,7 +1738,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
               yield approvalRequest;
 
               // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
-              const approved = await this.waitForApproval(approvalRequest, options, task.id);
+              const approved = await this.waitForApprovalWithSubtask(approvalRequest, options, task.id);
               if (!approved) {
                 const rejectedResult = `[Grace Round] Tool call ${call.name} was rejected by approval process.`;
                 context.addMessage(createToolMessage(call.callId, rejectedResult));
@@ -2025,7 +2027,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
    * @param subtaskId - 子任务 ID（用于文件协议）
    * @returns 是否批准
    */
-  private async waitForApproval(
+  private async waitForApprovalWithSubtask(
     request: WorkerApprovalRequestMessage,
     options: WorkerExecutionOptions,
     subtaskId?: string
@@ -2041,7 +2043,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
 
     // 优先级 2: 使用文件协议
     if (options.onWritePendingApproval && options.onReadApprovalResponse) {
-      return this.waitForApprovalViaFileProtocol(
+      return this.waitForApprovalViaFileProtocolWithSubtask(
         request, options, subtaskId, timeout, defaultDecision, pollInterval
       );
     }
@@ -2057,7 +2059,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
   /**
    * 通过回调等待审批
    */
-  private async waitForApprovalViaCallback(
+  protected override async waitForApprovalViaCallback(
     request: WorkerApprovalRequestMessage,
     options: WorkerExecutionOptions,
     timeout: number,
@@ -2097,7 +2099,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
    * 3. 超时后使用 defaultDecision
    * 4. 清理 pending_approval
    */
-  private async waitForApprovalViaFileProtocol(
+  private async waitForApprovalViaFileProtocolWithSubtask(
     request: WorkerApprovalRequestMessage,
     options: WorkerExecutionOptions,
     subtaskId: string | undefined,
@@ -2173,7 +2175,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
   /**
    * 将 ApprovalCategory 映射到 ApprovalRequestType
    */
-  private mapCategoryToApprovalType(
+  protected override mapCategoryToApprovalType(
     category?: string
   ): 'file_deletion' | 'multi_file_refactor' | 'external_api_call' | 'dangerous_operation' | 'resource_intensive' {
     switch (category) {

@@ -6,7 +6,6 @@
  */
 
 import type {
-  IWorkerBackend,
   WorkerBackendType,
   WorkerCapability,
   WorkerMessage,
@@ -18,6 +17,7 @@ import type { Tool } from '../../types';
 import { ToolToMCPBridge } from '../../mcp/tool-bridge';
 import type { ToolBridgeConfig } from '../../mcp/tool-bridge';
 import { MemoryService } from '../../memory';
+import { BaseWorkerBackend } from './base-backend';
 import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 
 // ============================================================================
@@ -60,7 +60,7 @@ interface SDKMessage {
  * }
  * ```
  */
-export class ClaudeAgentSDKBackend implements IWorkerBackend {
+export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
   readonly provider = 'anthropic';
   readonly backendType: WorkerBackendType = 'agent-sdk';
 
@@ -69,12 +69,14 @@ export class ClaudeAgentSDKBackend implements IWorkerBackend {
   private isExecuting = false;
   private readonly toolBridge: ToolToMCPBridge;
   
-  // Memory support
+  // Memory support (local implementation, not using base class)
   private memoryService?: MemoryService;
   private lastMemoryRetrievalAt?: number;
   private injectedMemoryIds = new Set<string>();
 
   constructor(config: ClaudeAgentSDKBackendConfig) {
+    // 调用基类构造函数（不使用基类 Memory，保留本地实现）
+    super(undefined, 'ClaudeAgentSDKBackend');
     this.config = config;
     this.toolBridge = new ToolToMCPBridge({
       serverName: 'tachikoma-tools',

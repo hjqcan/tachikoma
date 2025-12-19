@@ -171,10 +171,25 @@ describe('getBackendInfo', () => {
     expect(info.dependencyPackage).toBe('@anthropic-ai/claude-agent-sdk');
   });
 
-  it('返回通用后端信息', () => {
+  it('返回 OpenAI Agents SDK 后端信息', () => {
     const config: WorkerBackendConfig = {
       provider: 'openai',
       model: 'gpt-4o',
+    };
+
+    const info = getBackendInfo(config);
+
+    expect(info.type).toBe('agent-sdk');
+    expect(info.provider).toBe('openai');
+    expect(info.requiresExtraDependency).toBe(true);
+    expect(info.dependencyPackage).toBe('@openai/agents');
+  });
+
+  it('OpenAI 强制使用 generic 后端时返回通用后端信息', () => {
+    const config: WorkerBackendConfig = {
+      provider: 'openai',
+      model: 'gpt-4o',
+      backend: 'generic',
     };
 
     const info = getBackendInfo(config);

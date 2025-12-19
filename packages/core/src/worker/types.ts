@@ -26,6 +26,17 @@ export type { InterventionFile };
 export type WorkerBackendType = 'agent-sdk' | 'generic';
 
 /**
+ * Worker 后端选择
+ *
+ * 显式选择使用哪个后端实现：
+ * - 'auto': 根据 provider 自动选择最佳后端
+ * - 'generic': 强制使用通用后端（支持所有 LLM）
+ * - 'claude-agent-sdk': 使用 Claude Agent SDK（仅 Anthropic）
+ * - 'openai-agents': 使用 OpenAI Agents SDK（仅 OpenAI）
+ */
+export type WorkerBackend = 'auto' | 'generic' | 'claude-agent-sdk' | 'openai-agents';
+
+/**
  * Worker 能力
  */
 export type WorkerCapability =
@@ -514,6 +525,23 @@ export interface WorkerBackendBaseConfig {
   maxTokens?: number;
   /** 温度参数 */
   temperature?: number;
+  /**
+   * 显式后端选择
+   *
+   * 优先级: backend 显式 > provider 默认 > generic 兜底
+   * - 'auto': 根据 provider 自动选择最佳后端（默认）
+   * - 'generic': 强制使用通用后端
+   * - 'claude-agent-sdk': 使用 Claude Agent SDK（仅 Anthropic）
+   * - 'openai-agents': 使用 OpenAI Agents SDK（OpenAI 及兼容 API）
+   */
+  backend?: WorkerBackend;
+  /**
+   * OpenAI API 兼容性标记
+   *
+   * 设为 true 表示该 provider 使用 OpenAI API 格式（如 OpenRouter、自建端点）
+   * 启用后将优先使用 OpenAI Agents SDK 后端
+   */
+  openaiCompatible?: boolean;
 }
 
 /**
@@ -606,9 +634,42 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
 }
 
 /**
+ * OpenAI Agents SDK 后端配置
+ *
+ * 使用 @openai/agents 实现，获得 OpenAI 官方 Agent 运行时能力
+ */
+export interface OpenAIAgentsBackendConfig extends WorkerBackendBaseConfig {
+  provider: 'openai';
+  /**
+   * OpenAI Agents SDK 特有配置
+   */
+  agentsOptions?: {
+    /**
+     * 启用 tracing（默认 false）
+     *
+     * 如果启用，将使用 OpenAI tracing exporter
+     */
+    enableTracing?: boolean;
+    /**
+     * 使用 Chat Completions 模式（默认 true）
+     *
+     * 推荐开启以兼容 OpenRouter 等代理服务
+     * 关闭则使用 Responses API（仅原生 OpenAI）
+     */
+    useChatCompletions?: boolean;
+  };
+  /**
+   * Memory 系统配置
+   *
+   * 如果提供，将支持跨会话记忆和自动检索/保存
+   */
+  memoryConfig?: MemoryConfig;
+}
+
+/**
  * Worker 后端配置
  */
-export type WorkerBackendConfig = ClaudeAgentSDKBackendConfig | GenericBackendConfig;
+export type WorkerBackendConfig = ClaudeAgentSDKBackendConfig | GenericBackendConfig | OpenAIAgentsBackendConfig;
 
 // ============================================================================
 // Worker 后端接口
@@ -730,12 +791,60 @@ export function isClaudeProvider(config: WorkerBackendConfig): config is ClaudeA
 }
 
 /**
- * 判断是否应该使用 Agent SDK
+ * 判断是否应该使用 Claude Agent SDK
+ *
+ * 条件（按优先级）：
+ * 1. backend 显式指定为 'claude-agent-sdk'
+ * 2. provider = 'anthropic' 且 backend != 'generic' 且 useAgentSDK != false
  */
 export function shouldUseAgentSDK(config: WorkerBackendConfig): boolean {
+  // 显式指定使用 Claude Agent SDK
+  if (config.backend === 'claude-agent-sdk') {
+    return true;
+  }
+  // 显式指定使用其他后端
+  if (config.backend && config.backend !== 'auto') {
+    return false;
+  }
+  // 自动模式：Anthropic provider 且未禁用
   if (!isClaudeProvider(config)) {
     return false;
   }
   // 默认使用 Agent SDK（除非明确禁用）
   return config.useAgentSDK !== false;
+}
+
+/**
+ * 判断是否为 OpenAI 提供商
+ */
+export function isOpenAIProvider(config: WorkerBackendConfig): config is OpenAIAgentsBackendConfig {
+  return config.provider.toLowerCase() === 'openai';
+}
+
+/**
+ * 判断是否应该使用 OpenAI Agents SDK
+ *
+ * 条件（按优先级）：
+ * 1. backend 显式指定为 'openai-agents'
+ * 2. openaiCompatible = true 且 backend != 'generic'
+ * 3. provider = 'openai' 且 backend != 'generic'
+ */
+export function shouldUseOpenAIAgents(config: WorkerBackendConfig): boolean {
+  // 1. 显式指定使用 OpenAI Agents SDK
+  if (config.backend === 'openai-agents') {
+    return true;
+  }
+  // 2. 显式指定使用 generic 或 Claude SDK，不使用 OpenAI
+  if (config.backend === 'generic' || config.backend === 'claude-agent-sdk') {
+    return false;
+  }
+  // 3. openaiCompatible 标记：优先级高于 provider 检测
+  if (config.openaiCompatible) {
+    return true;
+  }
+  // 4. provider = 'openai' 且 backend = 'auto' 或未指定
+  if (isOpenAIProvider(config)) {
+    return config.backend === 'auto' || config.backend === undefined;
+  }
+  return false;
 }

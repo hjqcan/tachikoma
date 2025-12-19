@@ -1,5 +1,4 @@
 import type {
-  IWorkerBackend,
   WorkerBackendType,
   WorkerCapability,
   WorkerMessage,
@@ -7,6 +6,7 @@ import type {
   WorkerExecutionOptions,
 } from '../types';
 import type { Tool } from '../../types';
+import { BaseWorkerBackend } from './base-backend';
 import {
   startInteraction,
   getInteraction,
@@ -28,12 +28,13 @@ export interface GeminiDeepResearchBackendConfig {
   agent?: string;
 }
 
-export class GeminiDeepResearchBackend implements IWorkerBackend {
+export class GeminiDeepResearchBackend extends BaseWorkerBackend {
   readonly provider = 'google';
   readonly backendType: WorkerBackendType = 'generic';
   private config: GeminiDeepResearchBackendConfig;
 
   constructor(config: GeminiDeepResearchBackendConfig = {}) {
+    super(undefined, 'GeminiDeepResearchBackend'); // 无 Memory
     this.config = config;
   }
 
@@ -64,6 +65,28 @@ export class GeminiDeepResearchBackend implements IWorkerBackend {
       };
       return;
     }
+
+    // 启动生命周期控制器
+    this.executionController.start();
+
+    try {
+      // 集成外部 abortSignal
+      if (options.abortSignal) {
+        if (options.abortSignal.aborted) {
+          yield { type: 'status', status: 'interrupted', timestamp: Date.now() };
+          return;
+        }
+        options.abortSignal.addEventListener('abort', () => {
+          this.executionController.abort();
+        }, { once: true });
+      }
+
+    // 1. Initial Status
+    yield {
+      type: 'status',
+      status: 'initializing',
+      timestamp: Date.now(),
+    };
 
     // 2. Prepare Input
     const inputData: DeepResearchInput = {
@@ -132,7 +155,7 @@ export class GeminiDeepResearchBackend implements IWorkerBackend {
     let consecutivePollFailures = 0;
 
     while (Date.now() < deadline) {
-      if (options.abortSignal?.aborted) {
+      if (options.abortSignal?.aborted || this.executionController.isAborted) {
         yield {
           type: 'status',
           status: 'interrupted',
@@ -234,6 +257,11 @@ export class GeminiDeepResearchBackend implements IWorkerBackend {
         status: 'failed',
         timestamp: Date.now(),
     };
+
+    } finally {
+      // 结束执行周期
+      this.executionController.end();
+    }
   }
 
   getCapabilities(): WorkerCapability[] {
@@ -245,14 +273,7 @@ export class GeminiDeepResearchBackend implements IWorkerBackend {
     return !!key;
   }
 
-  async interrupt(): Promise<void> {
-    // Current implementation relies on AbortSignal in execute loop.
-    // Explicit interrupt logic would go here if we stored active interaction IDs.
-  }
-
-  async dispose(): Promise<void> {
-    // No specific resources to clean up.
-  }
+  // interrupt() 和 dispose() 继承自 BaseWorkerBackend
 }
 
 export default GeminiDeepResearchBackend;
