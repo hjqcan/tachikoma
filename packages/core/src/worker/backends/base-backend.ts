@@ -12,7 +12,6 @@
 
 import type {
   WorkerMessage,
-  WorkerBackendBaseConfig,
   IWorkerBackend,
   WorkerBackendType,
   WorkerCapability,
@@ -24,22 +23,6 @@ import type {
 import type { Tool } from '../../types';
 import type { MemoryConfig } from '../../memory';
 import { MemoryService } from '../../memory';
-
-// ============================================================================
-// 共享配置接口
-// ============================================================================
-
-/**
- * 基础后端配置（所有后端共享）
- */
-export interface BaseWorkerBackendConfig extends WorkerBackendBaseConfig {
-  /**
-   * Memory 系统配置
-   *
-   * 如果提供，将支持跨会话记忆和自动检索/保存
-   */
-  memoryConfig?: MemoryConfig;
-}
 
 // ============================================================================
 // Memory 集成 Mixin
@@ -653,4 +636,3 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
     }
   }
 }
-

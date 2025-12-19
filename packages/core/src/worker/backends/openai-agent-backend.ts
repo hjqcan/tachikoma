@@ -25,7 +25,7 @@ import type {
   KeyDecisionPolicy,
   RiskPolicy,
 } from '../types';
-import type { Tool, ExecutionContext } from '../../types';
+import type { Tool } from '../../types';
 import { isKeyDecision } from '../key-decision';
 import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 
@@ -59,27 +59,27 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
   if (schema.enum && Array.isArray(schema.enum)) {
     const enumValues = schema.enum as [string, ...string[]];
     if (enumValues.length > 0 && enumValues.every(v => typeof v === 'string')) {
-      return z.enum(enumValues as [string, ...string[]]).optional();
+      return z.enum(enumValues as [string, ...string[]]).nullable().optional();
     }
     // 非字符串 enum 回退到 z.unknown
     console.warn('[jsonSchemaToZod] Non-string enum, falling back to z.unknown');
-    return z.unknown().optional();
+    return z.unknown().nullable().optional();
   }
 
   switch (type) {
     case 'string':
-      return z.string().optional();
+      return z.string().nullable().optional();
     case 'number':
     case 'integer':
-      return z.number().optional();
+      return z.number().nullable().optional();
     case 'boolean':
-      return z.boolean().optional();
+      return z.boolean().nullable().optional();
     case 'array': {
       const items = schema.items as Record<string, unknown> | undefined;
       if (items) {
-        return z.array(jsonSchemaToZod(items)).optional();
+        return z.array(jsonSchemaToZod(items)).nullable().optional();
       }
-      return z.array(z.unknown()).optional();
+      return z.array(z.unknown()).nullable().optional();
     }
     case 'object': {
       const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
@@ -99,17 +99,17 @@ function jsonSchemaToZod(schema: Record<string, unknown>): ZodTypeAny {
         let zodProp: ZodTypeAny;
         switch (basePropType) {
           case 'string':
-            zodProp = isRequired ? z.string() : z.string().optional();
+            zodProp = isRequired ? z.string() : z.string().nullable().optional();
             break;
           case 'number':
           case 'integer':
-            zodProp = isRequired ? z.number() : z.number().optional();
+            zodProp = isRequired ? z.number() : z.number().nullable().optional();
             break;
           case 'boolean':
-            zodProp = isRequired ? z.boolean() : z.boolean().optional();
+            zodProp = isRequired ? z.boolean() : z.boolean().nullable().optional();
             break;
           default:
-            zodProp = isRequired ? z.unknown() : z.unknown().optional();
+            zodProp = isRequired ? z.unknown() : z.unknown().nullable().optional();
         }
         shapeEntries.push([key, zodProp]);
       }
@@ -326,38 +326,38 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
     // 开始执行
     this.executionController.start();
-
-    // 集成外部 abortSignal（如果提供）
-    // 当外部信号触发时，同步中断 ExecutionController
-    if (options.abortSignal) {
-      if (options.abortSignal.aborted) {
-        // 已经中断
-        yield createStatusMessage('interrupted');
-        return;
-      }
-      const abortHandler = () => {
-        this.executionController.abort();
-      };
-      options.abortSignal.addEventListener('abort', abortHandler, { once: true });
-    }
-
-    // 发出初始化状态
-    yield createStatusMessage('initializing');
-
-    // 重置任务状态
-    this.memoryManager.reset();
-    this.toolMap.clear();
-
-    // 构建工具映射和 SDK 工具
-    for (const tool of tools) {
-      this.toolMap.set(tool.name, tool);
-    }
-
-    // 跟踪最终结果（用于记忆保存）
-    let finalResult = '';
-    let lastAssistantContent = '';
+    let abortHandler: (() => void) | undefined;
 
     try {
+      // 集成外部 abortSignal（如果提供）
+      // 当外部信号触发时，同步中断 ExecutionController
+      if (options.abortSignal) {
+        if (options.abortSignal.aborted) {
+          // 已经中断
+          yield createStatusMessage('interrupted');
+          return;
+        }
+        abortHandler = () => {
+          this.executionController.abort();
+        };
+        options.abortSignal.addEventListener('abort', abortHandler, { once: true });
+      }
+
+      // 发出初始化状态
+      yield createStatusMessage('initializing');
+
+      // 重置任务状态
+      this.memoryManager.reset();
+      this.toolMap.clear();
+
+      // 构建工具映射和 SDK 工具
+      for (const tool of tools) {
+        this.toolMap.set(tool.name, tool);
+      }
+
+      // 跟踪最终结果（用于记忆保存）
+      let finalResult = '';
+      let lastAssistantContent = '';
       // Memory: 自动检索相关记忆
       const memoryContext = await this.memoryManager.retrieve(
         task.objective,
@@ -568,6 +568,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       yield createErrorMessage(err.message, 'EXECUTION_ERROR', isRetryableError(err));
       yield createStatusMessage('failed');
     } finally {
+      if (options.abortSignal && abortHandler) {
+        options.abortSignal.removeEventListener('abort', abortHandler);
+      }
       this.executionController.end();
     }
   }
@@ -661,23 +664,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
       // 构建完整的执行上下文
       // 注意：sandboxId 为可选字段，省略即可
-      const executionContext: ExecutionContext = {
-        taskId: task.id,
-        agentId: `worker-${task.id}`,
-        traceId: `trace-${task.id}-${Date.now()}`,
-        workDir: options.workDir ?? process.cwd(),
-        env: options.env ?? {},
-        permissions: {
-          allowed: [], // 空白名单，使用宽松策略
-          denied: [],
-          requireSandbox: false,
-        },
-        resourceLimits: {
-          maxFileSize: 10 * 1024 * 1024, // 10MB
-          maxOutputSize: 1 * 1024 * 1024, // 1MB
-          maxExecutionTime: options.timeout ?? 300000, // 5分钟
-        },
-      };
+      const executionContext = this.buildExecutionContext(task, options);
 
       // 创建 SDK tool
       return sdkTool({
@@ -813,20 +800,6 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     }
   }
 
-  /**
-   * 映射 SDK 流事件为 WorkerMessage
-   *
-   * SDK RunItem 结构：
-   * - type: 'message' | 'tool_call' | 'tool_output' | etc.
-   * - rawItem: 原始 OpenAI 响应数据
-   *
-   * 事件 name:
-   * - message_output_created: 消息输出创建 (output)
-   * - reasoning_item_created: 推理项创建 (thinking)
-   * - tool_call_item_created: 工具调用创建
-   * - tool_call_output_item_created: 工具输出创建
-   * - message_stream_completed: 消息流完成 (final output)
-   */
   /**
    * 映射 SDK 流事件为 WorkerMessage
    *

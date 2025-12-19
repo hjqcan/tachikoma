@@ -641,24 +641,6 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
 export interface OpenAIAgentsBackendConfig extends WorkerBackendBaseConfig {
   provider: 'openai';
   /**
-   * OpenAI Agents SDK 特有配置
-   */
-  agentsOptions?: {
-    /**
-     * 启用 tracing（默认 false）
-     *
-     * 如果启用，将使用 OpenAI tracing exporter
-     */
-    enableTracing?: boolean;
-    /**
-     * 使用 Chat Completions 模式（默认 true）
-     *
-     * 推荐开启以兼容 OpenRouter 等代理服务
-     * 关闭则使用 Responses API（仅原生 OpenAI）
-     */
-    useChatCompletions?: boolean;
-  };
-  /**
    * Memory 系统配置
    *
    * 如果提供，将支持跨会话记忆和自动检索/保存
