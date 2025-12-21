@@ -343,6 +343,18 @@ export function isRetryableError(error: Error): boolean {
 // ============================================================================
 
 /**
+ * Tool call loop error
+ *
+ * Emitted when a tool is called repeatedly with identical inputs.
+ */
+class ToolCallLoopError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolCallLoopError';
+  }
+}
+
+/**
  * SDK 可用性检查器
  *
  * 缓存动态 import 结果
@@ -404,6 +416,14 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   protected readonly memoryManager: MemoryManager;
   protected readonly executionController: ExecutionController;
   protected readonly backendName: string;
+  private lastToolCallKey: string | null = null;
+  private repeatedToolCallCount = 0;
+
+  // Detect repeated calls to identical tool+input combinations.
+  private static readonly TOOL_CALL_REPEAT_LIMIT = 3;
+  private static readonly TOOL_CALL_REPEAT_LIMIT_RELAXED = 6;
+  private static readonly TOOL_CALL_REPEAT_LIMIT_OVERRIDES = new Set(['file_list', 'file_read']);
+  private static readonly TOOL_INPUT_PREVIEW_LIMIT = 200;
 
   constructor(
     memoryConfig: MemoryConfig | undefined,
@@ -432,6 +452,95 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   // 默认实现：释放资源
   async dispose(): Promise<void> {
     await this.memoryManager.close();
+  }
+
+  // ============================================================================
+  // Tool call de-duplication guard
+  // ============================================================================
+
+  /**
+   * Reset tool call guard state.
+   *
+   * Call this at the beginning of each execute() to avoid cross-task contamination.
+   */
+  protected resetToolCallGuard(): void {
+    this.lastToolCallKey = null;
+    this.repeatedToolCallCount = 0;
+  }
+
+  /**
+   * Guard against repeated identical tool calls in SDK-backed loops.
+   *
+   * Throws ToolCallLoopError when repetition exceeds the limit.
+   */
+  protected guardAgainstRepeatedToolCall(toolName: string, input: unknown): void {
+    const key = this.buildToolCallKey(toolName, input);
+
+    if (this.lastToolCallKey === key) {
+      this.repeatedToolCallCount += 1;
+    } else {
+      this.lastToolCallKey = key;
+      this.repeatedToolCallCount = 1;
+    }
+
+    const limit = this.getToolCallRepeatLimit(toolName);
+    if (this.repeatedToolCallCount > limit) {
+      const preview = this.formatToolInputPreview(input);
+      const message =
+        `Repeated tool call detected: "${toolName}" with identical input ` +
+        `(${this.repeatedToolCallCount} times). ` +
+        `Aborting to prevent infinite loop. Input preview: ${preview}`;
+      this.abortExecution();
+      throw new ToolCallLoopError(message);
+    }
+  }
+
+  private getToolCallRepeatLimit(toolName: string): number {
+    const normalized = toolName.trim().toLowerCase();
+    if (BaseWorkerBackend.TOOL_CALL_REPEAT_LIMIT_OVERRIDES.has(normalized)) {
+      return BaseWorkerBackend.TOOL_CALL_REPEAT_LIMIT_RELAXED;
+    }
+    return BaseWorkerBackend.TOOL_CALL_REPEAT_LIMIT;
+  }
+
+  /**
+   * Abort current execution (override if backend uses a different abort controller).
+   */
+  protected abortExecution(): void {
+    this.executionController.abort();
+  }
+
+  private buildToolCallKey(toolName: string, input: unknown): string {
+    const payload = `${toolName}:${this.stableStringify(input)}`;
+    return this.hashString(payload);
+  }
+
+  private formatToolInputPreview(input: unknown): string {
+    const text = this.stableStringify(input);
+    if (text.length <= BaseWorkerBackend.TOOL_INPUT_PREVIEW_LIMIT) return text;
+    return `${text.slice(0, BaseWorkerBackend.TOOL_INPUT_PREVIEW_LIMIT)}...`;
+  }
+
+  private stableStringify(value: unknown): string {
+    if (value === null || value === undefined) return String(value);
+    if (typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableStringify(item)).join(',')}]`;
+    }
+
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys
+      .map((key) => `${JSON.stringify(key)}:${this.stableStringify(record[key])}`)
+      .join(',')}}`;
+  }
+
+  private hashString(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = (hash * 31 + text.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(36);
   }
 
   // ============================================================================

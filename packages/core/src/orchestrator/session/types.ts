@@ -5,7 +5,7 @@
  * 定义 .tachikoma 目录结构与文件格式
  */
 
-import type { PlannerOutput } from '../types';
+import type { PlannerOutput, SubTask } from '../types';
 
 // ============================================================================
 // 会话目录结构
@@ -855,6 +855,20 @@ export interface ISessionFileManager {
    * 读取计划文件
    */
   readPlan(): Promise<PlanFile | null>;
+
+  /**
+   * 追加细分子任务到计划文件
+   * @param params - 细分后的子任务与父任务信息
+   */
+  appendRefinedSubtasks(params: { parentId: string; refinedSubtasks: SubTask[] }): Promise<void>;
+
+  /**
+   * 更新子任务状态
+   * @param subtaskId - 子任务 ID
+   * @param status - 新状态
+   * @param result - 可选的结果数据
+   */
+  updateSubtaskStatus(subtaskId: string, status: 'pending' | 'running' | 'success' | 'failure', result?: unknown): Promise<void>;
 
   /**
    * 更新进度文件

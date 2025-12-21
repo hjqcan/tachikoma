@@ -135,8 +135,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
       return;
     }
 
-    // 创建 AbortController
-    this.abortController = new AbortController();
+    // 创建 AbortController（使用基类执行控制器）
+    this.abortController = this.executionController.start();
     this.isExecuting = true;
 
     // 发出初始化状态
@@ -150,6 +150,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     // (reset per sessionId or new task)
     this.injectedMemoryIds.clear();
     delete this.lastMemoryRetrievalAt;
+    this.resetToolCallGuard();
 
     // Track final result for memory save (output preferred, assistant as fallback)
     let finalResult = '';
@@ -273,6 +274,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     } finally {
       this.isExecuting = false;
       this.abortController = null;
+      this.executionController.end();
     }
   }
 
@@ -332,6 +334,16 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         // Best-effort close
       }
     }
+  }
+
+  /**
+   * Abort current execution (sync base controller + SDK controller).
+   */
+  protected override abortExecution(): void {
+    if (this.abortController && !this.abortController.signal.aborted) {
+      this.abortController.abort();
+    }
+    super.abortExecution();
   }
 
   // ============================================================================
@@ -407,6 +419,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         };
 
       case 'tool_use':
+        // Guard against repeated tool calls (prevents infinite loops)
+        this.guardAgainstRepeatedToolCall(String(sdkMessage.name || 'unknown'), sdkMessage.input);
         // 工具调用
         return {
           type: 'tool_call',

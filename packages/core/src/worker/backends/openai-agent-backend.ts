@@ -489,6 +489,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           // 重置任务状态
           this.memoryManager.reset();
           this.toolMap.clear();
+          this.resetToolCallGuard();
 
           // 构建工具映射和 SDK 工具
           for (const tool of tools) {
@@ -1085,6 +1086,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
              args = rawArgs || {};
           }
         }
+
+        // Guard against repeated tool calls (prevents infinite loops)
+        this.guardAgainstRepeatedToolCall(toolName, args);
 
         messages.push(createToolCallMessage(toolName, args, callId));
         break;

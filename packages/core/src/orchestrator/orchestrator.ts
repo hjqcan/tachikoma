@@ -2058,6 +2058,16 @@ Is this a genuine deviation? Answer YES or NO only.`,
         ? Math.max(1, Math.round(subtask.estimatedDuration / 60000))
         : undefined;
 
+    // Skip refinement for short tasks (<=10 minutes) - no LLM call needed
+    // This prevents unnecessary splitting of already-small subtasks like subtask-3.1
+    const SKIP_REFINEMENT_THRESHOLD_MINUTES = 10;
+    if (typeof estimatedMinutes === 'number' && estimatedMinutes <= SKIP_REFINEMENT_THRESHOLD_MINUTES) {
+      console.debug(
+        `[Orchestrator] Skipping refinement for ${subtask.id}: only ${estimatedMinutes} min (threshold: ${SKIP_REFINEMENT_THRESHOLD_MINUTES})`
+      );
+      return null;
+    }
+
     const refineResult = await this.planner.refineSubtask({
       objective: subtask.objective,
       constraints: subtask.constraints,
@@ -2083,6 +2093,14 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
     if (refinedSubtasks.length < 2) {
       return null;
+    }
+
+    // Archive refined subtasks to plan.json
+    if (this.sessionManager) {
+      await this.sessionManager.appendRefinedSubtasks({
+        parentId: subtask.id,
+        refinedSubtasks,
+      });
     }
 
     if (signal.aborted) {
@@ -2174,6 +2192,9 @@ Is this a genuine deviation? Answer YES or NO only.`,
     const refinedList = refined.slice(0, DEFAULT_REFINEMENT_MAX_SUBTASKS);
     const result: SubTask[] = [];
     const reservedIds = new Set(subtaskMap.keys());
+    const parentDependencies = Array.isArray(parent.dependencies)
+      ? Array.from(new Set(parent.dependencies.filter((dep) => dep && dep !== parent.id)))
+      : [];
 
     for (let i = 0; i < refinedList.length; i++) {
       const item = refinedList[i];
@@ -2183,7 +2204,9 @@ Is this a genuine deviation? Answer YES or NO only.`,
         typeof item.estimatedMinutes === 'number' && Number.isFinite(item.estimatedMinutes)
           ? item.estimatedMinutes * 60 * 1000
           : undefined;
-      const dependencies = result.length > 0 ? [result[result.length - 1].id] : [];
+      const dependencies = result.length > 0
+        ? [result[result.length - 1].id]
+        : [...parentDependencies];
 
       result.push({
         id,

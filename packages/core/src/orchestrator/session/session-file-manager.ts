@@ -26,6 +26,8 @@ import type {
   PeerReadOptions,
 } from './types';
 import { DEFAULT_SESSION_CONFIG, DEFAULT_PEER_READ_OPTIONS } from './types';
+import type { TaskResult } from '../../types';
+import type { ExecutionPlan, ExecutionStep, SubTask } from '../types';
 import {
   SessionPathBuilder,
   atomicWriteJson,
@@ -65,6 +67,73 @@ interface WatchState {
   pollTimer?: ReturnType<typeof setInterval> | undefined;
   /** 上次文件状态缓存（用于检测变化） */
   lastFileStates: Map<string, number>;
+}
+
+function updateExecutionPlanForRefinement(
+  executionPlan: ExecutionPlan,
+  parentId: string,
+  refinedIds: string[]
+): ExecutionPlan {
+  const uniqueRefinedIds = Array.from(new Set(refinedIds.filter((id) => id && id !== parentId)));
+  if (uniqueRefinedIds.length === 0) {
+    return executionPlan;
+  }
+
+  const updatedSteps: ExecutionStep[] = [];
+  let updated = false;
+
+  for (const step of executionPlan.steps) {
+    const parentIndex = step.subtaskIds.indexOf(parentId);
+    if (parentIndex === -1) {
+      updatedSteps.push(step);
+      continue;
+    }
+
+    updated = true;
+
+    if (!step.parallel) {
+      const expandedIds: string[] = [];
+      for (const id of step.subtaskIds) {
+        if (id === parentId) {
+          expandedIds.push(...uniqueRefinedIds);
+        } else {
+          expandedIds.push(id);
+        }
+      }
+      updatedSteps.push({ ...step, subtaskIds: expandedIds });
+      continue;
+    }
+
+    const [firstId, ...restIds] = uniqueRefinedIds;
+    const replacedIds = [
+      ...step.subtaskIds.slice(0, parentIndex),
+      firstId,
+      ...step.subtaskIds.slice(parentIndex + 1),
+    ];
+    updatedSteps.push({ ...step, subtaskIds: replacedIds });
+    for (const id of restIds) {
+      updatedSteps.push({
+        order: 0,
+        subtaskIds: [id],
+        parallel: false,
+      });
+    }
+  }
+
+  if (!updated) {
+    return executionPlan;
+  }
+
+  const renumberedSteps = updatedSteps.map((step, index) => ({
+    ...step,
+    order: index + 1,
+  }));
+
+  return {
+    ...executionPlan,
+    steps: renumberedSteps,
+    isParallel: renumberedSteps.some((step) => step.parallel),
+  };
 }
 
 /**
@@ -228,6 +297,100 @@ export class SessionFileManager implements ISessionFileManager {
    */
   async readPlan(): Promise<PlanFile | null> {
     return readJsonFile<PlanFile>(this.paths.planFile);
+  }
+
+  /**
+   * 追加细分子任务到计划文件
+   *
+   * 当 Orchestrator 动态细分子任务时，调用此方法将细分后的子任务归档到 plan.json
+   *
+   * @param params - 细分后的子任务与父任务信息
+   */
+  async appendRefinedSubtasks(params: { parentId: string; refinedSubtasks: SubTask[] }): Promise<void> {
+    const plan = await this.readPlan();
+    if (!plan) {
+      console.warn('[SessionFileManager] Cannot append refined subtasks: plan.json not found');
+      return;
+    }
+
+    const { parentId, refinedSubtasks } = params;
+    const refinedIds = refinedSubtasks.map((subtask) => subtask.id);
+
+    // 追加/更新 plannerOutput.subtasks
+    for (const refined of refinedSubtasks) {
+      const existingIndex = plan.plannerOutput.subtasks.findIndex((st) => st.id === refined.id);
+      if (existingIndex === -1) {
+        plan.plannerOutput.subtasks.push(refined);
+      } else {
+        const existing = plan.plannerOutput.subtasks[existingIndex]!;
+        const merged: SubTask = { ...existing, ...refined };
+        if (existing.status && refined.status === 'pending') {
+          merged.status = existing.status;
+        }
+        plan.plannerOutput.subtasks[existingIndex] = merged;
+      }
+    }
+
+    // 更新依赖：下游依赖父任务的改为依赖最后一个细分子任务
+    const lastRefinedId = refinedIds[refinedIds.length - 1];
+    if (lastRefinedId) {
+      for (const subtask of plan.plannerOutput.subtasks) {
+        if (!subtask.dependencies || subtask.dependencies.length === 0) continue;
+        if (!subtask.dependencies.includes(parentId)) continue;
+        const updatedDeps = subtask.dependencies.filter((dep) => dep !== parentId);
+        if (!updatedDeps.includes(lastRefinedId)) {
+          updatedDeps.push(lastRefinedId);
+        }
+        subtask.dependencies = updatedDeps;
+      }
+    }
+
+    // 同步更新执行计划（替换父任务为细分子任务）
+    plan.plannerOutput.executionPlan = updateExecutionPlanForRefinement(
+      plan.plannerOutput.executionPlan,
+      parentId,
+      refinedIds
+    );
+
+    // 更新版本和时间
+    plan.version++;
+    plan.updatedAt = now();
+
+    await atomicWriteJson(this.paths.planFile, plan);
+  }
+
+  /**
+   * 更新子任务状态
+   *
+   * @param subtaskId - 子任务 ID
+   * @param status - 新状态
+   * @param result - 可选的结果数据
+   */
+  async updateSubtaskStatus(
+    subtaskId: string,
+    status: 'pending' | 'running' | 'success' | 'failure',
+    result?: unknown
+  ): Promise<void> {
+    const plan = await this.readPlan();
+    if (!plan) {
+      console.warn('[SessionFileManager] Cannot update subtask status: plan.json not found');
+      return;
+    }
+
+    // 查找并更新子任务状态
+    const subtask = plan.plannerOutput.subtasks.find(st => st.id === subtaskId);
+    if (subtask) {
+      subtask.status = status;
+      if (result !== undefined) {
+        // Cast to match SubTask.result type (TaskResult | undefined)
+        subtask.result = result as TaskResult;
+      }
+
+      plan.version++;
+      plan.updatedAt = now();
+
+      await atomicWriteJson(this.paths.planFile, plan);
+    }
   }
 
   /**
