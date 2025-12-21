@@ -27,6 +27,7 @@ import type {
 import {
   calculateRetryDelay,
   shouldRetry,
+  resolveRetryPolicy,
   createOrchestratorConfig,
   type PartialOrchestratorConfig,
 } from './config';
@@ -1814,12 +1815,21 @@ Is this a genuine deviation? Answer YES or NO only.`,
       await this.updateProgressToSession(taskId);
 
       // 执行当前步骤的所有子任务
+      // 设计说明：retryPolicy 采用“配置优先 + 可选 guardrail”
+      // - config: 基础设施默认策略
+      // - planner: 允许 Planner 调整（缺省字段回退配置）
+      // - guardrail: Planner 调整，但受配置上限/下限保护
+      const effectiveRetryPolicy = resolveRetryPolicy(
+        delegation.retryPolicy,
+        this.orchestratorConfig.delegation.retryPolicy,
+        this.orchestratorConfig.delegation.retryPolicyMode ?? 'config'
+      );
       await this.executeStep(
         taskId,
         step,
         subtaskMap,
         delegation.timeout,
-        delegation.retryPolicy,
+        effectiveRetryPolicy,
         signal
       );
     }

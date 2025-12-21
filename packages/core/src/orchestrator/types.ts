@@ -694,6 +694,11 @@ export interface PlannerConfig {
 }
 
 /**
+ * 重试策略来源模式
+ */
+export type RetryPolicyMode = 'config' | 'planner' | 'guardrail';
+
+/**
  * 委托默认配置
  */
 export interface DelegationDefaults {
@@ -705,6 +710,14 @@ export interface DelegationDefaults {
   timeout: number;
   /** 默认重试策略 */
   retryPolicy: RetryPolicy;
+  /**
+   * 重试策略来源
+   *
+   * - config: 始终使用 Orchestrator 配置
+   * - planner: 使用 Planner 输出（缺省字段回退配置）
+   * - guardrail: Planner 输出 + 配置作为上限/下限保护
+   */
+  retryPolicyMode?: RetryPolicyMode;
 }
 
 // ============================================================================

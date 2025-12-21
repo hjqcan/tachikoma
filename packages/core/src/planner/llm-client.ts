@@ -5,7 +5,7 @@
  * 支持 Anthropic、OpenAI 和 Mock 客户端实现
  */
 
-import { generateText } from 'ai';
+import { generateText, jsonSchema, tool } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import type {
@@ -14,6 +14,10 @@ import type {
   LLMProvider,
   LLMRequest,
   LLMResponse,
+  LLMToolCall,
+  LLMToolChoice,
+  LLMToolDefinition,
+  LLMToolSet,
 } from './types';
 
 // ============================================================================
@@ -60,6 +64,93 @@ function isTransientNetworkError(code: string, message: string): boolean {
 
 function isRetryableError(statusCode: number, code: string, message: string): boolean {
   return statusCode >= 500 || statusCode === 429 || isTransientNetworkError(code, message);
+}
+
+// ============================================================================
+// 工具调用辅助函数（AI SDK 原生 Function Calling）
+// ============================================================================
+
+const DEFAULT_TOOL_OUTPUT_SCHEMA = jsonSchema({});
+
+type AIToolSet = LLMToolSet;
+type NormalizedToolChoice = Exclude<LLMToolChoice, { name: string }>;
+
+function normalizeToolChoice(toolChoice?: LLMToolChoice): NormalizedToolChoice | undefined {
+  if (!toolChoice) return undefined;
+  if (typeof toolChoice === 'string') return toolChoice;
+  if ('type' in toolChoice && toolChoice.type === 'tool') {
+    return toolChoice;
+  }
+  if ('name' in toolChoice && toolChoice.name) {
+    return { type: 'tool', toolName: toolChoice.name };
+  }
+  return undefined;
+}
+
+function normalizeToolArguments(raw: unknown): Record<string, unknown> {
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return { raw };
+    }
+  }
+  if (typeof raw === 'object') {
+    return raw as Record<string, unknown>;
+  }
+  return { value: raw };
+}
+
+function normalizeToolCalls(
+  result: Awaited<ReturnType<typeof generateText>>
+): LLMToolCall[] | undefined {
+  if (!result.toolCalls || result.toolCalls.length === 0) return undefined;
+
+  return result.toolCalls
+    .map((tc) => {
+      const raw = (tc as unknown as { input?: unknown; args?: unknown; arguments?: unknown }).input
+        ?? (tc as unknown as { args?: unknown }).args
+        ?? (tc as unknown as { arguments?: unknown }).arguments;
+
+      const name = (tc as unknown as { toolName?: string; name?: string }).toolName
+        ?? (tc as unknown as { name?: string }).name;
+      const id = (tc as unknown as { toolCallId?: string; id?: string }).toolCallId
+        ?? (tc as unknown as { id?: string }).id;
+
+      if (!name || !id) return undefined;
+
+      return {
+        id,
+        name,
+        arguments: normalizeToolArguments(raw),
+      };
+    })
+    .filter((call): call is LLMToolCall => Boolean(call));
+}
+
+function normalizeTools(
+  tools: LLMRequest['tools']
+): { tools?: AIToolSet } {
+  if (!tools) {
+    return {};
+  }
+
+  if (Array.isArray(tools)) {
+    const toolSet: AIToolSet = {};
+    for (const def of tools as LLMToolDefinition[]) {
+      if (!def?.name) continue;
+      toolSet[def.name] = tool({
+        description: def.description,
+        inputSchema: jsonSchema(def.parameters as Parameters<typeof jsonSchema>[0]),
+        outputSchema: DEFAULT_TOOL_OUTPUT_SCHEMA,
+      });
+    }
+    return Object.keys(toolSet).length > 0 ? { tools: toolSet } : {};
+  }
+
+  const toolSet = tools as AIToolSet;
+  return Object.keys(toolSet).length > 0 ? { tools: toolSet } : {};
 }
 
 // ============================================================================
@@ -164,6 +255,8 @@ export class AnthropicLLMClient extends BaseLLMClient {
       temperature = this.config.temperature ?? 0.3,
       stopSequences,
       abortSignal,
+      tools,
+      toolChoice,
     } = request;
 
     // P0 修复：过滤 messages 中的 system 角色，Anthropic 只接受 user/assistant
@@ -188,6 +281,10 @@ export class AnthropicLLMClient extends BaseLLMClient {
       abortSignal ??
       (this.config.timeout ? AbortSignal.timeout(this.config.timeout) : undefined);
 
+    const normalizedTools = normalizeTools(tools).tools;
+    const normalizedToolChoice = normalizeToolChoice(toolChoice);
+    const hasTools = !!normalizedTools && Object.keys(normalizedTools).length > 0;
+
     // P0: 检查是否启用 Prompt Caching
     const enableCache = this.config.enablePromptCache !== false;
 
@@ -203,6 +300,8 @@ export class AnthropicLLMClient extends BaseLLMClient {
         // 使用条件展开避免 undefined 问题
         ...(stopSequences && { stopSequences }),
         ...(effectiveAbortSignal && { abortSignal: effectiveAbortSignal }),
+        ...(hasTools && { tools: normalizedTools }),
+        ...(hasTools && normalizedToolChoice && { toolChoice: normalizedToolChoice }),
         // P0: Prompt Caching via experimental_providerMetadata
         ...(enableCache && {
           experimental_providerMetadata: {
@@ -221,6 +320,7 @@ export class AnthropicLLMClient extends BaseLLMClient {
       },
       stopReason: result.finishReason,
       model: this.config.model,
+      toolCalls: normalizeToolCalls(result),
     });
 
     try {
@@ -333,6 +433,8 @@ export class OpenAILLMClient extends BaseLLMClient {
       temperature = this.config.temperature ?? 0.3,
       stopSequences,
       abortSignal,
+      tools,
+      toolChoice,
     } = request;
 
     // 过滤 system 消息（因为已经通过 system 参数传递）
@@ -345,6 +447,10 @@ export class OpenAILLMClient extends BaseLLMClient {
     const effectiveAbortSignal =
       abortSignal ??
       (this.config.timeout ? AbortSignal.timeout(this.config.timeout) : undefined);
+
+    const normalizedTools = normalizeTools(tools).tools;
+    const normalizedToolChoice = normalizeToolChoice(toolChoice);
+    const hasTools = !!normalizedTools && Object.keys(normalizedTools).length > 0;
 
     try {
       const result = await generateText({
@@ -361,6 +467,8 @@ export class OpenAILLMClient extends BaseLLMClient {
         // 使用条件展开避免 undefined 问题
         ...(stopSequences && { stopSequences }),
         ...(effectiveAbortSignal && { abortSignal: effectiveAbortSignal }),
+        ...(hasTools && { tools: normalizedTools }),
+        ...(hasTools && normalizedToolChoice && { toolChoice: normalizedToolChoice }),
       });
 
       return {
@@ -371,6 +479,7 @@ export class OpenAILLMClient extends BaseLLMClient {
         },
         stopReason: result.finishReason,
         model: this.config.model,
+        toolCalls: normalizeToolCalls(result),
       };
     } catch (error) {
       if (isDebugEnabled()) {

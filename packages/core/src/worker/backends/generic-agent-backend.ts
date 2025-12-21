@@ -14,17 +14,15 @@ import type {
   WorkerExecutionOptions,
   GenericBackendConfig,
   WorkerApprovalRequestMessage,
+  WorkerErrorMessage,
 } from '../types';
 import { BaseWorkerBackend } from './base-backend';
 import { 
   DEFAULT_RESOURCE_LIMITS, 
-  DEFAULT_KEY_DECISION_POLICY,
-  type ParallelExecutionConfig,
   DEFAULT_PARALLEL_EXECUTION_CONFIG,
-  PARALLELIZABLE_TOOLS,
 } from '../types';
 import type { Tool } from '../../types';
-import type { LLMClient, LLMRequest, LLMResponse } from '../../planner/types';
+import type { LLMClient, LLMRequest } from '../../planner/types';
 import type { Sandbox, SandboxConfig } from '../../sandbox';
 import { createLLMClient } from '../../planner/llm-client';
 import { createLocalSandbox } from '../../sandbox/drivers/local';
@@ -40,24 +38,52 @@ import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 import {
   createPromptContextEngine,
   createDefaultPromptConfig,
-  type ContextMessage,
   type PromptContextEngineDependencies,
-  // 项目上下文注入
-  type ProjectContextInjector,
-  createProjectContextInjector,
+  type PromptContextEngine,
+  DEFAULT_PROJECT_CONTEXT_CONFIG,
 } from '../../prompt';
-// Skills 模块
-import {
-  loadSkills,
-  renderSkillsSection,
-  type SkillMetadata,
-  type SkillLoadOutcome,
-} from '../../skills';
+
 // Memory 模块
 import { MemoryService } from '../../memory';
 // Collaboration 模块
 import { CollaborationManager, createPeerAssistTool } from '../../collaboration';
 import type { Tool as CollaborationTool } from '../../types';
+import {
+  ProgressTracker,
+  simpleHash,
+  type ParsedToolCall,
+  parseToolCalls,
+  parseFunctionCalls,
+  containsToolCall,
+  classifyToolCalls,
+  // Context Helpers
+  createUserMessage,
+  createAssistantMessage,
+  createToolMessage,
+  contextToLLMMessages,
+  // Memory
+  createMemoryRetriever,
+  type MemoryRetriever,
+  // Tool Executor
+  executeParallel,
+  executeSequentialGenerator,
+  filterApprovalRequired,
+  type ToolExecutorCallbacks,
+  type ToolExecutionResult,
+  type ToolExecutorEvent,
+  // Tool Schema
+  convertToolsToAITools,
+  // LLM Executor
+  type LLMExecutor,
+  createLLMExecutor,
+  isRetryableError,
+  type LLMExecutorConfig,
+  // SkillsManager
+  type SkillsManager,
+  createSkillsManager,
+  // Interaction Engine
+  InteractionEngine,
+} from '../engines';
 
 // ============================================================================
 // 常量
@@ -92,616 +118,20 @@ export class GenericBackendError extends Error {
 }
 
 // ============================================================================
-// 上下文辅助函数（Task 8）
+// 上下文辅助函数现已从 ../engines/context-helpers.ts 模块导入
+// 参见: src/worker/engines/context-helpers.ts
 // ============================================================================
 
-let messageIdCounter = 0;
-
-/**
- * 创建用户消息
- */
-function createUserMessage(content: string): ContextMessage {
-  return {
-    id: `user-${++messageIdCounter}`,
-    role: 'user',
-    content,
-    timestamp: Date.now(),
-    format: 'full',
-  };
-}
-
-/**
- * 创建助手消息
- */
-function createAssistantMessage(content: string): ContextMessage {
-  return {
-    id: `assistant-${++messageIdCounter}`,
-    role: 'assistant',
-    content,
-    timestamp: Date.now(),
-    format: 'full',
-  };
-}
-
-/**
- * 创建工具结果消息
- */
-function createToolMessage(toolCallId: string, result: string): ContextMessage {
-  return {
-    id: `tool-${++messageIdCounter}`,
-    role: 'tool',
-    content: result,
-    timestamp: Date.now(),
-    format: 'full',
-    toolResult: {
-      callId: toolCallId,
-      output: result,
-      success: true,
-    },
-  };
-}
-
-/**
- * 将上下文消息转换为 LLM 可接受的格式
- * 
- * 注意：system 消息（如摘要、状态提醒）转换为 user 消息注入，
- * 以保留压缩后的上下文信息
- */
-function contextToLLMMessages(
-  context: ContextMessage[]
-): { role: 'user' | 'assistant'; content: string }[] {
-  const result: { role: 'user' | 'assistant'; content: string }[] = [];
-
-  for (const msg of context) {
-    if (msg.role === 'tool') {
-      result.push({
-        role: 'user',
-        content: `Tool result: ${msg.content}`,
-      });
-    } else if (msg.role === 'system') {
-      // System 消息（摘要、状态提醒等）转换为 user 消息注入
-      result.push({
-        role: 'user',
-        content: `[System Context]\n${msg.content}`,
-      });
-    } else if (msg.role === 'user' || msg.role === 'assistant') {
-      result.push({
-        role: msg.role,
-        content: msg.content,
-      });
-    }
-  }
-
-  return result;
-}
-
 // ============================================================================
-// 进度追踪器
+// 进度追踪器、工具调用解析、分类器现已从 ../engines 模块导入
+// 参见: src/worker/engines/progress-tracker.ts
+// 参见: src/worker/engines/tool-call-parser.ts
 // ============================================================================
 
-/**
- * 单轮执行进度
- */
-interface RoundProgress {
-  round: number;
-  stopReason: string;
-  toolCallsAttempted: number;     // 解析出的工具调用数
-  toolCallsSucceeded: number;     // 成功执行的工具调用数
-  toolCallsParseFailed: boolean;  // 工具调用 XML 被截断
-  outputHash: string;             // 输出内容 hash（检测重复）
-  toolCallHash?: string;          // 工具调用内容 hash（检测重复调用）
-  toolNames?: string[];           // 本轮调用的工具名称列表
-  toolResultPatterns?: string[];  // 工具输出的模式指纹（前50字符 hash）
-}
 
-/**
- * 进度追踪配置
- */
-const PROGRESS_TRACKER_CONFIG = {
-  /** 连续调用同一工具的最大次数 */
-  maxConsecutiveSameTool: 8,
-  /** 同一失败模式的最大重复次数 */
-  maxSameResultPattern: 5,
-  /** 工具历史窗口大小 */
-  toolHistoryWindow: 15,
-  /** 触发降级的相似轮次阈值 */
-  similarRoundThreshold: 6,
-  /** 
-   * 允许重复调用的工具白名单
-   * 这些工具在批量操作中通常需要连续多次调用，不应被误判为死循环
-   */
-  repeatAllowedTools: [
-    'file_read',      // 批量读取文件
-    'file_list',      // 遍历目录
-    'apply_patch',    // 连续应用多个补丁
-    'file_write',     // 批量写入文件
-    'shell_run',      // 连续执行 shell 命令
-    'run_command',
-    'execute_command',
-  ],
-};
 
-/**
- * 降级策略级别
- */
-type DegradationLevel = 0 | 1 | 2 | 3;
 
-/**
- * 进度追踪器
- * 
- * 追踪执行进度，检测死循环和无进展状态。
- * 当连续多轮没有实质进展时，触发策略降级。
- * 
- * 增强检测能力：
- * 1. 工具名称频率检测 - 连续调用同一工具
- * 2. 失败模式检测 - 相同的工具输出模式重复
- * 3. 相似轮次检测 - 多轮调用相同类型的工具组合
- */
-class ProgressTracker {
-  private history: RoundProgress[] = [];
-  private noProgressCount = 0;
-  private lastOutputHash = '';
-  private lastInjectedLevel: DegradationLevel = 0;
-  private toolCallHashHistory: string[] = [];  // 追踪最近的工具调用 hash
-  private repeatToolCallCount = 0;             // 连续重复工具调用计数
-  
-  // 增强检测状态
-  private toolNameHistory: string[] = [];              // 最近 N 轮的主要工具名称
-  private consecutiveSameToolCount = 0;                // 连续相同工具计数
-  private lastPrimaryTool = '';                        // 上一轮的主要工具
-  private resultPatternHistory = new Map<string, number>();  // 结果模式 -> 出现次数
-  
-  /**
-   * 记录一轮执行的进度
-   */
-  recordRound(progress: RoundProgress): void {
-    this.history.push(progress);
-    
-    // 更新工具名称历史
-    if (progress.toolNames && progress.toolNames.length > 0) {
-      const primaryTool = progress.toolNames[0] as string;
-      this.toolNameHistory.push(primaryTool);
-      
-      // 保持窗口大小
-      if (this.toolNameHistory.length > PROGRESS_TRACKER_CONFIG.toolHistoryWindow) {
-        this.toolNameHistory.shift();
-      }
-      
-      // 检测连续相同工具
-      if (primaryTool === this.lastPrimaryTool) {
-        this.consecutiveSameToolCount++;
-      } else {
-        this.consecutiveSameToolCount = 1;
-        this.lastPrimaryTool = primaryTool;
-      }
-    }
-    
-    // 更新结果模式历史
-    if (progress.toolResultPatterns) {
-      for (const pattern of progress.toolResultPatterns) {
-        const count = this.resultPatternHistory.get(pattern) || 0;
-        this.resultPatternHistory.set(pattern, count + 1);
-      }
-    }
-    
-    if (this.hasProgress(progress)) {
-      this.noProgressCount = 0;
-      this.lastInjectedLevel = 0; // Reset on progress
-    } else {
-      this.noProgressCount++;
-      console.warn(
-        `[ProgressTracker] No progress detected. Count: ${this.noProgressCount}. ` +
-        `stopReason=${progress.stopReason}, toolCallsSucceeded=${progress.toolCallsSucceeded}, ` +
-        `toolCallsParseFailed=${progress.toolCallsParseFailed}, ` +
-        `consecutiveSameTool=${this.consecutiveSameToolCount}`
-      );
-    }
-    
-    this.lastOutputHash = progress.outputHash;
-  }
-  
-  /**
-   * 判断本轮是否有实质进展
-   */
-  private hasProgress(progress: RoundProgress): boolean {
-    // 正常完成（没有工具调用请求且 stop reason 是 stop）
-    if (progress.stopReason === 'stop' && progress.toolCallsAttempted === 0) {
-      return true;
-    }
-    
-    // 检测重复的工具调用（完全相同的调用）
-    if (progress.toolCallHash) {
-      const lastHash = this.toolCallHashHistory[this.toolCallHashHistory.length - 1];
-      if (lastHash === progress.toolCallHash) {
-        this.repeatToolCallCount++;
-        console.warn(
-          `[ProgressTracker] Repeated tool call detected. RepeatCount: ${this.repeatToolCallCount}`
-        );
-        // 连续 3 次相同的工具调用 = 卡死
-        if (this.repeatToolCallCount >= 3) {
-          return false;
-        }
-      } else {
-        this.repeatToolCallCount = 0;
-      }
-      // 保留最近 10 个 hash
-      this.toolCallHashHistory.push(progress.toolCallHash);
-      if (this.toolCallHashHistory.length > 10) {
-        this.toolCallHashHistory.shift();
-      }
-    }
-    
-    // ========== 增强检测：工具频率限制 ==========
-    // 连续 N 次调用同一工具 = 可能陷入死循环
-    // 但白名单工具允许连续调用（如批量文件读取）
-    const isWhitelistedTool = PROGRESS_TRACKER_CONFIG.repeatAllowedTools.includes(this.lastPrimaryTool);
-    if (!isWhitelistedTool && 
-        this.consecutiveSameToolCount >= PROGRESS_TRACKER_CONFIG.maxConsecutiveSameTool) {
-      console.warn(
-        `[ProgressTracker] Tool frequency limit reached. ` +
-        `Tool "${this.lastPrimaryTool}" called ${this.consecutiveSameToolCount} times consecutively.`
-      );
-      return false;
-    }
-    
-    // ========== 增强检测：结果模式重复 ==========
-    // 同一结果模式出现太多次 = 工具执行无效
-    if (progress.toolResultPatterns) {
-      for (const pattern of progress.toolResultPatterns) {
-        const count = this.resultPatternHistory.get(pattern) || 0;
-        if (count >= PROGRESS_TRACKER_CONFIG.maxSameResultPattern) {
-          console.warn(
-            `[ProgressTracker] Result pattern repeated ${count} times. ` +
-            `Pattern: ${pattern.slice(0, 20)}...`
-          );
-          return false;
-        }
-      }
-    }
-    
-    // ========== 增强检测：相似轮次检测 ==========
-    // 检查最近 N 轮是否都是同一类工具
-    if (this.toolNameHistory.length >= PROGRESS_TRACKER_CONFIG.similarRoundThreshold) {
-      const recentTools = this.toolNameHistory.slice(-PROGRESS_TRACKER_CONFIG.similarRoundThreshold);
-      const uniqueTools = new Set(recentTools);
-      // 如果最近 N 轮只使用了 1 种工具，且不在白名单中，认为无进展
-      if (uniqueTools.size === 1) {
-        const singleTool = recentTools[0];
-        if (singleTool && !PROGRESS_TRACKER_CONFIG.repeatAllowedTools.includes(singleTool)) {
-          console.warn(
-            `[ProgressTracker] Similar rounds detected. ` +
-            `Last ${PROGRESS_TRACKER_CONFIG.similarRoundThreshold} rounds all used tool: ${singleTool}`
-          );
-          return false;
-        }
-      }
-    }
-    
-    // 有成功的工具调用（前提是通过了上述检测）
-    if (progress.toolCallsSucceeded > 0) {
-      return true;
-    }
-    
-    // 被截断且无工具调用成功 = 无进展
-    if (progress.stopReason === 'length' || progress.toolCallsParseFailed) {
-      return false;
-    }
-    
-    // 输出与上轮相同 = 无进展
-    if (progress.outputHash === this.lastOutputHash && this.lastOutputHash !== '') {
-      return false;
-    }
-    
-    return true;
-  }
-  
-  getNoProgressCount(): number {
-    return this.noProgressCount;
-  }
-  
-  shouldDegradeStrategy(): boolean {
-    return this.noProgressCount >= 3;
-  }
-  
-  /**
-   * 获取降级级别
-   * 0 = 正常, 1 = 第一次降级（约束输出）, 2 = 第二次降级（终止任务）, 3+ = 强制终止
-   */
-  getDegradationLevel(): DegradationLevel {
-    if (this.noProgressCount < 3) return 0;
-    if (this.noProgressCount < 6) return 1;
-    if (this.noProgressCount < 9) return 2;
-    return 3;
-  }
-  
-  /**
-   * 获取降级提示消息（仅当级别提升时返回消息）
-   */
-  getDegradationMessage(): string | null {
-    const level = this.getDegradationLevel();
-    
-    // 只有当级别提升时才返回消息，避免重复注入
-    if (level === 0 || level <= this.lastInjectedLevel) return null;
-    
-    // 更新已注入的级别
-    this.lastInjectedLevel = level;
-    
-    if (level === 1) {
-      // 根据检测到的问题类型提供更具体的建议
-      const isToolLoop = this.consecutiveSameToolCount >= PROGRESS_TRACKER_CONFIG.maxConsecutiveSameTool / 2;
-      
-      if (isToolLoop) {
-        return `⚠️ Potential loop detected (${this.consecutiveSameToolCount} consecutive calls to "${this.lastPrimaryTool}").
 
-Adjust your strategy:
-1. Verify whether the previous tool calls actually succeeded
-2. If a command failed, try a different approach instead of repeating the same command
-3. If you hit permissions or environment limitations, report them and propose alternatives
-4. Consider whether user intervention is required
-
-If you cannot complete the task, clearly explain why.`;
-      }
-      
-      return `⚠️ Your output appears to be getting truncated (${this.noProgressCount} consecutive no-progress rounds).
-
-Adjust your strategy:
-1. Do not generate an entire large file in one response
-2. Produce one function or one small code block at a time (e.g., ≤100 lines)
-3. Use a clear continuation marker when needed
-4. Prefer incremental edits (e.g., \`apply_patch\`) over full rewrites
-
-If the file is large, write it in multiple steps.
-
-Important: Do not switch the user-facing response language due to this warning. Keep responding in the user's language.`;
-    }
-    
-    if (level === 2) {
-      return `⚠️ No progress for ${this.noProgressCount} consecutive rounds. Finish the current step or report the blocker immediately.
-
-Suggestions:
-- Simplify and deliver the minimum viable change
-- If the task is too large, propose a concrete breakdown
-- If you cannot proceed, clearly report the issue and why
-
-Important: Keep responding in the user's language.`;
-    }
-    
-    return null; // level 3 会直接终止，不需要消息
-  }
-  
-  getHistory(): RoundProgress[] {
-    return [...this.history];
-  }
-  
-  /**
-   * 获取调试诊断信息
-   */
-  getDiagnostics(): {
-    noProgressCount: number;
-    consecutiveSameToolCount: number;
-    lastPrimaryTool: string;
-    toolNameHistory: string[];
-    repeatPatternCount: number;
-  } {
-    let maxPatternCount = 0;
-    for (const count of this.resultPatternHistory.values()) {
-      maxPatternCount = Math.max(maxPatternCount, count);
-    }
-    
-    return {
-      noProgressCount: this.noProgressCount,
-      consecutiveSameToolCount: this.consecutiveSameToolCount,
-      lastPrimaryTool: this.lastPrimaryTool,
-      toolNameHistory: [...this.toolNameHistory],
-      repeatPatternCount: maxPatternCount,
-    };
-  }
-  
-  reset(): void {
-    this.history = [];
-    this.noProgressCount = 0;
-    this.lastOutputHash = '';
-    this.toolCallHashHistory = [];
-    this.repeatToolCallCount = 0;
-    this.toolNameHistory = [];
-    this.consecutiveSameToolCount = 0;
-    this.lastPrimaryTool = '';
-    this.resultPatternHistory.clear();
-    this.lastInjectedLevel = 0;
-  }
-}
-
-/**
- * 简单 hash 函数（用于检测重复输出）
- */
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return hash.toString(16);
-}
-
-// ============================================================================
-// 工具调用解析
-// ============================================================================
-
-/**
- * 工具调用
- */
-interface ParsedToolCall {
-  name: string;
-  input: Record<string, unknown>;
-  callId: string;
-}
-
-/**
- * 解析文本中的工具调用
- *
- * 支持多种格式：
- * - JSON 格式：{"tool": "name", "input": {...}}
- * - 函数调用格式：tool_name(arg1, arg2)
- * - XML 格式：<tool_use><name>...</name><input>...</input></tool_use>
- * 
- * 注意：单次响应最多解析 MAX_CALLS_PER_RESPONSE 个工具调用，
- * 防止 LLM 幻觉生成大量重复调用。
- */
-const MAX_CALLS_PER_RESPONSE = 20;
-
-function parseToolCalls(content: string): ParsedToolCall[] {
-  const calls: ParsedToolCall[] = [];
-
-  // 尝试解析 JSON 格式
-  try {
-    const jsonMatch = content.match(/\{[\s\S]*"tool"[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.tool && typeof parsed.tool === 'string') {
-        // 检查是否达到单次响应最大调用数限制
-        if (calls.length >= MAX_CALLS_PER_RESPONSE) {
-          console.warn(
-            `[parseToolCalls] Truncated tool calls: reached max ${MAX_CALLS_PER_RESPONSE} calls per response. ` +
-            `This may indicate LLM generating excessive duplicate tool calls.`
-          );
-          return calls; // 直接返回，不再解析其他格式
-        }
-        calls.push({
-          name: parsed.tool,
-          input: parsed.input || parsed.arguments || {},
-          callId: `call-${Date.now()}`,
-        });
-      }
-    }
-  } catch {
-    // 继续尝试其他格式
-  }
-
-  // 尝试解析 XML 格式（Claude 风格）
-  const xmlRegex = /<tool_use>([\s\S]*?)<\/tool_use>/g;
-  let xmlMatch;
-  while ((xmlMatch = xmlRegex.exec(content)) !== null) {
-    // 检查是否达到单次响应最大调用数限制
-    if (calls.length >= MAX_CALLS_PER_RESPONSE) {
-      console.warn(
-        `[parseToolCalls] Truncated tool calls: reached max ${MAX_CALLS_PER_RESPONSE} calls per response. ` +
-        `This may indicate LLM generating excessive duplicate tool calls.`
-      );
-      break;
-    }
-
-    const toolBlock = xmlMatch[1];
-    const nameMatch = toolBlock?.match(/<name>(.*?)<\/name>/);
-    const inputMatch = toolBlock?.match(/<input>([\s\S]*?)<\/input>/);
-
-    if (nameMatch && nameMatch[1]) {
-      let input = {};
-      if (inputMatch && inputMatch[1]) {
-        try {
-          input = JSON.parse(inputMatch[1]);
-        } catch {
-          input = { raw: inputMatch[1] };
-        }
-      }
-
-      calls.push({
-        name: nameMatch[1],
-        input,
-        callId: `call-${Date.now()}-${calls.length}`,
-      });
-    }
-  }
-
-  return calls;
-}
-
-/**
- * 判断响应是否包含工具调用
- */
-function containsToolCall(content: string): boolean {
-  return (
-    content.includes('"tool"') ||
-    content.includes('<tool_use>') ||
-    content.includes('tool_call')
-  );
-}
-
-/**
- * 工具调用分类结果
- */
-interface ClassifiedToolCalls {
-  /** 可并行执行的工具调用 */
-  parallel: ParsedToolCall[];
-  /** 需顺序执行的工具调用 */
-  sequential: ParsedToolCall[];
-}
-
-/**
- * 将工具调用分类为可并行和需顺序执行两组
- * 
- * @param toolCalls - 待分类的工具调用
- * @param config - 并行执行配置
- * @returns 分类后的工具调用
- */
-function classifyToolCalls(
-  toolCalls: ParsedToolCall[],
-  config: ParallelExecutionConfig
-): ClassifiedToolCalls {
-  const parallel: ParsedToolCall[] = [];
-  const sequential: ParsedToolCall[] = [];
-
-  const parallelizableSet = new Set(
-    config.parallelizableTools ?? PARALLELIZABLE_TOOLS
-  );
-  const excludeSet = new Set(config.excludeTools);
-
-  for (const call of toolCalls) {
-    // 排除列表优先级最高
-    if (excludeSet.has(call.name)) {
-      sequential.push(call);
-    } else if (parallelizableSet.has(call.name)) {
-      parallel.push(call);
-    } else {
-      // 未知工具默认顺序执行（安全保守）
-      sequential.push(call);
-    }
-  }
-
-  return { parallel, sequential };
-}
-
-/**
- * 并发限制器
- * 
- * 用于控制并行执行的最大并发数
- */
-function createConcurrencyLimiter(maxConcurrency: number) {
-  let running = 0;
-  const queue: (() => void)[] = [];
-
-  const acquire = (): Promise<void> => {
-    return new Promise((resolve) => {
-      if (running < maxConcurrency) {
-        running++;
-        resolve();
-      } else {
-        queue.push(resolve);
-      }
-    });
-  };
-
-  const release = (): void => {
-    running--;
-    const next = queue.shift();
-    if (next) {
-      running++;
-      next();
-    }
-  };
-
-  return { acquire, release };
-}
 
 // ============================================================================
 // 通用后端实现
@@ -733,22 +163,14 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private llmClient: LLMClient;
   private sandbox: Sandbox | null = null;
   private sandboxOwned = false; // 是否由本实例拥有（负责销毁）
-  private sandboxNeedsInit = false; // 是否需要初始化
+  private memoryRetriever: MemoryRetriever;
+  private llmExecutor: LLMExecutor;
+  private skillsManager: SkillsManager;
+  private interactionEngine: InteractionEngine;
   private abortController: AbortController | null = null;
   private isExecuting = false;
+  private sandboxNeedsInit = false; // 是否需要初始化
   
-  // Skills 支持
-  private skills: SkillMetadata[] = [];
-  private skillLoadErrors: SkillLoadOutcome['errors'] = [];
-
-  // Memory 支持 (local implementation, not using base class)
-  private memoryService?: MemoryService;
-  private lastMemoryRetrievalAt?: number;
-  private injectedMemoryIds = new Set<string>();
-
-  // 项目上下文注入器（Task 8：自动加载 TACHIKOMA.md 等配置）
-  private projectContextInjector: ProjectContextInjector;
-
   // Collaboration 支持
   private collaborationManager?: CollaborationManager;
   private peerAssistTool?: CollaborationTool;
@@ -786,32 +208,26 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       this.sandboxNeedsInit = true;
     }
 
-    // 加载 Skills
-    if (config.skillsConfig?.enabled !== false) {
-      const outcome = loadSkills(
-        config.skillsConfig ?? {},
-        config.workDir ?? process.cwd()
-      );
-      this.skills = outcome.skills;
-      this.skillLoadErrors = outcome.errors;
-      
-      if (this.skills.length > 0) {
-        console.debug(`[GenericAgentBackend] Loaded ${this.skills.length} skills`);
-      }
-      if (this.skillLoadErrors.length > 0) {
-        console.warn('[GenericAgentBackend] Skill loading errors:', this.skillLoadErrors);
-      }
-    }
+    // 初始化 Memory Retriever
+    // 实例化 MemoryService 用于传给 Retriever (config 中包含 connection options 等)
+    // 注意: MemoryService 可能需要 config.memoryConfig
+    const memoryService = config.memoryConfig?.enabled ? new MemoryService(config.memoryConfig) : undefined;
+    this.memoryRetriever = createMemoryRetriever(memoryService, config.memoryConfig);
+    
+    // 初始化 LLM Executor
+    const llmExecutorConfig: LLMExecutorConfig = {
+      maxRetries: 3, // Default hardcoded in original
+    };
+    this.llmExecutor = createLLMExecutor(this.llmClient, llmExecutorConfig);
 
-    // 初始化 MemoryService
-    if (config.memoryConfig?.enabled) {
-      this.memoryService = new MemoryService(config.memoryConfig);
-      console.debug('[GenericAgentBackend] MemoryService initialized');
-    }
+    // 初始化 Skills Manager
+    this.skillsManager = createSkillsManager(
+      config.skillsConfig, 
+      config.workDir ?? process.cwd(),
+      { ...DEFAULT_PROJECT_CONTEXT_CONFIG, enabled: true }
+    );
 
-    // 初始化项目上下文注入器
-    this.projectContextInjector = createProjectContextInjector();
-    console.debug('[GenericAgentBackend] ProjectContextInjector initialized');
+    this.interactionEngine = new InteractionEngine();
 
     // 初始化协作管理器
     if (config.collaborationConfig?.enabled) {
@@ -887,11 +303,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   ): AsyncIterable<WorkerMessage> {
     // 创建 AbortController
     this.abortController = new AbortController();
+    this.interactionEngine.setAbortController(this.abortController);
     this.isExecuting = true;
 
     // Reset memory state for new task (avoid cross-task dedup interference)
-    this.lastMemoryRetrievalAt = 0;
-    this.injectedMemoryIds.clear();
+    // Reset memory state for new task (avoid cross-task dedup interference)
+    this.memoryRetriever.reset();
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
@@ -980,12 +397,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     }
     
     const contextDeps: PromptContextEngineDependencies = {};
-    if (this.memoryService) {
-      contextDeps.memoryProvider = this.memoryService;
-    }
     const context = createPromptContextEngine(contextConfig, contextDeps);
-    
-    // Token 使用追踪（独立于 PromptContextEngine）
     let totalTokensUsed = 0;
     const maxTotalTokens = limits.maxTotalTokens;
     const recordTokenUsage = (input: number, output: number) => { totalTokensUsed += input + output; };
@@ -1004,11 +416,8 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     // 注入项目上下文（TACHIKOMA.md 等）
     // 注意：必须在 addMessage(user) 之前调用，确保 system 消息在前
     try {
-      // 每个任务开始都重新加载（避免缓存导致上下文变更不生效）
-      this.projectContextInjector.clearCache();
-
-      const injected = await this.projectContextInjector.injectProjectContext([], workDir);
-      const projectMessage = injected.find((m) => m.id === 'project-context');
+      const injectedMessages = await this.skillsManager.injectProjectContext([], workDir);
+      const projectMessage = injectedMessages.find((m) => m.id === 'project-context');
       if (projectMessage) {
         context.addMessage(projectMessage);
         console.debug('[GenericAgentBackend] Injected project context from:', workDir);
@@ -1017,8 +426,18 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       console.debug('[GenericAgentBackend] No project context found (continuing):', projectError);
     }
 
-    // 构建工具描述
+    // 构建工具描述与原生工具集（Function Calling）
     const toolDescriptions = this.buildToolDescriptions(tools);
+    const nativeToolSet = convertToolsToAITools(tools);
+    const useNativeToolCalls = Object.keys(nativeToolSet).length > 0;
+
+    const toolUsageInstructions = useNativeToolCalls
+      ? 'Please accomplish this task step by step. Use the available tools when needed.'
+      : `Please accomplish this task step by step. When you need to use a tool, output it in this format:
+<tool_use>
+<name>tool_name</name>
+<input>{"param": "value"}</input>
+</tool_use>`;
 
     // 初始用户消息
     context.addMessage(createUserMessage(`Task: ${task.objective}
@@ -1029,23 +448,12 @@ ${task.constraints?.map((c) => `- ${c}`).join('\n') || 'None'}
 Available tools:
 ${toolDescriptions}
 
-Please accomplish this task step by step. When you need to use a tool, output it in this format:
-<tool_use>
-<name>tool_name</name>
-<input>{"param": "value"}</input>
-</tool_use>
+${toolUsageInstructions}
 
 When the task is complete, provide a final summary of what was accomplished.`));
 
     // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
-    let systemPromptWithSkills = DEFAULT_SYSTEM_PROMPT;
-    const skillsSection = renderSkillsSection(
-      this.skills,
-      this.config.skillsConfig?.maxSkillTokens
-    );
-	    if (skillsSection) {
-	      systemPromptWithSkills += '\n\n' + skillsSection;
-	    }
+    const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(DEFAULT_SYSTEM_PROMPT);
 
 	    let finalStatus: WorkerStatus = 'failed';
 	    try {
@@ -1090,93 +498,29 @@ When the task is complete, provide a final summary of what was accomplished.`));
           timestamp: Date.now(),
         };
 
-        // Task 8: 在 LLM 调用前检查并执行上下文压缩
-        if (context.needsReduction()) {
-          console.debug('[GenericAgentBackend] Context needs reduction, running autoReduce');
-          // eslint-disable-next-line no-await-in-loop -- Auto-reduce is intentionally sequential
-          await context.autoReduce();
-          
-          // 如果 autoReduce 后仍然需要压缩（可能 deps 不完整导致失败）
-          // 强制执行压缩操作以避免超出模型上下文窗口
-          if (context.needsReduction()) {
-            console.warn('[GenericAgentBackend] Context still over limit after autoReduce, forcing compact');
-            // 尝试最多 3 轮压缩
-            for (let i = 0; i < 3 && context.needsReduction(); i++) {
-              // eslint-disable-next-line no-await-in-loop -- Sequential compaction attempts
-              await context.compact();
-            }
-          }
-          
-          // 硬限制兜底：如果仍然超过限制，需要处理
-	          if (context.needsSummarization()) {
-	            // 超过硬限制，中止本轮执行并报告错误
-	            console.error('[GenericAgentBackend] Context exceeds hard limit after all reduction attempts');
-	            yield {
-	              type: 'error',
-	              error: `Context size exceeds hard limit after reduction. Token count: ${context.getState().totalTokens}`,
-	              code: 'CONTEXT_OVERFLOW',
-	              retryable: false,
-	              timestamp: Date.now(),
-	            };
-	            finalStatus = 'failed';
-	            done = true;
-	            break;
-	          }
-          
-          // 压缩成功后注入状态提醒帮助 agent 理解上下文变化
-          context.injectStatusReminder();
+        // Task 8: Context Compaction
+        const contextConfig = await this.manageContext(context);
+        if (!contextConfig.success) {
+           yield contextConfig.error!;
+           finalStatus = 'failed';
+           done = true;
+           break;
         }
 
         // Memory: 自动检索相关记忆 (best-effort, 不中断主循环)
-        const memoryConfig = this.config.memoryConfig;
-        const autoRetrieve = memoryConfig?.autoRetrieve !== false;
-        const cooldownMs = memoryConfig?.retrievalCooldownMs ?? 10000;
-        const now = Date.now();
-        const cooldownOk = !this.lastMemoryRetrievalAt || (now - this.lastMemoryRetrievalAt) >= cooldownMs;
-        
-        if (this.memoryService && autoRetrieve && cooldownOk && context.shouldRetrieveMemories()) {
-          try {
-            console.debug('[GenericAgentBackend] Retrieving relevant memories...');
-            this.lastMemoryRetrievalAt = now;
-            
-            // Use queryStrategy to determine search approach
-            const queryStrategy = memoryConfig?.queryStrategy ?? 'user-assistant';
-            const topK = memoryConfig?.topK ?? 5;
-            let memoryResult;
-            
-            if (queryStrategy === 'retrieval-context') {
-              // Use PromptContextEngine's rich retrieval context
-              const retrievalQuery = context.getRetrievalContext();
-              // eslint-disable-next-line no-await-in-loop
-              memoryResult = await this.memoryService.retrieve(retrievalQuery, topK);
-            } else if (queryStrategy === 'last-message') {
-              // Use only the last message (simple, fast)
-              const messages = context.getContext();
-              const lastMessage = messages[messages.length - 1];
-              const query = lastMessage?.content ?? '';
-              // eslint-disable-next-line no-await-in-loop
-              memoryResult = await this.memoryService.retrieve(query, topK);
-            } else {
-              // 'user-assistant': Use provider's search (handles role filtering internally)
-              // eslint-disable-next-line no-await-in-loop
-              memoryResult = await this.memoryService.search(context.getContext(), topK);
+        try {
+          // MemoryRetriever handles cooldown and autoRetrieve checks
+          await this.memoryRetriever.retrieve({
+            getContext: () => context.getContext(),
+            getRetrievalContext: () => context.getRetrievalContext(),
+            shouldRetrieveMemories: () => context.shouldRetrieveMemories(),
+            injectRetrievedMemories: (memories) => {
+              context.injectRetrievedMemories(memories);
+              console.debug(`[GenericAgentBackend] Injected ${memories.length} memories`);
             }
-            
-            // Dedup: filter out already-injected memories
-            const newMemories = memoryResult.memories.filter(
-              m => !this.injectedMemoryIds.has(m.id)
-            );
-            
-            if (newMemories.length > 0) {
-              console.debug(`[GenericAgentBackend] Injected ${newMemories.length} new memories (skipped ${memoryResult.memories.length - newMemories.length} duplicates)`);
-              for (const m of newMemories) {
-                this.injectedMemoryIds.add(m.id);
-              }
-              context.injectRetrievedMemories(newMemories);
-            }
-          } catch (memoryError) {
-            console.warn('[GenericAgentBackend] Memory retrieval failed (continuing):', memoryError);
-          }
+          });
+        } catch (memoryError) {
+          console.warn('[GenericAgentBackend] Memory retrieval failed (continuing):', memoryError);
         }
 
         // 调用 LLM
@@ -1189,11 +533,12 @@ When the task is complete, provide a final summary of what was accomplished.`));
           ),
           temperature: this.config.temperature ?? 0.3,
           abortSignal: this.abortController.signal,
+          ...(useNativeToolCalls ? { tools: nativeToolSet, toolChoice: 'auto' } : {}),
         };
 
-        // LLM 调用（带重试逻辑）
+        // LLM 调用（由 LLMExecutor 处理重试）
         // eslint-disable-next-line no-await-in-loop
-        const response = await this.executeLLMWithRetry(request);
+        const response = await this.llmExecutor.executeWithRetry(request);
 
         // 记录 token 使用量
 	        recordTokenUsage(
@@ -1218,30 +563,44 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	          break;
 	        }
 
-	        // 发出思考消息
-	        yield {
-	          type: 'thinking',
-          content: response.content,
-          timestamp: Date.now(),
-        };
+	        const normalizedContent = response.content?.trim() ?? '';
 
-        // 添加到上下文
-        context.addMessage(createAssistantMessage(response.content));
+	        // 发出思考消息（无文本则跳过）
+	        if (normalizedContent) {
+	          yield {
+	            type: 'thinking',
+	            content: response.content,
+	            timestamp: Date.now(),
+	          };
+	          // 添加到上下文
+	          context.addMessage(createAssistantMessage(response.content));
+	        }
 
         // 追踪本轮进度
-        const hasToolCallMarker = containsToolCall(response.content);
-        const toolCalls = hasToolCallMarker ? parseToolCalls(response.content) : [];
-        const toolCallsParseFailed = hasToolCallMarker && toolCalls.length === 0;
+        const nativeToolCalls = response.toolCalls
+          ? parseFunctionCalls(response.toolCalls)
+          : [];
+        const hasNativeToolCalls = nativeToolCalls.length > 0;
+        const hasToolCallMarker = !hasNativeToolCalls && containsToolCall(response.content);
+        const toolCalls = hasNativeToolCalls
+          ? nativeToolCalls
+          : hasToolCallMarker
+            ? parseToolCalls(response.content)
+            : [];
+        const toolCallsParseFailed = !hasNativeToolCalls && hasToolCallMarker && toolCalls.length === 0;
         let toolCallsSucceeded = 0;
         
         // 更新待执行工具调用（用于检测 loop 提前终止时是否有未执行的调用）
         pendingToolCalls = toolCalls;
 
         // 检查是否有工具调用
-        if (hasToolCallMarker && toolCalls.length > 0) {
+        if (toolCalls.length > 0) {
           
           // 清空待执行队列（即将执行）
           pendingToolCalls = [];
+
+          // 获取执行器回调
+          const callbacks = this.createToolExecutorCallbacks(tools, options);
 
           // 获取并行执行配置
           const parallelConfig = options.parallelExecution ?? DEFAULT_PARALLEL_EXECUTION_CONFIG;
@@ -1261,86 +620,46 @@ When the task is complete, provide a final summary of what was accomplished.`));
           // 阶段 1: 并行执行可并行工具
           // =============================================
           if (parallel.length > 0) {
-            // 安全检查：过滤需要审批的工具调用，转移到顺序队列
-            const safeParallel: ParsedToolCall[] = [];
-            for (const call of parallel) {
-              const tool = tools.find((t) => t.name === call.name);
-              const keyDecisionResult = isKeyDecision(
-                call.name,
-                call.input,
-                tool,
-                options.keyDecisionPolicy,
-                options.riskPolicy,
-                options.unknownToolPolicy
+            // 过滤需要审批的工具
+            const { safe, needsApproval } = filterApprovalRequired(parallel, callbacks);
+            
+            if (needsApproval.length > 0) {
+              console.debug(
+                `[GenericAgentBackend] ${needsApproval.length} calls moved to sequential queue (requires approval)`
               );
-              
-              if (keyDecisionResult.isKeyDecision) {
-                // 需要审批的工具转移到顺序队列
-                console.debug(
-                  `[GenericAgentBackend] Moving ${call.name} to sequential queue (requires approval: ${keyDecisionResult.reason})`
-                );
-                sequential.push(call);
-              } else {
-                safeParallel.push(call);
-              }
+              sequential.push(...needsApproval);
             }
 
-            // 如果还有安全的并行工具，执行它们
-            if (safeParallel.length > 0) {
-            // 先发出所有 tool_call 消息
-            for (const call of safeParallel) {
+            if (safe.length > 0) {
+              // 1. 发出所有 tool_call 消息
+              for (const call of safe) {
+                yield {
+                  type: 'tool_call',
+                  tool: call.name,
+                  input: call.input,
+                  callId: call.callId,
+                  timestamp: Date.now(),
+                };
+              }
+
               yield {
-                type: 'tool_call',
-                tool: call.name,
-                input: call.input,
-                callId: call.callId,
+                type: 'status',
+                status: 'acting',
                 timestamp: Date.now(),
               };
-            }
 
-            yield {
-              type: 'status',
-              status: 'acting',
-              timestamp: Date.now(),
-            };
+              // 2. 执行工具
+              const parallelResults = await executeParallel(
+                safe, 
+                callbacks, 
+                parallelConfig.maxConcurrency
+              );
 
-            // 创建并发限制器
-            const limiter = createConcurrencyLimiter(parallelConfig.maxConcurrency);
-
-            // 构建并行执行 Promise
-            const parallelExecutions = safeParallel.map(async (call) => {
-              await limiter.acquire();
-              try {
-                const startTime = Date.now();
-                const result = await this.executeTool(call, tools, options);
-                const duration = Date.now() - startTime;
-                return { call, result, duration, success: true as const };
-              } catch (error) {
-                return { 
-                  call, 
-                  result: { success: false, output: String(error) }, 
-                  duration: 0, 
-                  success: false as const 
-                };
-              } finally {
-                limiter.release();
-              }
-            });
-
-            // 等待所有并行执行完成
-            const parallelResults = await Promise.allSettled(parallelExecutions);
-
-            // 处理结果（按原始顺序）
-            for (const settled of parallelResults) {
-              if (settled.status === 'fulfilled') {
-                const { call, result, duration } = settled.value;
+              // 3. 处理结果
+              for (const { call, result, duration } of parallelResults) {
                 totalToolCalls++;
-                
-                if (result.success) {
-                  toolCallsSucceeded++;
-                }
+                if (result.success) toolCallsSucceeded++;
 
-                // 添加结果到上下文
                 context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
 
                 yield {
@@ -1352,157 +671,59 @@ When the task is complete, provide a final summary of what was accomplished.`));
                   duration,
                   timestamp: Date.now(),
                 };
-              } else {
-                // Promise rejected (不应该发生，因为我们在内部捕获了错误)
-                console.error('[GenericAgentBackend] Unexpected parallel execution rejection:', settled.reason);
+              }
+
+              // 检查工具调用次数限制
+              if (totalToolCalls >= limits.maxToolCalls) {
+                yield {
+                  type: 'error',
+                  error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
+                  code: 'MAX_TOOL_CALLS_EXCEEDED',
+                  retryable: false,
+                  timestamp: Date.now(),
+                };
+                finalStatus = 'failed';
+                done = true;
+                continue; // 跳过后续顺序执行
               }
             }
-
-	            // 检查工具调用次数限制
-	            if (totalToolCalls >= limits.maxToolCalls) {
-	              yield {
-	                type: 'error',
-	                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
-	                code: 'MAX_TOOL_CALLS_EXCEEDED',
-	                retryable: false,
-	                timestamp: Date.now(),
-	              };
-	              finalStatus = 'failed';
-	              done = true;
-	              continue; // 跳过顺序执行
-	            }
-            } // 关闭 safeParallel.length > 0 分支
           }
 
           // =============================================
-          // 阶段 2: 顺序执行需顺序执行的工具
+          // 阶段 2: 顺序执行
           // =============================================
-          for (const call of sequential) {
-            // 发出工具调用消息
-            yield {
-              type: 'tool_call',
-              tool: call.name,
-              input: call.input,
-              callId: call.callId,
-              timestamp: Date.now(),
-            };
+          if (sequential.length > 0) {
+            const iterator = executeSequentialGenerator(sequential, callbacks, {
+              maxToolCalls: limits.maxToolCalls,
+              currentToolCount: totalToolCalls
+            });
 
-            // 发出执行状态
-            yield {
-              type: 'status',
-              status: 'acting',
-              timestamp: Date.now(),
-            };
-
-            // 查找工具定义（用于元数据检查）
-            const tool = tools.find((t) => t.name === call.name);
-
-            // 检查关键决策（使用新的 isKeyDecision 函数）
-            const keyDecisionResult = isKeyDecision(
-              call.name,
-              call.input,
-              tool,
-              options.keyDecisionPolicy,
-              options.riskPolicy,
-              options.unknownToolPolicy
+            // Delegate events handling to helper
+            const eventHandler = this.handleToolExecutionEvents(
+               iterator, 
+               context, 
+               options, 
+               limits, 
+               task.id, 
+               totalToolCalls
             );
 
-            if (keyDecisionResult.isKeyDecision) {
-              const approvalRequest: WorkerApprovalRequestMessage = {
-                type: 'approval_request',
-                requestId: `approval-${call.callId}`,
-                action: call.name,
-                description: `${keyDecisionResult.reason}: ${call.name}`,
-                details: { 
-                  tool: call.name, 
-                  input: call.input,
-                  category: keyDecisionResult.category,
-                  riskLevel: keyDecisionResult.riskLevel,
-                },
-                timestamp: Date.now(),
-                category: keyDecisionResult.category,
-                defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision,
-                timeout: options.keyDecisionPolicy?.approvalTimeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout,
-              };
-
-              yield approvalRequest;
-
-              // 等待审批（阻塞 + 超时）
-              // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
-              const approved = await this.waitForApprovalWithSubtask(approvalRequest, options, task.id);
-              if (!approved) {
-                const rejectedResult = `Tool call ${call.name} was rejected by approval process (${keyDecisionResult.reason}).`;
-                context.addMessage(createToolMessage(call.callId, rejectedResult));
-
-                yield {
-                  type: 'tool_result',
-                  tool: call.name,
-                  callId: call.callId,
-                  result: rejectedResult,
-                  success: false,
-                  duration: 0,
-                  timestamp: Date.now(),
-                };
-
-                continue;
-              }
-            }
-
-            // 执行工具
-            const startTime = Date.now();
-            // eslint-disable-next-line no-await-in-loop -- Tool execution is intentionally sequential in agent loop
-            const result = await this.executeTool(call, tools, options);
-            const duration = Date.now() - startTime;
-            totalToolCalls++;
+            const handlerResult = yield* eventHandler;
             
-            // 记录成功的工具调用
-            if (result.success) {
-              toolCallsSucceeded++;
+            // Update stats
+            totalToolCalls += handlerResult.totalCalled; // Only add count of this batch
+            if (handlerResult.succeeded > 0) {
+               // Update local success count if needed, though mostly used for final logging?
+               // GenericAgentBackend doesn't seem to use toolCallsSucceeded for logic, mostly logging/metrics.
+               toolCallsSucceeded += handlerResult.succeeded;
             }
 
-	            // 检查工具调用次数限制
-	            if (totalToolCalls >= limits.maxToolCalls) {
-	              yield {
-	                type: 'error',
-	                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
-	                code: 'MAX_TOOL_CALLS_EXCEEDED',
-	                retryable: false,
-	                timestamp: Date.now(),
-	              };
-	              finalStatus = 'failed';
-	              done = true;
-	              break;
-	            }
-
-            // 添加结果到上下文
-            context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
-
-            // 发出工具结果消息
-            yield {
-              type: 'tool_result',
-              tool: call.name,
-              callId: call.callId,
-              result: result.output,
-              success: result.success,
-              duration,
-              timestamp: Date.now(),
-            };
-
-            // P1 FAS: 检测 terminateSubtask 标志 (用于 report_back 等子任务终止工具)
-            // 兼容两种形态：output.terminateSubtask 或 output.data.terminateSubtask
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const out = result.output as any;
-            const terminate =
-              out?.terminateSubtask === true ||
-              out?.data?.terminateSubtask === true;
-	            if (terminate) {
-	              console.debug(
-	                `[GenericAgentBackend] Tool ${call.name} returned terminateSubtask=true, terminating subtask`
-	              );
-	              finalStatus = 'completed';
-	              done = true;
-	              break;
-	            }
+            if (handlerResult.done) {
+               finalStatus = handlerResult.finalStatus!;
+               done = true;
+               // Wait, manual loop also handled `break`.
+               break; 
+            }
           }
         } else if (toolCallsParseFailed) {
           // 工具调用标记存在但解析失败 — 可能是 LLM 输出被截断
@@ -1525,23 +746,19 @@ When the task is complete, provide a final summary of what was accomplished.`));
           done = true;
 
           // Memory: 自动保存任务结果 (best-effort, 不中断主循环)
-          const autoSave = this.config.memoryConfig?.autoSave !== false;
-          if (this.memoryService && autoSave) {
-            try {
-              console.debug('[GenericAgentBackend] Saving task result to memory...');
-              // eslint-disable-next-line no-await-in-loop
-              await this.memoryService.save({
-                content: `Task: ${task.objective}\n\nResult: ${response.content}`,
-                scope: 'procedural',
-                metadata: {
-                  sessionId: task.sessionId,
-                  taskId: task.id,
-                  type: 'task_result',
-                },
-              });
-            } catch (memorySaveError) {
-              console.warn('[GenericAgentBackend] Memory save failed (continuing):', memorySaveError);
-            }
+          // Memory: 自动保存任务结果 (best-effort, 不中断主循环)
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await this.memoryRetriever.save(
+              `Task: ${task.objective}\n\nResult: ${response.content}`, 
+              {
+                sessionId: task.sessionId,
+                taskId: task.id,
+                type: 'task_result',
+              }
+            );
+          } catch (memorySaveError) {
+            console.warn('[GenericAgentBackend] Memory save failed (continuing):', memorySaveError);
           }
 
           yield {
@@ -1553,20 +770,24 @@ When the task is complete, provide a final summary of what was accomplished.`));
 
         // 记录本轮进度
         // 计算工具调用 hash 用于检测重复调用
-        const toolCallHash = toolCalls.length > 0
-          ? simpleHash(toolCalls.map(c => `${c.name}:${JSON.stringify(c.input)}`).join('|'))
-          : undefined;
+        const toolCallFingerprint = toolCalls.length > 0
+          ? toolCalls.map(c => `${c.name}:${JSON.stringify(c.input)}`).join('|')
+          : '';
+        const toolCallHash = toolCallFingerprint ? simpleHash(toolCallFingerprint) : undefined;
         
         // 收集工具名称列表（用于增强检测）
         const toolNames = toolCalls.length > 0
           ? toolCalls.map(c => c.name)
           : undefined;
         
-        // 收集工具结果模式（基于响应内容的前 50 字符 hash）
-        // 注意：这里使用 response.content 作为粗略的模式指纹
+        const outputBasis = normalizedContent
+          || (toolCallFingerprint || response.content);
+
+        // 收集工具结果模式（基于响应内容或工具调用的前 200 字符 hash）
+        // 注意：这里使用 outputBasis 作为粗略的模式指纹
         // 如果需要更精确，可以在工具执行时收集每个工具的输出
         const toolResultPatterns = toolCalls.length > 0
-          ? [simpleHash(response.content.slice(0, 200))]
+          ? [simpleHash(outputBasis.slice(0, 200))]
           : undefined;
         
         progressTracker.recordRound({
@@ -1575,7 +796,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
           toolCallsAttempted: toolCalls.length,
           toolCallsSucceeded,
           toolCallsParseFailed,
-          outputHash: simpleHash(response.content),
+          outputHash: simpleHash(outputBasis),
           ...(toolCallHash && { toolCallHash }),
           ...(toolNames && { toolNames }),
           ...(toolResultPatterns && { toolResultPatterns }),
@@ -1613,7 +834,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
         }
 
 	        // 检查停止原因
-	        if (response.stopReason === 'stop' && !hasToolCallMarker) {
+	        if (response.stopReason === 'stop' && toolCalls.length === 0) {
 	          console.debug('[GenericAgentBackend] Loop stop: reason is stop and no tool call');
 	          finalStatus = 'completed';
 	          done = true;
@@ -1643,10 +864,10 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	      if (pendingToolCalls.length > 0 && !done) {
 	        // 检查 token 预算是否已超出
 	        if (isOverBudget()) {
-          console.warn(
-            `[GenericAgentBackend] Grace round skipped: token budget exceeded ` +
-            `(${totalTokensUsed}/${maxTotalTokens}). ${pendingToolCalls.length} tool calls not executed.`
-          );
+	          console.warn(
+	            `[GenericAgentBackend] Grace round skipped: token budget exceeded ` +
+	            `(${totalTokensUsed}/${maxTotalTokens}). ${pendingToolCalls.length} tool calls not executed.`
+	          );
 	          yield {
 	            type: 'error',
 	            error: `Grace round skipped: token budget exceeded. ${pendingToolCalls.length} pending tool calls not executed.`,
@@ -1656,172 +877,70 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	          };
 	          finalStatus = 'failed';
 	        } else {
-          console.warn(
-            `[GenericAgentBackend] Grace round: executing ${pendingToolCalls.length} pending tool calls ` +
-            `that were parsed but not executed due to loop termination.`
-          );
-          
-          yield {
-            type: 'thinking',
-            content: `[Grace Round] Executing ${pendingToolCalls.length} pending tool call(s) before completing...`,
-            timestamp: Date.now(),
-          };
-          
-          let graceRoundSucceeded = 0;
-          let graceRoundFailed = 0;
-          
-          for (const call of pendingToolCalls) {
-            // 检查 maxToolCalls 限制
-            if (totalToolCalls >= limits.maxToolCalls) {
-              console.warn(
-                `[GenericAgentBackend] Grace round: max tool calls (${limits.maxToolCalls}) reached. ` +
-                `Remaining ${pendingToolCalls.length - graceRoundSucceeded - graceRoundFailed} calls skipped.`
-              );
-              yield {
-                type: 'error',
-                error: `Grace round: max tool calls limit reached. Some pending calls were not executed.`,
-                code: 'GRACE_ROUND_MAX_TOOLS_EXCEEDED',
-                retryable: false,
-                timestamp: Date.now(),
-              };
-              break;
-            }
-            
-            // 发出工具调用消息
-            yield {
-              type: 'tool_call',
-              tool: call.name,
-              input: call.input,
-              callId: call.callId,
-              timestamp: Date.now(),
-            };
+	          console.warn(
+	            `[GenericAgentBackend] Grace round: executing ${pendingToolCalls.length} pending tool calls ` +
+	            `that were parsed but not executed due to loop termination.`
+	          );
+	          
+	          yield {
+	            type: 'thinking',
+	            content: `[Grace Round] Executing ${pendingToolCalls.length} pending tool call(s) before completing...`,
+	            timestamp: Date.now(),
+	          };
 
-            // 发出执行状态
-            yield {
-              type: 'status',
-              status: 'acting',
-              timestamp: Date.now(),
-            };
+            const graceCallbacks = this.createToolExecutorCallbacks(tools, options);
+            const iterator = executeSequentialGenerator(pendingToolCalls, graceCallbacks, {
+              maxToolCalls: limits.maxToolCalls,
+              currentToolCount: totalToolCalls
+            });
 
-            // 查找工具定义（用于元数据检查）
-            const tool = tools.find((t) => t.name === call.name);
-            
-            // 保留关键决策审批流程（不绕过安全策略）
-            const keyDecisionResult = isKeyDecision(
-              call.name,
-              call.input,
-              tool,
-              options.keyDecisionPolicy,
-              options.riskPolicy,
-              options.unknownToolPolicy
+            const eventHandler = this.handleToolExecutionEvents(
+               iterator, 
+               context, 
+               options, 
+               limits, 
+               task.id, 
+               totalToolCalls
             );
 
-            if (keyDecisionResult.isKeyDecision) {
-              const approvalRequest: WorkerApprovalRequestMessage = {
-                type: 'approval_request',
-                requestId: `approval-grace-${call.callId}`,
-                action: call.name,
-                description: `[Grace Round] ${keyDecisionResult.reason}: ${call.name}`,
-                details: { 
-                  tool: call.name, 
-                  input: call.input,
-                  category: keyDecisionResult.category,
-                  riskLevel: keyDecisionResult.riskLevel,
-                  graceRound: true,
-                },
-                timestamp: Date.now(),
-                category: keyDecisionResult.category,
-                defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision,
-                timeout: options.keyDecisionPolicy?.approvalTimeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout,
-              };
-
-              yield approvalRequest;
-
-              // eslint-disable-next-line no-await-in-loop -- Approval is intentionally sequential
-              const approved = await this.waitForApprovalWithSubtask(approvalRequest, options, task.id);
-              if (!approved) {
-                const rejectedResult = `[Grace Round] Tool call ${call.name} was rejected by approval process.`;
-                context.addMessage(createToolMessage(call.callId, rejectedResult));
-                graceRoundFailed++;
-
-                yield {
-                  type: 'tool_result',
-                  tool: call.name,
-                  callId: call.callId,
-                  result: rejectedResult,
-                  success: false,
-                  duration: 0,
-                  timestamp: Date.now(),
-                };
-
-                continue;
-              }
-            }
-
-            // 执行工具
-            const startTime = Date.now();
-            // eslint-disable-next-line no-await-in-loop -- Grace round tool execution is intentionally sequential
-            const result = await this.executeTool(call, tools, options);
-            const duration = Date.now() - startTime;
-            totalToolCalls++;
+            const graceResult = yield* eventHandler;
             
-            if (result.success) {
-              graceRoundSucceeded++;
+            totalToolCalls += graceResult.totalCalled;
+            
+            if (graceResult.succeeded > 0) {
+               const failures = graceResult.totalCalled - graceResult.succeeded;
+               
+               if (failures === 0) {
+                 done = true;
+                 finalStatus = 'completed';
+                 console.debug(`[GenericAgentBackend] Grace round completed successfully. ${graceResult.succeeded} tools executed.`);
+               } else {
+                 done = true;
+                 finalStatus = 'failed';
+                 console.warn(
+                    `[GenericAgentBackend] Grace round partially succeeded. ` +
+                    `${graceResult.succeeded} succeeded, ${failures} failed.`
+                 );
+                 yield {
+                    type: 'error',
+                    error: `Grace round partially succeeded: ${graceResult.succeeded} succeeded, ${failures} failed.`,
+                    code: 'GRACE_ROUND_PARTIAL_SUCCESS',
+                    retryable: false,
+                    timestamp: Date.now(),
+                 };
+               }
             } else {
-              graceRoundFailed++;
+               // 全部失败
+               console.error(`[GenericAgentBackend] Grace round failed. All ${graceResult.totalCalled} tool calls failed.`);
+               yield {
+                  type: 'error',
+                  error: `Grace round failed: all ${graceResult.totalCalled} tool calls failed.`,
+                  code: 'GRACE_ROUND_FAILED',
+                  retryable: false,
+                  timestamp: Date.now(),
+               };
+               finalStatus = 'failed';
             }
-
-            // 添加结果到上下文
-            context.addMessage(createToolMessage(call.callId, JSON.stringify(result.output)));
-
-            // 发出工具结果消息
-            yield {
-              type: 'tool_result',
-              tool: call.name,
-              callId: call.callId,
-              result: result.output,
-              success: result.success,
-              duration,
-              timestamp: Date.now(),
-            };
-          }
-          
-          // 清空待执行队列
-          pendingToolCalls = [];
-          
-	          // 根据执行结果决定最终状态
-	          // 只有所有工具调用都成功时才标记为完成
-	          if (graceRoundFailed === 0 && graceRoundSucceeded > 0) {
-	            done = true;
-	            finalStatus = 'completed';
-	            console.debug(`[GenericAgentBackend] Grace round completed successfully. ${graceRoundSucceeded} tools executed.`);
-	          } else if (graceRoundSucceeded > 0) {
-	            // 部分成功：仍标记为完成，但发出警告
-	            done = true;
-	            finalStatus = 'failed';
-	            console.warn(
-	              `[GenericAgentBackend] Grace round partially succeeded. ` +
-	              `${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`
-	            );
-            yield {
-              type: 'error',
-              error: `Grace round partially succeeded: ${graceRoundSucceeded} succeeded, ${graceRoundFailed} failed.`,
-              code: 'GRACE_ROUND_PARTIAL_SUCCESS',
-              retryable: false,
-              timestamp: Date.now(),
-            };
-	          } else {
-	            // 全部失败
-	            console.error(`[GenericAgentBackend] Grace round failed. All ${graceRoundFailed} tool calls failed.`);
-	            yield {
-	              type: 'error',
-	              error: `Grace round failed: all ${graceRoundFailed} tool calls failed.`,
-	              code: 'GRACE_ROUND_FAILED',
-	              retryable: false,
-	              timestamp: Date.now(),
-	            };
-	            finalStatus = 'failed';
-	          }
 	        }
 	      }
 
@@ -1842,10 +961,11 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	      yield {
 	        type: 'error',
 	        error: err.message,
-	        code: 'EXECUTION_ERROR',
-	        retryable: this.isRetryableError(err),
-	        timestamp: Date.now(),
-	      };
+          // 使用 engines 的 isRetryableError 工具函数
+          code: 'TOOL_EXECUTION_ERROR',
+          retryable: isRetryableError(err),
+          timestamp: Date.now(),
+        };
 	      finalStatus = 'failed';
 	    } finally {
 	      this.isExecuting = false;
@@ -1916,6 +1036,8 @@ When the task is complete, provide a final summary of what was accomplished.`));
     if (this.collaborationManager) {
       await this.collaborationManager.stop();
     }
+    // 关闭 MemoryRetriever（释放底层连接/句柄）
+    await this.memoryRetriever.close();
     // 仅销毁自己创建的 sandbox
     if (this.sandbox && this.sandboxOwned) {
       await this.sandbox.destroy();
@@ -1974,6 +1096,203 @@ When the task is complete, provide a final summary of what was accomplished.`));
   /**
    * 执行工具
    */
+
+  /**
+   * Handle Tool Execution Events (Generator Loop)
+   */
+  private async *handleToolExecutionEvents(
+    iterator: AsyncGenerator<ToolExecutorEvent, { results: ToolExecutionResult[]; terminated: boolean; terminateReason?: string }, boolean | undefined>,
+    context: PromptContextEngine,
+    options: WorkerExecutionOptions,
+    limits: { maxToolCalls: number },
+    taskId: string,
+    initialToolCount = 0
+  ): AsyncGenerator<WorkerMessage, { done: boolean; finalStatus?: WorkerStatus; totalCalled: number; succeeded: number }, void> {
+    let nextValue: boolean | undefined = undefined;
+    let toolCallsSucceeded = 0;
+    let totalCalled = 0;
+    // Use initialToolCount to offset any internal limits logic if we were checking inside loop, 
+    // but here limits are passed to executeSequentialGenerator. Just for logging?
+    // We suppress unused warning:
+    void initialToolCount;
+
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const { value, done: genDone } = await iterator.next(nextValue);
+      
+      if (genDone) {
+         const { terminated, terminateReason, results } = value;
+         
+         for (const res of results) {
+            if (res.result.success) toolCallsSucceeded++;
+         }
+         totalCalled = results.length;
+
+         if (terminated) {
+           if (terminateReason === 'max_tool_calls_exceeded') {
+              yield {
+                type: 'error',
+                error: `Max tool calls (${limits.maxToolCalls}) exceeded`,
+                code: 'MAX_TOOL_CALLS_EXCEEDED',
+                retryable: false,
+                timestamp: Date.now(),
+              };
+              return { done: true, finalStatus: 'failed', totalCalled, succeeded: toolCallsSucceeded };
+           } else if (terminateReason === 'terminate_subtask') {
+              console.debug('[GenericAgentBackend] Subtask terminated by tool');
+              return { done: true, finalStatus: 'completed', totalCalled, succeeded: toolCallsSucceeded };
+           } else if (terminateReason === 'aborted') {
+              return { done: true, finalStatus: 'interrupted', totalCalled, succeeded: toolCallsSucceeded };
+           }
+         }
+         return { done: false, totalCalled, succeeded: toolCallsSucceeded };
+      }
+
+      // Handle Events
+      const event = value;
+      nextValue = undefined; // Reset
+
+      if (event.type === 'tool_start') {
+        yield {
+          type: 'tool_call',
+          tool: event.call.name,
+          input: event.call.input,
+          callId: event.call.callId,
+          timestamp: Date.now(),
+        };
+        yield { type: 'status', status: 'acting', timestamp: Date.now() };
+      
+      } else if (event.type === 'tool_result') {
+         context.addMessage(createToolMessage(
+           event.result.call.callId, 
+           JSON.stringify(event.result.result.output)
+         ));
+         
+         yield {
+            type: 'tool_result',
+            tool: event.result.call.name,
+            callId: event.result.call.callId,
+            result: event.result.result.output,
+            success: event.result.result.success,
+            duration: event.result.duration,
+            timestamp: Date.now(),
+         };
+
+      } else if (event.type === 'approval_required') {
+         const approvalRequest: WorkerApprovalRequestMessage = {
+            type: 'approval_request',
+            requestId: `approval-${event.call.callId}`,
+            action: event.call.name,
+            description: `${event.reason}: ${event.call.name}`,
+            details: { tool: event.call.name, input: event.call.input },
+            timestamp: Date.now(),
+            category: 'key_decision', // Default to key_decision
+         };
+         // Fill defaults using option extraction logic if needed, simplify for now or duplicate logic?
+         // Duplicate logic for defaults:
+         const fullReq = {
+            ...approvalRequest,
+            category: 'key_decision',
+            defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? 'reject',
+            timeout: options.keyDecisionPolicy?.approvalTimeout ?? 60000 
+         } as any;
+
+         yield fullReq;
+         // eslint-disable-next-line no-await-in-loop
+         const approved = await this.waitForApprovalWithSubtask(fullReq, options, taskId);
+         nextValue = approved;
+      }
+    }
+  }
+
+  /**
+   * Manage Context (Compaction & Limits)
+   */
+  private async manageContext(context: PromptContextEngine): Promise<{ success: boolean; error?: WorkerErrorMessage }> {
+    if (context.needsReduction()) {
+      console.debug('[GenericAgentBackend] Context needs reduction, running autoReduce');
+      await context.autoReduce();
+      
+      if (context.needsReduction()) {
+        console.warn('[GenericAgentBackend] Context still over limit after autoReduce, forcing compact');
+        for (let i = 0; i < 3 && context.needsReduction(); i++) {
+          // eslint-disable-next-line no-await-in-loop
+          await context.compact();
+        }
+      }
+      
+      if (context.needsSummarization()) {
+        console.error('[GenericAgentBackend] Context exceeds hard limit after all reduction attempts');
+        return {
+          success: false,
+          error: {
+            type: 'error',
+            error: `Context size exceeds hard limit after reduction. Token count: ${context.getState().totalTokens}`,
+            code: 'CONTEXT_OVERFLOW',
+            retryable: false,
+            timestamp: Date.now(),
+          }
+        };
+      }
+      
+      context.injectStatusReminder();
+    }
+    return { success: true };
+  }
+
+  /**
+   * Helper to create ToolExecutor Callbacks
+   */
+  private createToolExecutorCallbacks(
+    tools: Tool[],
+    options: WorkerExecutionOptions
+  ): ToolExecutorCallbacks {
+    return {
+      executeTool: async (call) => {
+        const result = await this.executeTool(call, tools, options);
+        return {
+          success: result.success,
+          output: result.output,
+        };
+      },
+      requiresApproval: (call) => {
+        const tool = tools.find((t) => t.name === call.name);
+        const decision = isKeyDecision(
+          call.name, 
+          call.input, 
+          tool, 
+          options.keyDecisionPolicy, 
+          options.riskPolicy, 
+          options.unknownToolPolicy
+        );
+        return {
+          required: decision.isKeyDecision,
+          reason: decision.reason,
+          category: decision.category,
+          riskLevel: decision.riskLevel
+        };
+      },
+      waitForApproval: async (call, reason) => {
+        // Construct WorkerApprovalRequestMessage from ParsedToolCall
+        const approvalRequest: WorkerApprovalRequestMessage = {
+          type: 'approval_request',
+          requestId: call.callId,
+          action: call.name,
+          description: reason,
+          details: { input: call.input },
+          timestamp: Date.now(),
+          category: 'key_decision',
+          defaultDecision: options.keyDecisionPolicy?.defaultDecision ?? 'reject',
+          timeout: options.keyDecisionPolicy?.approvalTimeout ?? 300_000,
+        };
+        // Delegate to InteractionEngine for consistent approval handling
+        return this.interactionEngine.waitForApproval(approvalRequest, options);
+      },
+      isAborted: () => this.abortController?.signal.aborted ?? false,
+    };
+  }
+
   private async executeTool(
     call: ParsedToolCall,
     tools: Tool[],
@@ -2027,309 +1346,25 @@ When the task is complete, provide a final summary of what was accomplished.`));
    * @param subtaskId - 子任务 ID（用于文件协议）
    * @returns 是否批准
    */
+  /**
+   * 等待审批（阻塞 + 超时）
+   */
   private async waitForApprovalWithSubtask(
     request: WorkerApprovalRequestMessage,
     options: WorkerExecutionOptions,
     subtaskId?: string
   ): Promise<boolean> {
-    const timeout = request.timeout ?? DEFAULT_KEY_DECISION_POLICY.approvalTimeout;
-    const defaultDecision = request.defaultDecision ?? DEFAULT_KEY_DECISION_POLICY.defaultDecision;
-    const pollInterval = 1000; // 1 秒轮询间隔
-
-    // 优先级 1: 使用回调
-    if (options.onApprovalRequest) {
-      return this.waitForApprovalViaCallback(request, options, timeout, defaultDecision);
-    }
-
-    // 优先级 2: 使用文件协议
-    if (options.onWritePendingApproval && options.onReadApprovalResponse) {
-      return this.waitForApprovalViaFileProtocolWithSubtask(
-        request, options, subtaskId, timeout, defaultDecision, pollInterval
-      );
-    }
-
-    // 都没有时，警告并使用默认决策
-    console.warn(
-      `[GenericAgentBackend] ⚠️ No approval mechanism available for request ${request.requestId}. ` +
-      `Neither callback nor file protocol configured. Using default decision: ${defaultDecision}`
-    );
-    return defaultDecision === 'approve';
-  }
-
-  /**
-   * 通过回调等待审批
-   */
-  protected override async waitForApprovalViaCallback(
-    request: WorkerApprovalRequestMessage,
-    options: WorkerExecutionOptions,
-    timeout: number,
-    defaultDecision: 'approve' | 'reject'
-  ): Promise<boolean> {
-    try {
-      // 创建超时 Promise
-      const timeoutPromise = new Promise<boolean>((resolve) => {
-        setTimeout(() => {
-          console.warn(
-            `[GenericAgentBackend] Approval timeout for request ${request.requestId}, ` +
-            `using default decision: ${defaultDecision}`
-          );
-          resolve(defaultDecision === 'approve');
-        }, timeout);
-      });
-
-      // 竞争：审批回调 vs 超时
-      const approved = await Promise.race([
-        options.onApprovalRequest!(request),
-        timeoutPromise,
-      ]);
-
-      return approved;
-    } catch (error) {
-      console.error(`[GenericAgentBackend] Approval callback error:`, error);
-      return defaultDecision === 'approve';
-    }
-  }
-
-  /**
-   * 通过文件协议等待审批
-   *
-   * 流程：
-   * 1. 写入 pending_approval.json
-   * 2. 轮询 approval_response.json
-   * 3. 超时后使用 defaultDecision
-   * 4. 清理 pending_approval
-   */
-  private async waitForApprovalViaFileProtocolWithSubtask(
-    request: WorkerApprovalRequestMessage,
-    options: WorkerExecutionOptions,
-    subtaskId: string | undefined,
-    timeout: number,
-    defaultDecision: 'approve' | 'reject',
-    pollInterval: number
-  ): Promise<boolean> {
-    try {
-      // 1. 写入待审批请求文件
-      const approvalInput = {
-        requestId: request.requestId,
-        subtaskId: subtaskId || 'unknown',
-        type: this.mapCategoryToApprovalType(request.category),
-        description: request.description,
-        details: {
-          metadata: request.details,
-          impactScope: 'high' as const,
-          reversible: false,
-        },
-        timeout,
-        defaultDecision,
-      };
-
-      await options.onWritePendingApproval!(approvalInput);
-      console.log(`[GenericAgentBackend] Wrote pending approval: ${request.requestId}`);
-
-      // 2. 轮询等待响应
-      const startTime = Date.now();
-      while (Date.now() - startTime < timeout) {
-        // 检查是否中断
-        if (this.abortController?.signal.aborted) {
-          console.log(`[GenericAgentBackend] Approval wait aborted`);
-          return false;
-        }
-
-        // 读取审批响应
-        const response = await options.onReadApprovalResponse!();
-        if (response && response.requestId === request.requestId) {
-          console.log(
-            `[GenericAgentBackend] Approval response received: ${response.approved ? 'approved' : 'rejected'}`
-          );
-
-          // 3. 清理待审批文件
-          if (options.onClearPendingApproval) {
-            await options.onClearPendingApproval();
-          }
-
-          return response.approved;
-        }
-
-        // 等待轮询间隔
-        await new Promise((resolve) => setTimeout(resolve, pollInterval));
-      }
-
-      // 超时
-      console.warn(
-        `[GenericAgentBackend] Approval timeout for request ${request.requestId}, ` +
-        `using default decision: ${defaultDecision}`
-      );
-
-      // 清理待审批文件
-      if (options.onClearPendingApproval) {
-        await options.onClearPendingApproval();
-      }
-
-      return defaultDecision === 'approve';
-    } catch (error) {
-      console.error(`[GenericAgentBackend] File protocol approval error:`, error);
-      return defaultDecision === 'approve';
-    }
-  }
-
-  /**
-   * 将 ApprovalCategory 映射到 ApprovalRequestType
-   */
-  protected override mapCategoryToApprovalType(
-    category?: string
-  ): 'file_deletion' | 'multi_file_refactor' | 'external_api_call' | 'dangerous_operation' | 'resource_intensive' {
-    switch (category) {
-      case 'key_decision':
-        return 'dangerous_operation';
-      case 'high_risk_tool':
-        return 'dangerous_operation';
-      case 'dangerous_pattern':
-        return 'dangerous_operation';
-      default:
-        return 'dangerous_operation';
-    }
+    return this.interactionEngine.waitForApproval(request, options, subtaskId);
   }
 
   /**
    * 检查并处理干预指令
-   *
-   * @param options - 执行选项
-   * @returns 'continue' | 'pause' | 'abort'
    */
   private async checkAndHandleIntervention(
     options: WorkerExecutionOptions
   ): Promise<'continue' | 'pause' | 'abort'> {
-    // 如果没有 intervention 检查回调，直接继续
-    if (!options.onCheckIntervention) {
-      return 'continue';
-    }
-
-    try {
-      const intervention = await options.onCheckIntervention();
-
-      // 没有干预或已确认的干预，继续执行
-      if (!intervention || intervention.acknowledged) {
-        return 'continue';
-      }
-
-      console.log(
-        `[GenericAgentBackend] Intervention detected: ${intervention.type} - ${intervention.reason}`
-      );
-
-      // 根据干预类型处理
-      switch (intervention.type) {
-        case 'abort':
-          // 确认干预
-          if (options.onAcknowledgeIntervention) {
-            await options.onAcknowledgeIntervention(intervention.interventionId);
-          }
-          return 'abort';
-
-        case 'pause':
-          // 暂停时不确认，保持 pending 状态
-          return 'pause';
-
-        case 'resume':
-          // 确认恢复指令并继续
-          if (options.onAcknowledgeIntervention) {
-            await options.onAcknowledgeIntervention(intervention.interventionId);
-          }
-          return 'continue';
-
-        case 'redirect':
-        case 'guidance':
-          // 对于 redirect 和 guidance，记录指导但继续执行
-          // 实际实现中可能需要将 instructions 注入到上下文
-          console.log(
-            `[GenericAgentBackend] Guidance: ${intervention.instructions}`
-          );
-          if (options.onAcknowledgeIntervention) {
-            await options.onAcknowledgeIntervention(intervention.interventionId);
-          }
-          return 'continue';
-
-        default:
-          return 'continue';
-      }
-    } catch (error) {
-      console.warn(`[GenericAgentBackend] Error checking intervention:`, error);
-      return 'continue';
-    }
+    return this.interactionEngine.checkAndHandleIntervention(options);
   }
 
-  /**
-   * 执行 LLM 请求（带重试逻辑）
-   */
-  private async executeLLMWithRetry(request: LLMRequest): Promise<LLMResponse> {
-    const MAX_LLM_RETRIES = 3;
-    const RETRY_DELAYS = [1000, 2000, 4000]; // 递增延迟
-    let lastError: Error | null = null;
-    let response: LLMResponse | null = null;
 
-    for (let attempt = 0; attempt < MAX_LLM_RETRIES; attempt++) {
-      try {
-        response = await this.llmClient.complete(request);
-
-        // 检测空响应
-        if (!response.content || response.content.trim().length === 0) {
-          throw new Error('LLM returned empty response');
-        }
-
-        return response;
-      } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
-        const errorMessage = lastError.message.toLowerCase();
-        
-
-        // 判断是否为可重试的错误
-        const isRetryable =
-          (lastError as any).retryable === true || // 优先使用错误对象自带的 retryable 属性
-          errorMessage.includes('empty response') ||
-          errorMessage.includes('json parse') ||
-          errorMessage.includes('api_error') ||
-          errorMessage.includes('rate limit') ||
-          errorMessage.includes('timeout') ||
-          errorMessage.includes('network') ||
-          errorMessage.includes('econnreset') ||
-          errorMessage.includes('socket connection was closed'); // P0: Add socket closed check
-
-        if (!isRetryable || attempt >= MAX_LLM_RETRIES - 1) {
-          console.error(
-            `[GenericAgentBackend] LLM call failed after ${attempt + 1} attempt(s): ${lastError.message}`
-          );
-          throw lastError;
-        }
-
-        const delay = RETRY_DELAYS[attempt] ?? 4000;
-        console.warn(
-          `[GenericAgentBackend] LLM call failed (attempt ${attempt + 1}/${MAX_LLM_RETRIES}): ` +
-          `${lastError.message}. Retrying in ${delay}ms...`
-        );
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-
-    throw lastError ?? new Error('LLM retry failed unknown reason');
-  }
-
-  /**
-   * 判断错误是否可重试
-   */
-  private isRetryableError(error: Error): boolean {
-    const message = error.message.toLowerCase();
-    // Prefer explicit retryable hints when provided by upstream clients.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const retryableFlag = (error as any).retryable === true;
-    return (
-      retryableFlag ||
-      message.includes('rate limit') ||
-      message.includes('timeout') ||
-      message.includes('network') ||
-      message.includes('econnreset') ||
-      message.includes('socket connection was closed') ||
-      message.includes('503') ||
-      message.includes('529') ||
-      message.includes('overloaded')
-    );
-  }
 }

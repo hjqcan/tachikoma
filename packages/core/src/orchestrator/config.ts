@@ -14,6 +14,7 @@ import type {
   SessionDirConfig,
   ApprovalPolicy,
   DeviationDetectionConfig,
+  RetryPolicyMode,
 } from './types';
 import type { MemoryConfig } from '../memory';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
@@ -96,6 +97,7 @@ export const DEFAULT_DELEGATION_DEFAULTS: DelegationDefaults = {
   workerCount: 1,
   timeout: 300000, // 5 分钟
   retryPolicy: DEFAULT_RETRY_POLICY,
+  retryPolicyMode: 'config',
 };
 
 // ============================================================================
@@ -254,6 +256,7 @@ interface PartialDelegationDefaults {
   workerCount?: number;
   timeout?: number;
   retryPolicy?: Partial<RetryPolicy>;
+  retryPolicyMode?: DelegationDefaults['retryPolicyMode'];
 }
 
 /**
@@ -451,6 +454,15 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
       'delegation.retryPolicy.baseDelay'
     );
   }
+  if (
+    config.delegation.retryPolicyMode &&
+    !['config', 'planner', 'guardrail'].includes(config.delegation.retryPolicyMode)
+  ) {
+    throw new OrchestratorConfigError(
+      'retryPolicyMode must be one of: config | planner | guardrail',
+      'delegation.retryPolicyMode'
+    );
+  }
 
   // 验证聚合配置
   if (config.aggregation.partialSuccessThreshold !== undefined) {
@@ -497,6 +509,50 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
 // ============================================================================
 // 工具函数
 // ============================================================================
+
+/**
+ * 解析最终重试策略（配置 vs Planner）
+ */
+export function resolveRetryPolicy(
+  plannerPolicy: RetryPolicy,
+  configPolicy: RetryPolicy,
+  mode: RetryPolicyMode = 'config'
+): RetryPolicy {
+  if (mode === 'config') {
+    return configPolicy;
+  }
+
+  const merged: RetryPolicy = {
+    ...configPolicy,
+    ...plannerPolicy,
+  };
+
+  if (mode === 'planner') {
+    return merged;
+  }
+
+  // guardrail: Planner 输出 + 配置作为保护上限/下限
+  const guardrailBaseDelay = configPolicy.baseDelay;
+  const guardrailMaxRetries = configPolicy.maxRetries;
+  const guardrailBackoff = configPolicy.backoffFactor ?? 1;
+
+  const backoffFactor = Math.max(merged.backoffFactor ?? guardrailBackoff, guardrailBackoff);
+
+  const maxDelay =
+    configPolicy.maxDelay === undefined
+      ? merged.maxDelay
+      : merged.maxDelay === undefined
+        ? configPolicy.maxDelay
+        : Math.min(merged.maxDelay, configPolicy.maxDelay);
+
+  return {
+    ...merged,
+    maxRetries: Math.min(merged.maxRetries, guardrailMaxRetries),
+    baseDelay: Math.max(merged.baseDelay, guardrailBaseDelay),
+    backoffFactor,
+    maxDelay,
+  };
+}
 
 /**
  * 计算重试延迟

@@ -33,9 +33,73 @@ export interface LLMMessage {
   role: LLMMessageRole;
   /** 消息内容 */
   content: string;
-  /** 工具调用 ID (仅 tool 角色需要，预留字段) */
-  toolCallId?: string;
+  /** 工具调用 ID (仅 tool 角色需要) */
+  toolCallId?: string | undefined;
 }
+
+// ============================================================================
+// Function Calling 类型
+// ============================================================================
+
+/**
+ * JSON Schema 类型（简化版）
+ */
+export interface JSONSchemaType {
+  type?: string | undefined;
+  properties?: Record<string, JSONSchemaType> | undefined;
+  required?: string[] | undefined;
+  items?: JSONSchemaType | undefined;
+  description?: string | undefined;
+  enum?: unknown[] | undefined;
+  [key: string]: unknown;
+}
+
+/**
+ * LLM 工具定义（用于原生 Function Calling）
+ */
+export interface LLMToolDefinition {
+  /** 工具名称 */
+  name: string;
+  /** 工具描述 */
+  description: string;
+  /** 参数 JSON Schema */
+  parameters: JSONSchemaType;
+}
+
+/**
+ * LLM 工具调用（LLM 返回的工具调用请求）
+ */
+export interface LLMToolCall {
+  /** 调用 ID（用于匹配结果） */
+  id: string;
+  /** 工具名称 */
+  name: string;
+  /** 调用参数 */
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * LLM 工具集合（AI SDK tools 记录）
+ *
+ * 兼容 Record<string, Tool> 的结构，不在此处绑定具体 SDK 类型。
+ */
+export type LLMToolSet = Record<string, unknown>;
+
+/**
+ * LLM 工具选择策略
+ *
+ * - auto: 模型自主决定是否/调用哪个工具
+ * - required: 必须调用工具（可自主选择工具）
+ * - none: 禁止调用工具
+ * - { type: 'tool', toolName }: 指定必须调用某个工具（AI SDK v6）
+ * - { name }: 兼容旧格式（将映射为 type:'tool'）
+ */
+export type LLMToolChoice =
+  | 'auto'
+  | 'none'
+  | 'required'
+  | { type: 'tool'; toolName: string }
+  | { name: string };
 
 /**
  * LLM 请求参数
@@ -53,6 +117,10 @@ export interface LLMRequest {
   stopSequences?: string[] | undefined;
   /** 外部取消信号（优先于客户端配置的 timeout） */
   abortSignal?: AbortSignal | undefined;
+  /** 工具定义（原生 Function Calling） */
+  tools?: LLMToolDefinition[] | LLMToolSet | undefined;
+  /** 工具选择策略 */
+  toolChoice?: LLMToolChoice | undefined;
 }
 
 /**
@@ -72,6 +140,8 @@ export interface LLMResponse {
   stopReason?: string | undefined;
   /** 模型 ID */
   model: string;
+  /** 工具调用（原生 Function Calling 响应） */
+  toolCalls?: LLMToolCall[] | undefined;
 }
 
 /**

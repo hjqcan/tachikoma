@@ -1253,7 +1253,7 @@ describe('Orchestrator 类', () => {
     it('Worker 分配失败时应触发重试', async () => {
       // 创建一个初始无 Worker 的池
       const emptyPool = new MockWorkerPool({
-        config: { ...DEFAULT_WORKER_POOL_CONFIG, minWorkers: 0 },
+        config: { ...DEFAULT_WORKER_POOL_CONFIG, minWorkers: 0, waitQueueTimeout: 0 },
         initialWorkers: 0,
         taskDelay: 10,
       });

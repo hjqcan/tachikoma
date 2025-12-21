@@ -49,6 +49,7 @@ export type {
   OrchestratorConfig,
   PlannerConfig,
   DelegationDefaults,
+  RetryPolicyMode,
   // 审批类型
   ApprovalPolicy,
   // 偏离检测类型
@@ -88,6 +89,7 @@ export {
   // 工具函数
   calculateRetryDelay,
   shouldRetry,
+  resolveRetryPolicy,
 } from './config';
 
 // ============================================================================
@@ -203,4 +205,3 @@ export {
   type SubtaskWatcherConfig,
   type SubtaskWatcherEvents,
 } from './subtask-watcher';
-
