@@ -4,7 +4,12 @@
  * Defines System Prompt and User Prompt templates for task planning
  */
 
-import type { PromptVariables, PatchPromptVariables, ErrorFeedbackVariables } from './types';
+import type {
+  PromptVariables,
+  PatchPromptVariables,
+  SubtaskRefinePromptVariables,
+  ErrorFeedbackVariables,
+} from './types';
 import type { SubTask, ExecutionPlan } from '../orchestrator';
 
 // ============================================================================
@@ -76,6 +81,25 @@ export interface PlanningOutputFormat {
   estimatedTotalMinutes: number;
   /** Complexity score (1-10) */
   complexityScore: number;
+}
+
+/**
+ * Subtask Refinement Output Format - For LLM structured output
+ */
+export interface SubtaskRefineOutputFormat {
+  /** Whether the subtask should be split */
+  shouldSplit: boolean;
+  /** Short reason for the decision */
+  reason: string;
+  /** Proposed refined subtasks (empty when shouldSplit=false) */
+  subtasks: {
+    /** Subtask objective */
+    objective: string;
+    /** Subtask constraints (optional) */
+    constraints?: string[];
+    /** Estimated execution time (minutes, optional) */
+    estimatedMinutes?: number;
+  }[];
 }
 
 // ============================================================================
@@ -191,6 +215,33 @@ You must output in JSON format with the following fields:
 - Strictly follow JSON format, do not add extra text
 - Subtask ID format: subtask-1, subtask-2, ...
 - Only generate subtasks related to "necessary modifications"`;
+
+/**
+ * Subtask Refinement System Prompt
+ *
+ * For evaluating a single subtask and deciding whether it must be split
+ * to fit within the execution turn limit.
+ */
+export const SUBTASK_REFINE_SYSTEM_PROMPT = `You are a subtask decomposition reviewer. Your responsibility is to decide whether a single subtask is too large to complete within a strict execution turn limit, and if so, split it into smaller subtasks.
+
+## Your Tasks
+1. Decide if the given subtask can realistically finish within the provided max thinking/tool turns.
+2. If it can, output shouldSplit=false and an empty subtasks array.
+3. If it cannot, split it into 2-6 smaller subtasks that each can finish within the limit.
+
+## Refinement Principles
+- Each refined subtask should be a single, concrete outcome.
+- Keep the subtasks executable in sequence; avoid hidden dependencies.
+- Preserve all original constraints; do not relax them.
+- Prefer small, testable units over large multi-part tasks.
+
+## Output Requirements
+Return JSON only, with fields:
+- shouldSplit: boolean
+- reason: short string
+- subtasks: array (empty when shouldSplit=false)
+
+Do not include any extra text or code fences.`;
 
 /**
  * Generate Planning User Prompt
@@ -358,6 +409,71 @@ Please output in JSON format without any other text. JSON should have the follow
   return prompt;
 }
 
+/**
+ * Generate Subtask Refinement User Prompt
+ */
+export function generateSubtaskRefineUserPrompt(variables: SubtaskRefinePromptVariables): string {
+  const {
+    objective,
+    constraints,
+    availableTools,
+    maxSubtasks,
+    maxThinkingRounds,
+    estimatedMinutes,
+  } = variables;
+
+  let prompt = `Please review this subtask and decide whether it must be split:
+
+## Subtask Objective
+${objective}
+
+## Constraints
+${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'No special constraints'}
+`;
+
+  if (typeof estimatedMinutes === 'number') {
+    prompt += `
+## Estimated Duration
+${estimatedMinutes} minutes
+`;
+  }
+
+  if (availableTools && availableTools.length > 0) {
+    prompt += `
+## Available Tools
+${availableTools.map((t) => `- ${t}`).join('\n')}
+`;
+  }
+
+  if (maxThinkingRounds) {
+    prompt += `
+## Execution Limit
+Each refined subtask must be doable within ${maxThinkingRounds} thinking/tool turns
+`;
+  }
+
+  if (maxSubtasks) {
+    prompt += `
+## Subtask Limit
+If splitting, generate at most ${maxSubtasks} subtasks
+`;
+  }
+
+  prompt += `
+## Output Format
+Please output JSON only, with this structure:
+\`\`\`json
+{
+  "shouldSplit": false,
+  "reason": "short explanation",
+  "subtasks": []
+}
+\`\`\`
+If shouldSplit=true, provide 2-6 subtasks with objective, constraints, and optional estimatedMinutes.`;
+
+  return prompt;
+}
+
 // ============================================================================
 // Error Feedback Prompt
 // ============================================================================
@@ -384,6 +500,34 @@ This is retry attempt ${retryCount}.
 2. Do not add any text or code block markers before or after the JSON
 3. Ensure all required fields are present
 4. Ensure correct data types (strings, arrays, numbers, etc.)
+
+Please output the correct JSON directly:`;
+}
+
+/**
+ * Generate Subtask Refinement Parse Error Feedback Prompt
+ */
+export function generateSubtaskRefineErrorFeedbackPrompt(
+  variables: ErrorFeedbackVariables
+): string {
+  const { originalResponse, parseError, retryCount } = variables;
+
+  return `Your previous response could not be parsed correctly. Please correct and re-output.
+
+## Error Message
+${parseError}
+
+## Your Original Response
+${originalResponse.slice(0, 1000)}${originalResponse.length > 1000 ? '...(truncated)' : ''}
+
+## Retry Count
+This is retry attempt ${retryCount}.
+
+## Requirements
+1. Output valid JSON only (no extra text)
+2. Include required fields: shouldSplit (boolean), reason (string), subtasks (array)
+3. When shouldSplit=false, subtasks must be an empty array
+4. When shouldSplit=true, provide 2-6 subtasks with objective and constraints
 
 Please output the correct JSON directly:`;
 }

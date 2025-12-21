@@ -30,7 +30,6 @@ const outputSchema = z.object({
   error: z.string().optional(),
 });
 
-// zod v4 与 zod-to-json-schema@3.x 类型不完全兼容，使用 unknown 中间断言
 const inputJsonSchema = zodToJsonSchema(
   knowledgeUpsertSchema as unknown as Parameters<typeof zodToJsonSchema>[0],
   { $refStrategy: 'none' }

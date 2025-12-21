@@ -641,6 +641,14 @@ export class DefaultWorkerPool implements IWorkerPool {
       };
     }
 
+    if (signal?.aborted) {
+      this.updateWorkerStatus(workerId, 'idle');
+      return {
+        success: false,
+        error: 'Assignment aborted',
+      };
+    }
+
     // 更新 Worker 状态为忙碌
     this.updateWorkerStatus(workerId, 'busy');
 
@@ -711,12 +719,23 @@ export class DefaultWorkerPool implements IWorkerPool {
         return undefined;
       }
 
+      const tryReserve = (workerId: string | undefined): string | undefined => {
+        if (!workerId) return undefined;
+        const worker = this.workers.get(workerId);
+        if (!worker || worker.status !== 'idle') {
+          return undefined;
+        }
+        this.updateWorkerStatus(workerId, 'busy');
+        return workerId;
+      };
+
       // 1. 尝试使用偏好 Worker
       if (preferredWorkerId) {
         const w = this.workers.get(preferredWorkerId);
         if (w && w.status === 'idle') {
           if (!requiredCapabilities || requiredCapabilities.every((cap) => (w.capabilities ?? []).includes(cap))) {
-            return preferredWorkerId;
+            const reserved = tryReserve(preferredWorkerId);
+            if (reserved) return reserved;
           }
         }
       }
@@ -724,17 +743,21 @@ export class DefaultWorkerPool implements IWorkerPool {
       // 2. 按能力筛选
       let workerId = this.selectWorker(requiredCapabilities);
       if (workerId) {
-        return workerId;
+        const reserved = tryReserve(workerId);
+        if (reserved) return reserved;
       }
 
       // 3. 降级路由（如果启用）
       if (fallbackToGeneral && requiredCapabilities && requiredCapabilities.length > 0) {
         workerId = this.selectWorker(); // 不带能力要求
         if (workerId) {
-          console.debug(
-            `[WorkerPool] Fallback: no worker with capabilities [${requiredCapabilities.join(', ')}], using ${workerId}`
-          );
-          return workerId;
+          const reserved = tryReserve(workerId);
+          if (reserved) {
+            console.debug(
+              `[WorkerPool] Fallback: no worker with capabilities [${requiredCapabilities.join(', ')}], using ${reserved}`
+            );
+            return reserved;
+          }
         }
       }
 

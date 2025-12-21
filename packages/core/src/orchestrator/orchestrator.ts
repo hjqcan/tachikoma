@@ -9,6 +9,7 @@ import type { Task, TaskResult, Artifact, TaskMetrics, TraceData, RetryPolicy } 
 import { BaseAgent } from '../abstracts/base-agent';
 import { WorkerAgent } from '../agents/worker-agent';
 import { join } from 'node:path';
+import { DEFAULT_RESOURCE_LIMITS } from '../worker/types';
 import type {
   OrchestratorTask,
   SubTask,
@@ -72,6 +73,10 @@ const PLANNER_METADATA_SCHEMA = z
   .passthrough();
 
 type PlannerMetadata = z.infer<typeof PLANNER_METADATA_SCHEMA>;
+
+const MAX_SUBTASK_REFINEMENT_DEPTH = 2;
+const DEFAULT_REFINEMENT_MAX_SUBTASKS = 4;
+const DEFAULT_REFINEMENT_MAX_TURNS = DEFAULT_RESOURCE_LIMITS.maxThinkingRounds;
 
 /**
  * Orchestrator 选项
@@ -235,6 +240,9 @@ export class Orchestrator extends BaseAgent {
 
   /** 当前运行上下文（从 task.context.metadata 派生） */
   private currentRunMetadata: Record<string, unknown> | null = null;
+
+  /** 子任务复审缓存（避免重复拆分） */
+  private readonly refinedSubtaskIds = new Set<string>();
 
   private isDebugEnabled(): boolean {
     const levelRaw = process.env.TACHIKOMA_LOG_LEVEL ?? '';
@@ -466,6 +474,7 @@ export class Orchestrator extends BaseAgent {
     this.currentSessionId = sessionId;
     // best-effort：恢复上下文数据（可能包含 workDir/llm 等）
     this.currentRunMetadata = (checkpoint.contextData as Record<string, unknown> | undefined) ?? null;
+    this.refinedSubtaskIds.clear();
 
     try {
       // 4. 确保 WorkerPool 有可执行的 agent 绑定
@@ -779,6 +788,7 @@ export class Orchestrator extends BaseAgent {
 
     // 初始化会话
     this.currentRunMetadata = task.context?.metadata ?? null;
+    this.refinedSubtaskIds.clear();
     await this.initializeSession(task.id, task.context?.sessionId);
     await this.initializeSharedContext(orchestratorTask);
 
@@ -1836,6 +1846,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
     const subtaskIds = step.subtaskIds;
 
     if (step.parallel) {
+      await this.ensureParallelWorkersForStep(step, subtaskMap);
       // 并行执行
       const promises = subtaskIds.map((id) =>
         this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal)
@@ -1859,7 +1870,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
     subtaskMap: Map<string, SubTask>,
     timeout: number,
     retryPolicy: RetryPolicy,
-    signal: AbortSignal
+    signal: AbortSignal,
+    refinementDepth = 0
   ): Promise<SubTaskExecutionResult> {
     const subtask = subtaskMap.get(subtaskId);
     if (!subtask) {
@@ -1883,6 +1895,28 @@ Is this a genuine deviation? Answer YES or NO only.`,
           };
         }
       }
+    }
+
+    if (signal.aborted) {
+      return {
+        subtaskId,
+        success: false,
+        error: 'Aborted',
+        retryCount: 0,
+      };
+    }
+
+    const refinementResult = await this.maybeRefineSubtask(
+      taskId,
+      subtask,
+      subtaskMap,
+      timeout,
+      retryPolicy,
+      signal,
+      refinementDepth
+    );
+    if (refinementResult) {
+      return refinementResult;
     }
 
     // 标记为运行中
@@ -1996,6 +2030,296 @@ Is this a genuine deviation? Answer YES or NO only.`,
           error: lastError,
           retryCount,
         };
+      }
+    }
+  }
+
+  private async maybeRefineSubtask(
+    taskId: string,
+    subtask: SubTask,
+    subtaskMap: Map<string, SubTask>,
+    timeout: number,
+    retryPolicy: RetryPolicy,
+    signal: AbortSignal,
+    refinementDepth: number
+  ): Promise<SubTaskExecutionResult | null> {
+    if (refinementDepth >= MAX_SUBTASK_REFINEMENT_DEPTH) {
+      return null;
+    }
+
+    if (this.refinedSubtaskIds.has(subtask.id)) {
+      return null;
+    }
+
+    this.refinedSubtaskIds.add(subtask.id);
+
+    const estimatedMinutes =
+      typeof subtask.estimatedDuration === 'number' && subtask.estimatedDuration > 0
+        ? Math.max(1, Math.round(subtask.estimatedDuration / 60000))
+        : undefined;
+
+    const refineResult = await this.planner.refineSubtask({
+      objective: subtask.objective,
+      constraints: subtask.constraints,
+      maxSubtasks: DEFAULT_REFINEMENT_MAX_SUBTASKS,
+      maxThinkingRounds: DEFAULT_REFINEMENT_MAX_TURNS,
+      estimatedMinutes,
+    });
+
+    if (this.executionState) {
+      this.executionState.totalTokens +=
+        refineResult.tokensUsed.input + refineResult.tokensUsed.output;
+    }
+
+    if (!refineResult.success || !refineResult.shouldSplit || !refineResult.subtasks) {
+      return null;
+    }
+
+    const refinedSubtasks = this.createRefinedSubtasks(
+      subtask,
+      refineResult.subtasks,
+      subtaskMap
+    );
+
+    if (refinedSubtasks.length < 2) {
+      return null;
+    }
+
+    if (signal.aborted) {
+      return {
+        subtaskId: subtask.id,
+        success: false,
+        error: 'Aborted',
+        retryCount: 0,
+      };
+    }
+
+    this.executionState!.runningSubtasks.add(subtask.id);
+    subtask.status = 'running';
+
+    for (const refined of refinedSubtasks) {
+      subtaskMap.set(refined.id, refined);
+    }
+
+    const startTime = Date.now();
+    const childResults: SubTaskExecutionResult[] = [];
+    let failure: SubTaskExecutionResult | null = null;
+
+    for (const refined of refinedSubtasks) {
+      if (signal.aborted) {
+        failure = {
+          subtaskId: subtask.id,
+          success: false,
+          error: 'Aborted',
+          retryCount: 0,
+        };
+        break;
+      }
+
+      const result = await this.executeSubtask(
+        taskId,
+        refined.id,
+        subtaskMap,
+        timeout,
+        retryPolicy,
+        signal,
+        refinementDepth + 1
+      );
+      childResults.push(result);
+
+      if (!result.success) {
+        failure = result;
+        break;
+      }
+    }
+
+    this.executionState!.runningSubtasks.delete(subtask.id);
+
+    if (failure) {
+      const errorMessage = failure.error || `Subtask ${failure.subtaskId} failed`;
+      this.markSubtaskFailed(subtask, subtask.id, errorMessage);
+      this.emit('subtask:failed', taskId, { error: errorMessage, retryCount: 0 }, subtask.id);
+      return {
+        subtaskId: subtask.id,
+        success: false,
+        error: errorMessage,
+        retryCount: 0,
+      };
+    }
+
+    const result = this.buildRefinedSubtaskResult(subtask, refinedSubtasks, startTime, childResults);
+    this.executionState!.completedSubtasks.set(subtask.id, result);
+    subtask.status = 'success';
+    subtask.result = result;
+
+    this.emit('subtask:complete', taskId, { result }, subtask.id);
+
+    return {
+      subtaskId: subtask.id,
+      success: true,
+      result,
+      retryCount: 0,
+    };
+  }
+
+  private createRefinedSubtasks(
+    parent: SubTask,
+    refined: Array<{
+      objective: string;
+      constraints: string[];
+      estimatedMinutes?: number;
+    }>,
+    subtaskMap: Map<string, SubTask>
+  ): SubTask[] {
+    const refinedList = refined.slice(0, DEFAULT_REFINEMENT_MAX_SUBTASKS);
+    const result: SubTask[] = [];
+    const reservedIds = new Set(subtaskMap.keys());
+
+    for (let i = 0; i < refinedList.length; i++) {
+      const item = refinedList[i];
+      const id = this.generateRefinedSubtaskId(parent.id, i + 1, reservedIds);
+      const constraints = this.mergeConstraints(parent.constraints, item.constraints);
+      const estimatedDuration =
+        typeof item.estimatedMinutes === 'number' && Number.isFinite(item.estimatedMinutes)
+          ? item.estimatedMinutes * 60 * 1000
+          : undefined;
+      const dependencies = result.length > 0 ? [result[result.length - 1].id] : [];
+
+      result.push({
+        id,
+        parentId: parent.id,
+        objective: item.objective,
+        constraints,
+        ...(parent.roleId !== undefined && { roleId: parent.roleId }),
+        ...(Array.isArray(parent.requiredCapabilities) && parent.requiredCapabilities.length > 0
+          ? { requiredCapabilities: parent.requiredCapabilities }
+          : {}),
+        ...(typeof estimatedDuration === 'number' ? { estimatedDuration } : {}),
+        ...(parent.priority !== undefined && { priority: parent.priority }),
+        dependencies,
+        status: 'pending',
+      });
+
+      reservedIds.add(id);
+    }
+
+    return result;
+  }
+
+  private generateRefinedSubtaskId(
+    baseId: string,
+    index: number,
+    reservedIds: Set<string>
+  ): string {
+    let candidate = `${baseId}.${index}`;
+    let suffix = index;
+    while (reservedIds.has(candidate)) {
+      suffix += 1;
+      candidate = `${baseId}.${suffix}`;
+    }
+    return candidate;
+  }
+
+  private mergeConstraints(parentConstraints: string[], childConstraints?: string[]): string[] {
+    const merged: string[] = [];
+    const seen = new Set<string>();
+
+    const pushUnique = (value: string): void => {
+      const trimmed = value.trim();
+      if (!trimmed || seen.has(trimmed)) return;
+      seen.add(trimmed);
+      merged.push(trimmed);
+    };
+
+    for (const item of parentConstraints) {
+      if (typeof item === 'string') {
+        pushUnique(item);
+      }
+    }
+
+    if (Array.isArray(childConstraints)) {
+      for (const item of childConstraints) {
+        if (typeof item === 'string') {
+          pushUnique(item);
+        }
+      }
+    }
+
+    return merged;
+  }
+
+  private buildRefinedSubtaskResult(
+    parent: SubTask,
+    refinedSubtasks: SubTask[],
+    startTime: number,
+    childResults: SubTaskExecutionResult[]
+  ): TaskResult {
+    const endTime = Date.now();
+    const traceId = generateTimestampId('trace');
+    const spanId = generateTimestampId('span');
+
+    return {
+      taskId: parent.id,
+      status: 'success',
+      output: {
+        message: `Refined into ${refinedSubtasks.length} subtasks`,
+        subtasks: childResults.map((r) => ({
+          id: r.subtaskId,
+          success: r.success,
+          ...(r.error ? { error: r.error } : {}),
+        })),
+      },
+      artifacts: [],
+      metrics: {
+        startTime,
+        endTime,
+        duration: endTime - startTime,
+        tokensUsed: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+      },
+      trace: {
+        traceId,
+        spanId,
+        operation: `orchestrator.${this.id}.refine`,
+        attributes: {
+          refined: true,
+          parentSubtaskId: parent.id,
+        },
+        events: [],
+        duration: endTime - startTime,
+      },
+    };
+  }
+
+  private async ensureParallelWorkersForStep(
+    step: ExecutionStep,
+    subtaskMap: Map<string, SubTask>
+  ): Promise<void> {
+    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
+    if (this.workerPool.workerCount >= maxWorkers) {
+      return;
+    }
+
+    const roleCounts = new Map<string, number>();
+    for (const subtaskId of step.subtaskIds) {
+      const roleId = subtaskMap.get(subtaskId)?.roleId;
+      if (!roleId) continue;
+      roleCounts.set(roleId, (roleCounts.get(roleId) ?? 0) + 1);
+    }
+
+    for (const [roleId, requiredCount] of roleCounts.entries()) {
+      if (this.workerPool.workerCount >= maxWorkers) break;
+      const existingCount = this.workerPool.getWorkersByRole(roleId).length;
+      const needed = requiredCount - existingCount;
+      if (needed <= 0) continue;
+
+      const toCreate = Math.min(needed, maxWorkers - this.workerPool.workerCount);
+      for (let i = 0; i < toCreate; i++) {
+        const newWorkerId = this.generateWorkerId(roleId);
+        const capabilities = this.getRoleCapabilities(roleId);
+        await this.createAndRegisterWorker(newWorkerId, roleId, capabilities);
+        console.debug(`[Orchestrator] Created new worker ${newWorkerId} for parallel role ${roleId}`);
       }
     }
   }

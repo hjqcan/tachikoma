@@ -1,6 +1,6 @@
 {
   "name": "@tachikoma/core",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Tachikoma 核心库 - 智能体、上下文、工具、沙盒、MCP 集成",
   "type": "module",
   "main": "./dist/index.js",
@@ -40,7 +40,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun",
+    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun --external playwright --external electron",
     "build:types": "tsc -p tsconfig.build.json",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
@@ -57,7 +57,7 @@
     "ioredis": "^5.8.2",
     "level": "^10.0.0",
     "uuid": "^13.0.0",
-    "zod": "^4.1.13",
+    "zod": "^4.2.1",
     "zod-to-json-schema": "^3.25.0"
   },
   "devDependencies": {

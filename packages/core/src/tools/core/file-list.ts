@@ -251,8 +251,11 @@ export const fileListTool: Tool = {
       maxResults,
     } = (input || {}) as ExtendedFileListInput;
 
-    // 使用默认排除列表（递归时），允许用户完全覆盖
-    const effectiveExcludes = excludes ?? (recursive ? [...FILE_LIST_DEFAULT_EXCLUDES] : []);
+    // 即使提供了 excludes，也默认包含 FILE_LIST_DEFAULT_EXCLUDES（除非用户明确不想，但为了安全起见，我们默认合并）
+    // 防止 Agent 传空数组导致扫描 node_modules
+    const defaultExcludes = recursive ? [...FILE_LIST_DEFAULT_EXCLUDES] : [];
+    const userExcludes = excludes || [];
+    const effectiveExcludes = Array.from(new Set([...defaultExcludes, ...userExcludes]));
     const effectiveMaxResults = maxResults ?? FILE_LIST_MAX_RESULTS;
 
     try {

@@ -196,6 +196,26 @@ export interface PatchPromptVariables extends PromptVariables {
 }
 
 /**
+ * Subtask refinement Prompt 变量
+ *
+ * 用于在执行前复审单个子任务是否需要拆分。
+ */
+export interface SubtaskRefinePromptVariables {
+  /** 子任务目标 */
+  objective: string;
+  /** 约束条件 */
+  constraints: string[];
+  /** 可用工具列表 */
+  availableTools?: string[] | undefined;
+  /** 最大子任务数量 */
+  maxSubtasks?: number | undefined;
+  /** 最大思考轮次 */
+  maxThinkingRounds?: number | undefined;
+  /** 预估执行时间（分钟） */
+  estimatedMinutes?: number | undefined;
+}
+
+/**
  * 错误反馈变量
  */
 export interface ErrorFeedbackVariables {

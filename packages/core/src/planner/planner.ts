@@ -13,18 +13,23 @@ import type {
   PlannerConfig,
   ExecutionPlan,
 } from '../orchestrator';
-import type { LLMClient, LLMRequest, ParseRetryConfig } from './types';
+import type { LLMClient, LLMRequest, ParseRetryConfig, ParseResult } from './types';
 import {
   createLLMClient,
   LLMClientError,
   PlanningParser,
   PLANNING_SYSTEM_PROMPT,
   PATCH_PLANNING_SYSTEM_PROMPT,
+  SUBTASK_REFINE_SYSTEM_PROMPT,
   generatePlanningUserPrompt,
   generatePatchPlanningUserPrompt,
+  generateSubtaskRefineUserPrompt,
+  generateSubtaskRefineErrorFeedbackPrompt,
   convertToSubTasks,
   convertToExecutionPlan,
+  extractJsonFromResponse,
   type PlanningOutputFormat,
+  type SubtaskRefineOutputFormat,
 } from './index';
 import {
   DEFAULT_PLANNER_CONFIG,
@@ -33,6 +38,7 @@ import {
 } from '../orchestrator/config';
 import { injectToolRecommendations } from './subtask-validator';
 import { MemoryService } from '../memory';
+import { z } from 'zod';
 
 // ============================================================================
 // 类型定义
@@ -84,6 +90,68 @@ export interface DegradationStrategy {
   /** 降级后的重试策略 */
   retryPolicy?: RetryPolicy;
 }
+
+/**
+ * Subtask refinement input
+ */
+export interface SubtaskRefineInput {
+  /** Subtask objective */
+  objective: string;
+  /** Subtask constraints */
+  constraints: string[];
+  /** Available tools (optional) */
+  availableTools?: string[];
+  /** Max refined subtasks (optional) */
+  maxSubtasks?: number;
+  /** Max thinking/tool turns per subtask (optional) */
+  maxThinkingRounds?: number;
+  /** Estimated duration (minutes, optional) */
+  estimatedMinutes?: number;
+}
+
+/**
+ * Subtask refinement result
+ */
+export interface SubtaskRefineResult {
+  /** Whether refinement succeeded */
+  success: boolean;
+  /** Whether the subtask should be split */
+  shouldSplit: boolean;
+  /** Reason for the decision */
+  reason?: string;
+  /** Proposed refined subtasks */
+  subtasks?: Array<{
+    objective: string;
+    constraints: string[];
+    estimatedMinutes?: number;
+  }>;
+  /** Error message (when failed) */
+  error?: string;
+  /** Token usage */
+  tokensUsed: {
+    input: number;
+    output: number;
+  };
+  /** Retry count */
+  retryCount: number;
+}
+
+const SUBTASK_REFINER_SCHEMA = z
+  .object({
+    shouldSplit: z.boolean(),
+    reason: z.string().optional().default(''),
+    subtasks: z
+      .array(
+        z.object({
+          objective: z.string().min(1),
+          constraints: z.array(z.string()).optional(),
+          estimatedMinutes: z.number().nonnegative().optional(),
+        })
+      )
+      .optional()
+      .default([]),
+  })
+  .passthrough();
 
 // ============================================================================
 // Planner 实现
@@ -341,6 +409,96 @@ export class Planner {
   }
 
   /**
+   * 执行子任务复审（执行前拆分）
+   *
+   * @param input - 子任务复审输入
+   * @returns 复审结果
+   */
+  async refineSubtask(input: SubtaskRefineInput): Promise<SubtaskRefineResult> {
+    const {
+      objective,
+      constraints,
+      availableTools,
+      maxSubtasks,
+      maxThinkingRounds,
+      estimatedMinutes,
+    } = input;
+
+    const totalTokens = { input: 0, output: 0 };
+    let totalRetries = 0;
+
+    try {
+      const userPrompt = generateSubtaskRefineUserPrompt({
+        objective,
+        constraints,
+        availableTools,
+        maxSubtasks,
+        maxThinkingRounds,
+        estimatedMinutes,
+      });
+
+      const request: LLMRequest = {
+        systemPrompt: SUBTASK_REFINE_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+        maxTokens: this.config.agent.maxTokens,
+        temperature: this.config.agent.temperature,
+      };
+
+      const response = await this.llmClient.complete(request);
+      totalTokens.input += response.usage.inputTokens;
+      totalTokens.output += response.usage.outputTokens;
+
+      const { result: parseResult, retryCount, totalTokens: retryTokens } =
+        await this.parseSubtaskRefineWithRetry(response.content, request);
+
+      totalTokens.input += retryTokens.input;
+      totalTokens.output += retryTokens.output;
+      totalRetries = retryCount;
+
+      if (!parseResult.success || !parseResult.data) {
+        return {
+          success: false,
+          shouldSplit: false,
+          error: parseResult.error || 'Failed to parse subtask refinement output',
+          tokensUsed: totalTokens,
+          retryCount: totalRetries,
+        };
+      }
+
+      const normalizedSubtasks = parseResult.data.subtasks
+        .map((st) => ({
+          objective: st.objective.trim(),
+          constraints: Array.isArray(st.constraints)
+            ? st.constraints.filter((c) => typeof c === 'string' && c.trim())
+            : [],
+          ...(Number.isFinite(st.estimatedMinutes)
+            ? { estimatedMinutes: st.estimatedMinutes }
+            : {}),
+        }))
+        .filter((st) => st.objective.length > 0);
+
+      const shouldSplit = parseResult.data.shouldSplit && normalizedSubtasks.length >= 2;
+
+      return {
+        success: true,
+        shouldSplit,
+        reason: parseResult.data.reason,
+        subtasks: shouldSplit ? normalizedSubtasks : [],
+        tokensUsed: totalTokens,
+        retryCount: totalRetries,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        shouldSplit: false,
+        error: error instanceof Error ? error.message : String(error),
+        tokensUsed: totalTokens,
+        retryCount: totalRetries,
+      };
+    }
+  }
+
+  /**
    * 构建额外上下文
    * 
    * 包含任务元数据和相关历史记忆
@@ -411,6 +569,89 @@ export class Planner {
     }
 
     return parts.length > 0 ? parts.join('\n') : undefined;
+  }
+
+  private parseSubtaskRefineOutput(content: string): ParseResult<SubtaskRefineOutputFormat> {
+    const jsonStr = extractJsonFromResponse(content);
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(jsonStr);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        error: `Invalid JSON: ${message}`,
+        rawContent: content,
+      };
+    }
+
+    const parsed = SUBTASK_REFINER_SCHEMA.safeParse(parsedJson);
+    if (!parsed.success) {
+      const issueText = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`)
+        .join('; ');
+      return {
+        success: false,
+        error: issueText || 'Invalid subtask refinement output',
+        rawContent: content,
+      };
+    }
+
+    const data: SubtaskRefineOutputFormat = {
+      shouldSplit: parsed.data.shouldSplit,
+      reason: parsed.data.reason ?? '',
+      subtasks: Array.isArray(parsed.data.subtasks) ? parsed.data.subtasks : [],
+    };
+
+    return {
+      success: true,
+      data,
+      rawContent: content,
+    };
+  }
+
+  private async parseSubtaskRefineWithRetry(
+    content: string,
+    request: LLMRequest
+  ): Promise<{
+    result: ParseResult<SubtaskRefineOutputFormat>;
+    retryCount: number;
+    totalTokens: { input: number; output: number };
+  }> {
+    const totalTokens = { input: 0, output: 0 };
+    let retryCount = 0;
+    let currentContent = content;
+
+    while (true) {
+      const result = this.parseSubtaskRefineOutput(currentContent);
+      if (result.success) {
+        return { result, retryCount, totalTokens };
+      }
+
+      if (
+        retryCount >= this.parseRetryConfig.maxRetries ||
+        !this.parseRetryConfig.includeErrorFeedback
+      ) {
+        return { result, retryCount, totalTokens };
+      }
+
+      const feedback = generateSubtaskRefineErrorFeedbackPrompt({
+        originalResponse: currentContent,
+        parseError: result.error || 'Unknown parse error',
+        retryCount: retryCount + 1,
+      });
+
+      const retryRequest: LLMRequest = {
+        ...request,
+        messages: [{ role: 'user', content: feedback }],
+      };
+
+      const retryResponse = await this.llmClient.complete(retryRequest);
+      totalTokens.input += retryResponse.usage.inputTokens;
+      totalTokens.output += retryResponse.usage.outputTokens;
+      currentContent = retryResponse.content;
+      retryCount += 1;
+    }
   }
 
   /**

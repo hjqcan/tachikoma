@@ -10,6 +10,70 @@ import type { ShellRunInput, ShellRunOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir, truncateOutput, DEFAULT_MAX_OUTPUT } from './utils';
 import { mergeEnv } from '../env-utils';
+import { shellSessionManager } from './shell-session-manager';
+
+// =============================================================================
+// Timeout Configuration (inspired by OpenCode & Codex best practices)
+// =============================================================================
+
+/** Minimum timeout to prevent unreasonably short timeouts (5 seconds) */
+const MIN_TIMEOUT = 5_000;
+
+/** Default timeout (30 seconds), can be overridden via TACHIKOMA_BASH_TIMEOUT env */
+const DEFAULT_TIMEOUT = parseInt(process.env.TACHIKOMA_BASH_TIMEOUT || '', 10) || 30_000;
+
+/**
+ * Long-running command patterns with recommended timeouts
+ * These commands often require network access or heavy computation
+ */
+const LONG_RUNNING_COMMANDS: { pattern: RegExp; timeout: number; description: string }[] = [
+  // Package managers (5 minutes)
+  { pattern: /^(npm|yarn|pnpm|bun)\s+(install|i|add|ci)\b/i, timeout: 300_000, description: 'package install' },
+  { pattern: /^pip3?\s+install\b/i, timeout: 300_000, description: 'pip install' },
+  { pattern: /^python3?\s+-m\s+pip\s+install\b/i, timeout: 300_000, description: 'python pip install' },
+  { pattern: /^gem\s+install\b/i, timeout: 300_000, description: 'gem install' },
+  { pattern: /^composer\s+(install|update)\b/i, timeout: 300_000, description: 'composer install' },
+  
+  // Build tools (10 minutes)
+  { pattern: /^cargo\s+(build|install)\b/i, timeout: 600_000, description: 'cargo build' },
+  { pattern: /^go\s+(build|install|get)\b/i, timeout: 600_000, description: 'go build' },
+  { pattern: /^mvn\s+(install|package|compile)\b/i, timeout: 600_000, description: 'maven build' },
+  { pattern: /^gradle\s+(build|assemble)\b/i, timeout: 600_000, description: 'gradle build' },
+  { pattern: /^dotnet\s+(build|restore)\b/i, timeout: 600_000, description: 'dotnet build' },
+  
+  // Docker (15 minutes)
+  { pattern: /^docker\s+(build|pull|push)\b/i, timeout: 900_000, description: 'docker build/pull' },
+  { pattern: /^docker-compose\s+(build|up|pull)\b/i, timeout: 900_000, description: 'docker-compose' },
+  
+  // Tests (5 minutes)
+  { pattern: /^(npm|yarn|pnpm|bun)\s+(run\s+)?(test|e2e|spec)\b/i, timeout: 300_000, description: 'test suite' },
+  { pattern: /^pytest\b/i, timeout: 300_000, description: 'pytest' },
+  { pattern: /^jest\b/i, timeout: 300_000, description: 'jest' },
+  { pattern: /^cargo\s+test\b/i, timeout: 300_000, description: 'cargo test' },
+  { pattern: /^go\s+test\b/i, timeout: 300_000, description: 'go test' },
+];
+
+/**
+ * Get smart timeout based on command pattern matching
+ * Returns the appropriate timeout for long-running commands
+ */
+function getSmartTimeout(command: string, explicitTimeout?: number): { timeout: number; reason?: string } {
+  // If explicit timeout is provided and valid, use it (but enforce minimum)
+  if (explicitTimeout !== undefined && explicitTimeout >= MIN_TIMEOUT) {
+    return { timeout: explicitTimeout };
+  }
+  
+  // Check for long-running command patterns
+  for (const { pattern, timeout, description } of LONG_RUNNING_COMMANDS) {
+    if (pattern.test(command.trim())) {
+      return { timeout, reason: description };
+    }
+  }
+  
+  // Use default timeout, but enforce minimum
+  const baseTimeout = explicitTimeout ?? DEFAULT_TIMEOUT;
+  return { timeout: Math.max(baseTimeout, MIN_TIMEOUT) };
+}
 
 /** Shell 运行输入（扩展版） */
 interface ExtendedShellRunInput extends ShellRunInput {
@@ -21,6 +85,12 @@ interface ExtendedShellRunInput extends ShellRunInput {
    * Use for long-running processes like dev servers.
    */
   background?: boolean;
+  /**
+   * Use persistent shell session (Codex-like).
+   * Commands run in a long-lived shell process, preserving environment and working directory.
+   * Default: true for foreground commands, false for background.
+   */
+  persistent?: boolean;
 }
 
 /** Shell 运行输出（扩展版） */
@@ -50,6 +120,8 @@ interface BackgroundProcess {
   killed: boolean;
   taskId: string;
   agentId: string;
+  completed?: boolean;
+  exitCode?: number | null;
 }
 
 interface BackgroundProcessFilter {
@@ -65,7 +137,7 @@ let processCounter = 0;
  */
 export function listBackgroundProcesses(
   filter: BackgroundProcessFilter = {}
-): { id: string; pid: number; command: string; startedAt: number; killed: boolean }[] {
+): { id: string; pid: number; command: string; startedAt: number; killed: boolean; completed?: boolean; exitCode?: number | null }[] {
   const entries = Array.from(backgroundProcesses.entries()).filter(([, proc]) => {
     if (filter.taskId && proc.taskId !== filter.taskId) return false;
     if (filter.agentId && proc.agentId !== filter.agentId) return false;
@@ -77,7 +149,9 @@ export function listBackgroundProcesses(
     pid: proc.pid,
     command: proc.command,
     startedAt: proc.startedAt,
-    killed: proc.killed,
+    killed: proc.killed || false,
+    completed: proc.completed ?? false,
+    exitCode: proc.exitCode ?? null,
   }));
 }
 
@@ -160,6 +234,18 @@ export function cleanupBackgroundProcessesForTask(taskId: string): void {
 }
 
 /**
+ * Cleanup all shell resources for a task (call when task completes)
+ * This cleans up both background processes and persistent shell sessions.
+ */
+export async function cleanupAllForTask(taskId: string): Promise<void> {
+  // Cleanup background processes
+  cleanupBackgroundProcessesForTask(taskId);
+  
+  // Cleanup persistent shell sessions
+  await shellSessionManager.destroyForTask(taskId);
+}
+
+/**
  * Execute command in background (Claude Code-like)
  */
 function executeBackgroundCommand(
@@ -210,20 +296,26 @@ function executeBackgroundCommand(
     killed: false,
     taskId: context.taskId,
     agentId: context.agentId,
+    completed: false,
+    exitCode: null,
   };
 
   backgroundProcesses.set(processId, proc);
 
-  // Cleanup on exit to prevent memory leaks
-  child.on('exit', () => {
-    proc.killed = true;
-    backgroundProcesses.delete(processId);
+  // Mark as completed on exit instead of deleting
+  child.on('exit', (code) => {
+    proc.completed = true;
+    proc.exitCode = code;
+    // Don't delete immediately so logs can be inspected
+    // backgroundProcesses.delete(processId);
   });
 
   child.on('error', (err) => {
-    proc.killed = true;
+    proc.completed = true;
+    proc.exitCode = 1;
     proc.logs.push(`[error] ${err.message}`);
-    backgroundProcesses.delete(processId);
+    // Don't delete immediately
+    // backgroundProcesses.delete(processId);
   });
 
   return { pid, processId };
@@ -281,7 +373,7 @@ async function executeCommand(
     child.on('close', (code) => {
       resolve({
         stdout,
-        stderr: timedOut ? stderr + '\n[Command timed out and was killed]' : stderr,
+        stderr: timedOut ? stderr + '\n[Command timed out and was killed. If this is a long-running process (like a server), please use background: true]' : stderr,
         exitCode: timedOut ? 124 : (code ?? 1), // 124 是 timeout 命令的标准退出码
         timedOut,
       });
@@ -354,8 +446,8 @@ export const shellRunTool: Tool = {
       },
       timeout: {
         type: 'number',
-        description: '超时时间（毫秒，默认 30000）',
-        default: 30000,
+        description: `超时时间（毫秒）。最小值 ${MIN_TIMEOUT}ms，默认 ${DEFAULT_TIMEOUT}ms。长时间命令（npm install等）会自动延长。`,
+        default: DEFAULT_TIMEOUT,
       },
       maxOutput: {
         type: 'number',
@@ -365,6 +457,11 @@ export const shellRunTool: Tool = {
         type: 'boolean',
         description: 'Run in background (like Claude Code Ctrl+B). Returns PID immediately without waiting. Use for long-running processes like dev servers. Processes are scoped to the current task and auto-terminated on completion.',
         default: false,
+      },
+      persistent: {
+        type: 'boolean',
+        description: 'Use persistent shell session (Codex-like). Commands run in a long-lived shell process, preserving environment and working directory between commands. Default: true for foreground, false for background.',
+        default: true,
       },
     },
     required: ['command'],
@@ -405,10 +502,16 @@ export const shellRunTool: Tool = {
     const {
       command,
       cwd,
-      timeout = 30000,
+      timeout: explicitTimeout,
       maxOutput = DEFAULT_MAX_OUTPUT,
       background = false,
     } = input as ExtendedShellRunInput;
+    
+    // Get smart timeout based on command type (enforces minimum)
+    const { timeout, reason: timeoutReason } = getSmartTimeout(command, explicitTimeout);
+    if (timeoutReason) {
+      console.log(`[shell_run] Auto-detected ${timeoutReason}, using ${timeout}ms timeout`);
+    }
 
     try {
       // 确保工作目录存在
@@ -456,7 +559,53 @@ export const shellRunTool: Tool = {
         };
       }
 
-      // 执行命令 (foreground mode)
+      // Foreground mode: use persistent shell or one-shot execution
+      const {
+        persistent = true, // Default to persistent shell
+      } = input as ExtendedShellRunInput;
+
+      if (persistent) {
+        // Use persistent shell session (Codex-like)
+        try {
+          const shell = shellSessionManager.getOrCreate({
+            taskId: context.taskId,
+            agentId: context.agentId,
+            cwd: context.workDir, // Use workDir for session creation
+          });
+          
+          // Pass per-call cwd and env to ensure consistent behavior
+          const result = await shell.execute(command, {
+            cwd: workingDir,  // May differ from session default
+            env: context.env, // Inject context environment variables
+            timeout,
+          });
+          
+          // Truncate output if needed
+          const stdoutTruncated = result.stdout.length > maxOutput;
+          const stderrTruncated = result.stderr.length > maxOutput;
+          
+          if (result.timedOut) {
+            console.warn(`[shell_run] Command timed out after ${timeout}ms: ${command.substring(0, 50)}...`);
+          }
+          
+          return {
+            success: result.exitCode === 0,
+            data: {
+              stdout: stdoutTruncated ? truncateOutput(result.stdout, maxOutput) : result.stdout,
+              stderr: stderrTruncated ? truncateOutput(result.stderr, maxOutput) : result.stderr,
+              exitCode: result.exitCode,
+              stdoutTruncated,
+              stderrTruncated,
+            },
+          };
+        } catch (shellError) {
+          // Fallback to one-shot execution if persistent shell fails
+          console.warn(`[shell_run] Persistent shell failed, falling back to one-shot: ${(shellError as Error).message}`);
+          // Fall through to one-shot execution below
+        }
+      }
+
+      // One-shot execution (fallback or persistent=false)
       const result = await executeCommand(command, workingDir, timeout, context);
 
       // 截断输出

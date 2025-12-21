@@ -25,6 +25,7 @@ export type {
   // Prompt 类型
   PromptVariables,
   PatchPromptVariables,
+  SubtaskRefinePromptVariables,
   ErrorFeedbackVariables,
 } from './types';
 
@@ -52,12 +53,16 @@ export {
 export {
   // 输出格式类型
   type PlanningOutputFormat,
+  type SubtaskRefineOutputFormat,
   // Prompt 模板
   PLANNING_SYSTEM_PROMPT,
   PATCH_PLANNING_SYSTEM_PROMPT,
+  SUBTASK_REFINE_SYSTEM_PROMPT,
   generatePlanningUserPrompt,
   generatePatchPlanningUserPrompt,
+  generateSubtaskRefineUserPrompt,
   generateErrorFeedbackPrompt,
+  generateSubtaskRefineErrorFeedbackPrompt,
   // 工具函数
   extractJsonFromResponse,
   convertToSubTasks,
@@ -91,6 +96,8 @@ export {
   type PlannerOptions,
   type PlanResult,
   type DegradationStrategy,
+  type SubtaskRefineInput,
+  type SubtaskRefineResult,
 } from './planner';
 
 // ============================================================================

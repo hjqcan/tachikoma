@@ -22,7 +22,7 @@ import { noopLogger, createTracer, noopMetrics, WORKER_METRICS } from '../observ
 import type { MCPClientManager } from '../mcp';
 import { MCPToolRegistrar } from '../mcp';
 import { globalToolRegistry } from '../tools/registry';
-import { cleanupBackgroundProcessesForTask } from '../tools/core/shell-run';
+import { cleanupAllForTask } from '../tools/core/shell-run';
 import { cleanupServersForTask } from '../tools/core/dev-server';
 
 // ============================================================================
@@ -453,7 +453,8 @@ export class WorkerExecutor {
       throw error;
     } finally {
       try {
-        cleanupBackgroundProcessesForTask(subtask.id);
+        // Cleanup all shell resources (background processes + persistent shell sessions)
+        await cleanupAllForTask(subtask.id);
         cleanupServersForTask(subtask.id);
       } catch (cleanupError) {
         this.logger.warn('Failed to cleanup task processes', {
