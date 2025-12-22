@@ -30,6 +30,7 @@ import type { RetryPolicy, Tool } from '../../types';
 import { isKeyDecision, isKeyDecisionAsync } from '../key-decision';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
+import { createSkillsManager } from '../engines';
 
 // 共享基础层
 import {
@@ -483,6 +484,10 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       ...options.resourceLimits,
     };
     let totalToolCalls = 0;
+    const skillsManager = createSkillsManager(
+      this.config.skillsConfig,
+      options.workDir ?? process.cwd()
+    );
 
     try {
       // 集成外部 abortSignal（如果提供）
@@ -527,8 +532,10 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             this.config.memoryConfig?.retrievalCooldownMs ?? 10000
           );
 
-          // 构建系统提示
-          const systemPrompt = this.buildSystemPrompt(memoryContext);
+          // 构建系统提示（注入 skills 元数据）
+          const systemPrompt = await skillsManager.renderSystemPromptSection(
+            this.buildSystemPrompt(memoryContext)
+          );
 
           // 转换工具为 SDK tool() 格式
           const sdkTools = this.convertToolsToSDKFormat(

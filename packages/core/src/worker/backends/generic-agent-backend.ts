@@ -367,6 +367,9 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       timestamp: Date.now(),
     };
 
+    // Ensure skills are refreshed per task (logs loaded skills)
+    this.skillsManager.reload();
+
     // 构建资源限制
     const limits = {
       ...DEFAULT_RESOURCE_LIMITS,

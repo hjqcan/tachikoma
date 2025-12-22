@@ -542,6 +542,12 @@ export interface WorkerBackendBaseConfig {
    * 启用后将优先使用 OpenAI Agents SDK 后端
    */
   openaiCompatible?: boolean;
+  /**
+   * Skills 发现配置
+   *
+   * 如果提供，将在启动时加载 Skills 并注入到 system prompt
+   */
+  skillsConfig?: SkillDiscoveryConfig;
 }
 
 /**
@@ -611,13 +617,6 @@ export interface GenericBackendConfig extends WorkerBackendBaseConfig {
    * 支持自动压缩/摘要、KV 缓存优化和笔记系统
    */
   promptConfig?: PromptContextConfig;
-  /**
-   * Skills 发现配置
-   *
-   * 如果提供，将在启动时加载 Skills 并注入到 system prompt
-   * Skills 采用渐进披露机制，仅元数据始终加载
-   */
-  skillsConfig?: SkillDiscoveryConfig;
   /**
    * Memory 系统配置
    *

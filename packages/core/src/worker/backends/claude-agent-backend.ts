@@ -21,6 +21,7 @@ import { MemoryService } from '../../memory';
 import { BaseWorkerBackend, ToolCallBudgetExceededError, isRetryableError } from './base-backend';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
+import { createSkillsManager, type SkillsManager } from '../engines';
 
 // ============================================================================
 // Claude Agent SDK 类型（延迟导入）
@@ -240,6 +241,10 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     }
 
     let attempt = 0;
+    const skillsManager = createSkillsManager(
+      this.config.skillsConfig,
+      options.workDir ?? process.cwd()
+    );
 
     try {
       while (true) {
@@ -259,7 +264,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           };
 
           // 构建 SDK 配置 (inject memories into systemPrompt, not user prompt)
-          const sdkOptions = await this.buildSDKOptions(tools, options, memoryContext);
+          const sdkOptions = await this.buildSDKOptions(tools, options, memoryContext, skillsManager);
             
           const taskPrompt = buildTaskPrompt(task, tools, {
             useNativeToolCalls: true,
@@ -492,7 +497,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
   private async buildSDKOptions(
     tools: Tool[],
     options: WorkerExecutionOptions,
-    memoryContext?: string
+    memoryContext?: string,
+    skillsManager?: SkillsManager
   ): Promise<Record<string, unknown>> {
     const sdkConfig = this.config.sdkOptions || {};
 
@@ -509,10 +515,13 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     const mcpServers = await this.toolBridge.convertToMCPServers(tools, overrides);
 
     // Build unified system prompt with memory context (if available)
-    const systemPrompt = buildWorkerSystemPrompt({
+    let systemPrompt = buildWorkerSystemPrompt({
       memoryContext,
       extraSystemPrompt: sdkConfig.systemPrompt,
     });
+    if (skillsManager) {
+      systemPrompt = await skillsManager.renderSystemPromptSection(systemPrompt);
+    }
 
     return {
       // 工作目录

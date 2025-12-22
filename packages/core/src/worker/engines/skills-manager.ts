@@ -71,7 +71,11 @@ export class SkillsManager {
       this.loadErrors = outcome.errors;
       
       if (this.skills.length > 0) {
-        console.debug(`[SkillsManager] Loaded ${this.skills.length} skills`);
+        const maxPreview = 12;
+        const names = this.skills.slice(0, maxPreview).map((skill) => skill.name);
+        const remaining = this.skills.length - names.length;
+        const suffix = remaining > 0 ? `, +${remaining} more` : '';
+        console.debug(`[SkillsManager] Loaded ${this.skills.length} skills: ${names.join(', ')}${suffix}`);
       }
       if (this.loadErrors.length > 0) {
         console.warn('[SkillsManager] Skill loading errors:', this.loadErrors);
