@@ -21,7 +21,7 @@ import {
   DEFAULT_RESOURCE_LIMITS, 
   DEFAULT_PARALLEL_EXECUTION_CONFIG,
 } from '../types';
-import type { Tool } from '../../types';
+import type { Tool, ExecutionContext } from '../../types';
 import type { LLMClient, LLMRequest } from '../../planner/types';
 import type { Sandbox, SandboxConfig } from '../../sandbox';
 import { createLLMClient } from '../../planner/llm-client';
@@ -32,7 +32,7 @@ import {
   createSandboxToolExecutor,
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
-import { isKeyDecision } from '../key-decision';
+import { isKeyDecisionAsync } from '../key-decision';
 import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 // Prompt 上下文工程模块（内部）
 import {
@@ -312,6 +312,9 @@ export class GenericAgentBackend extends BaseWorkerBackend {
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
+
+    // 构建审批用执行上下文（每个任务只初始化一次）
+    const approvalContext = this.buildExecutionContext(task, options);
 
     // 启动协作管理器并注入 peer-assist 工具（仅首次执行时启动）
     let tools = providedTools;
@@ -600,7 +603,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
           pendingToolCalls = [];
 
           // 获取执行器回调
-          const callbacks = this.createToolExecutorCallbacks(tools, options);
+          const callbacks = this.createToolExecutorCallbacks(tools, options, approvalContext);
 
           // 获取并行执行配置
           const parallelConfig = options.parallelExecution ?? DEFAULT_PARALLEL_EXECUTION_CONFIG;
@@ -621,7 +624,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
           // =============================================
           if (parallel.length > 0) {
             // 过滤需要审批的工具
-            const { safe, needsApproval } = filterApprovalRequired(parallel, callbacks);
+            const { safe, needsApproval } = await filterApprovalRequired(parallel, callbacks);
             
             if (needsApproval.length > 0) {
               console.debug(
@@ -888,7 +891,7 @@ When the task is complete, provide a final summary of what was accomplished.`));
 	            timestamp: Date.now(),
 	          };
 
-            const graceCallbacks = this.createToolExecutorCallbacks(tools, options);
+            const graceCallbacks = this.createToolExecutorCallbacks(tools, options, approvalContext);
             const iterator = executeSequentialGenerator(pendingToolCalls, graceCallbacks, {
               maxToolCalls: limits.maxToolCalls,
               currentToolCount: totalToolCalls
@@ -1246,7 +1249,8 @@ When the task is complete, provide a final summary of what was accomplished.`));
    */
   private createToolExecutorCallbacks(
     tools: Tool[],
-    options: WorkerExecutionOptions
+    options: WorkerExecutionOptions,
+    executionContext: ExecutionContext
   ): ToolExecutorCallbacks {
     return {
       executeTool: async (call) => {
@@ -1256,12 +1260,13 @@ When the task is complete, provide a final summary of what was accomplished.`));
           output: result.output,
         };
       },
-      requiresApproval: (call) => {
+      requiresApproval: async (call) => {
         const tool = tools.find((t) => t.name === call.name);
-        const decision = isKeyDecision(
+        const decision = await isKeyDecisionAsync(
           call.name, 
           call.input, 
           tool, 
+          executionContext,
           options.keyDecisionPolicy, 
           options.riskPolicy, 
           options.unknownToolPolicy

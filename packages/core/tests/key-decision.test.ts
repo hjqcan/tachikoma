@@ -11,6 +11,7 @@ import {
   isExternalApiCall,
   isHighRiskTool,
   getRiskScore,
+  checkToolMutating,
 } from '../src/worker/key-decision';
 import type { Tool } from '../src/types';
 
@@ -242,6 +243,196 @@ describe('key-decision', () => {
       expect(getRiskScore('medium')).toBe(2);
       expect(getRiskScore('high')).toBe(3);
       expect(getRiskScore('critical')).toBe(4);
+    });
+  });
+
+  // ==========================================================================
+  // checkToolMutating
+  // ==========================================================================
+  describe('checkToolMutating', () => {
+    const mockContext = {
+      taskId: 'test-task',
+      agentId: 'test-agent',
+      traceId: 'test-trace',
+      workDir: '/tmp',
+      env: {},
+    };
+
+    test('should return null when tool has no isMutating', async () => {
+      const tool: Tool = {
+        name: 'test',
+        description: 'Test tool',
+        inputSchema: {},
+        async execute() { return { success: true }; },
+      };
+      const result = await checkToolMutating(tool, {}, mockContext);
+      expect(result).toBe(null);
+    });
+
+    test('should return null when tool is undefined', async () => {
+      const result = await checkToolMutating(undefined, {}, mockContext);
+      expect(result).toBe(null);
+    });
+
+    test('should call isMutating when defined (sync)', async () => {
+      const tool: Tool = {
+        name: 'test',
+        description: 'Test tool',
+        inputSchema: {},
+        isMutating: (input) => (input as { safe?: boolean }).safe === true ? false : true,
+        async execute() { return { success: true }; },
+      };
+      expect(await checkToolMutating(tool, { safe: true }, mockContext)).toBe(false);
+      expect(await checkToolMutating(tool, { safe: false }, mockContext)).toBe(true);
+    });
+
+    test('should handle async isMutating', async () => {
+      const tool: Tool = {
+        name: 'test',
+        description: 'Test tool',
+        inputSchema: {},
+        isMutating: async () => false,
+        async execute() { return { success: true }; },
+      };
+      expect(await checkToolMutating(tool, {}, mockContext)).toBe(false);
+    });
+
+    test('should return true on isMutating error (conservative)', async () => {
+      const tool: Tool = {
+        name: 'test',
+        description: 'Test tool',
+        inputSchema: {},
+        isMutating: () => { throw new Error('Test error'); },
+        async execute() { return { success: true }; },
+      };
+      expect(await checkToolMutating(tool, {}, mockContext)).toBe(true);
+    });
+  });
+
+  // ==========================================================================
+  // shell_run isMutating
+  // ==========================================================================
+  describe('shell_run isMutating', () => {
+    // Import shellRunTool dynamically to test
+    test('should detect safe commands', async () => {
+      const { shellRunTool } = await import('../src/tools/core/shell-run');
+      
+      // Safe commands should return false (no mutation)
+      expect(shellRunTool.isMutating?.({ command: 'ls -la' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'cat package.json' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'git status' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'git log --oneline' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'npm list' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'node --version' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'pwd' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'echo hello' }, {} as never)).toBe(false);
+    });
+
+    test('should detect mutating commands', async () => {
+      const { shellRunTool } = await import('../src/tools/core/shell-run');
+      
+      // Mutating commands should return true
+      expect(shellRunTool.isMutating?.({ command: 'rm file.txt' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'npm install' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'git commit -m "test"' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'mv a.txt b.txt' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'touch newfile.txt' }, {} as never)).toBe(true);
+    });
+
+    test('should handle empty or missing command', async () => {
+      const { shellRunTool } = await import('../src/tools/core/shell-run');
+      
+      // No command should return true (conservative)
+      expect(shellRunTool.isMutating?.({}, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: '' }, {} as never)).toBe(true);
+    });
+
+    test('should detect dangerous operators (bypass prevention)', async () => {
+      const { shellRunTool } = await import('../src/tools/core/shell-run');
+      
+      // Commands with dangerous operators should return true even if starting with safe command
+      expect(shellRunTool.isMutating?.({ command: 'cat file.txt > output.txt' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'ls -la | xargs rm' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'git status && rm -rf .' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'echo hello; rm file.txt' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'cat $(rm important.txt)' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'ls `rm -rf /`' }, {} as never)).toBe(true);
+    });
+  });
+
+  describe('isKeyDecisionAsync', () => {
+    const mockContext = {
+      taskId: 'test-task',
+      agentId: 'test-agent',
+      traceId: 'test-trace',
+      workDir: '/tmp',
+      env: {},
+    };
+
+    test('should skip approval when isMutating returns false', async () => {
+      const { isKeyDecisionAsync } = await import('../src/worker/key-decision');
+      const tool: Tool = {
+        name: 'test_tool',
+        description: 'Test tool',
+        inputSchema: { type: 'object' },
+        isMutating: () => false,  // Explicitly non-mutating
+        execute: async () => ({ success: true }),
+      };
+      
+      const result = await isKeyDecisionAsync(
+        'test_tool',
+        {},
+        tool,
+        mockContext
+      );
+      
+      expect(result.isKeyDecision).toBe(false);
+    });
+
+    test('should use static rules when isMutating returns true', async () => {
+      const { isKeyDecisionAsync } = await import('../src/worker/key-decision');
+      const tool: Tool = {
+        name: 'shell_run',  // High-risk tool name
+        description: 'Test tool',
+        inputSchema: { type: 'object' },
+        isMutating: () => true,  // Explicitly mutating
+        execute: async () => ({ success: true }),
+      };
+      
+      const result = await isKeyDecisionAsync(
+        'shell_run',
+        {},
+        tool,
+        mockContext,
+        { enabled: true },
+        { highRiskTools: ['shell_run'], dangerousPatterns: [] }  // Custom risk policy
+      );
+      
+      // Should trigger high-risk tool detection
+      expect(result.isKeyDecision).toBe(true);
+    });
+
+    test('should use static rules when isMutating is not defined', async () => {
+      const { isKeyDecisionAsync } = await import('../src/worker/key-decision');
+      const tool: Tool = {
+        name: 'shell_run',
+        description: 'Test tool',
+        inputSchema: { type: 'object' },
+        // No isMutating defined
+        execute: async () => ({ success: true }),
+      };
+      
+      const result = await isKeyDecisionAsync(
+        'shell_run',
+        {},
+        tool,
+        mockContext,
+        { enabled: true },
+        { highRiskTools: ['shell_run'], dangerousPatterns: [] }  // Custom risk policy
+      );
+      
+      // Should fall back to static rules and detect high-risk tool
+      expect(result.isKeyDecision).toBe(true);
     });
   });
 });

@@ -38,6 +38,7 @@ import { createSkillTool } from './core/create-skill';
 export type {
   // 工具结果类型
   ToolResult,
+  ToolResultMeta,
   // 文件系统工具类型
   FileReadInput,
   FileReadOutput,

@@ -416,6 +416,28 @@ export interface Tool {
    */
   isCommandBased?: boolean;
 
+  /**
+   * 动态判断调用是否有副作用（可选）
+   * 
+   * 允许工具根据具体输入参数判断是否为变更操作。
+   * 这对于像 shell_run 这样的工具特别有用，可以识别只读命令（如 ls、cat）
+   * 和变更命令（如 rm、mv）。
+   * 
+   * @param input - 工具输入参数
+   * @param context - 执行上下文
+   * @returns 返回 true 表示有副作用（可能需要审批），false 表示无副作用（可安全执行）
+   *          未定义此方法时，使用静态规则判断
+   * 
+   * @example
+   * ```ts
+   * isMutating: (input) => {
+   *   const cmd = (input as any).command?.toLowerCase();
+   *   return !KNOWN_SAFE_COMMANDS.some(safe => cmd.startsWith(safe));
+   * }
+   * ```
+   */
+  isMutating?: (input: unknown, context: ExecutionContext) => boolean | Promise<boolean>;
+
   // ========== 执行方法 ==========
   
   /** 执行工具 */

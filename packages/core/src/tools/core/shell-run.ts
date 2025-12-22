@@ -340,6 +340,57 @@ function isDangerousCommand(command: string): boolean {
   return DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
 }
 
+// =============================================================================
+// Known Safe Commands (Codex-inspired read-only commands)
+// =============================================================================
+
+/**
+ * 已知安全命令（只读操作）
+ * 命令以这些前缀开头时，不需要审批
+ * 参考 Codex CLI 的 is_known_safe_command()
+ */
+const KNOWN_SAFE_COMMANDS = [
+  // 文件系统查看（只读）
+  'ls', 'cat', 'head', 'tail', 'less', 'more',
+  'find', 'locate', 'which', 'whereis', 'file',
+  'stat', 'wc', 'tree', 'du', 'df',
+  
+  // 系统信息
+  'pwd', 'echo', 'date', 'whoami', 'hostname', 'uname',
+  'uptime', 'free', 'top', 'htop', 'ps', 'id', 'groups',
+  'printenv', 'env',
+  
+  // 网络查看（只读）
+  'ping', 'host', 'nslookup', 'dig', 'curl --head', 'wget --spider',
+  
+  // Node/Bun 版本信息
+  'node --version', 'node -v', 'npm --version', 'npm -v',
+  'bun --version', 'bun -v', 'yarn --version',
+  'npx --version', 'pnpm --version',
+  
+  // 包信息查看（只读）
+  'npm list', 'npm ls', 'npm outdated', 'npm view', 'npm info',
+  'npm show', 'npm search', 'npm help',
+  'bun pm ls', 'bun pm cache',
+  'yarn list', 'yarn info', 'yarn why',
+  'pnpm list', 'pnpm ls',
+  
+  // Git 只读操作
+  'git status', 'git log', 'git diff', 'git show',
+  'git branch', 'git remote', 'git tag',
+  'git rev-parse', 'git describe', 'git config --list',
+  'git config --get', 'git ls-files', 'git ls-tree',
+  'git blame', 'git shortlog', 'git reflog',
+  
+  // 文本处理（只读）
+  'grep', 'awk', 'sed -n', 'sort', 'uniq', 'diff', 'comm',
+  'cut', 'tr', 'fold', 'fmt', 'nl', 'pr',
+  
+  // 压缩查看（只读）
+  'tar -t', 'tar --list', 'unzip -l', 'zipinfo',
+  'gzip -l', 'bzip2 -t', 'xz -l',
+];
+
 /**
  * 执行命令
  */
@@ -640,5 +691,46 @@ export const shellRunTool: Tool = {
         error: err.message || 'Unknown error executing command',
       };
     }
+  },
+
+  /**
+   * 动态判断命令是否有副作用
+   * 
+   * 只读命令（如 ls、cat、git status）返回 false，无需审批
+   * 变更命令返回 true，走正常审批流程
+   * 
+   * ⚠️ 检测管道、重定向、命令串联以防止绕过
+   */
+  isMutating(input: unknown): boolean {
+    const { command } = input as ExtendedShellRunInput;
+    if (!command) return true; // 无命令时保守处理
+    
+    const trimmedCmd = command.trim();
+    
+    // ⚠️ 检测危险的 shell 操作符（可能绕过安全命令检测）
+    // 这些操作符可能导致写入文件或执行多个命令
+    const DANGEROUS_OPERATORS = [
+      '>', '>>', '|', '&&', '||', ';',
+      '$(', '`',    // 命令替换
+      'xargs',      // 可执行任意命令
+      'eval',       // 动态执行
+    ];
+    
+    for (const op of DANGEROUS_OPERATORS) {
+      if (trimmedCmd.includes(op)) {
+        return true; // 有危险操作符，保守处理
+      }
+    }
+    
+    const lowerCmd = trimmedCmd.toLowerCase();
+    
+    // 检查是否匹配已知安全命令
+    for (const safeCmd of KNOWN_SAFE_COMMANDS) {
+      if (lowerCmd === safeCmd || lowerCmd.startsWith(safeCmd + ' ')) {
+        return false; // 无副作用
+      }
+    }
+    
+    return true; // 默认有副作用
   },
 };

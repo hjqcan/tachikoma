@@ -4,7 +4,7 @@
  * 判断工具调用是否为关键决策点，需要审批
  */
 
-import type { Tool } from '../types';
+import type { Tool, ExecutionContext } from '../types';
 import type {
   ApprovalCategory,
   KeyDecisionPolicy,
@@ -47,6 +47,37 @@ const NOT_KEY_DECISION: KeyDecisionResult = {
   reason: 'Not a key decision',
   riskLevel: 'low',
 };
+
+// ============================================================================
+// 动态 isMutating 检查
+// ============================================================================
+
+/**
+ * 检查工具的动态 isMutating 判断
+ * 
+ * 调用工具的 isMutating 方法（如果定义），判断当前调用是否有副作用。
+ * 
+ * @param tool - 工具定义
+ * @param input - 工具输入
+ * @param context - 执行上下文
+ * @returns null 表示未定义 isMutating（使用静态规则），true/false 表示动态判断结果
+ */
+export async function checkToolMutating(
+  tool: Tool | undefined,
+  input: Record<string, unknown>,
+  context: ExecutionContext
+): Promise<boolean | null> {
+  if (!tool?.isMutating) {
+    return null; // 未定义，返回 null 让调用方使用静态规则
+  }
+  
+  try {
+    return await tool.isMutating(input, context);
+  } catch {
+    // isMutating 执行出错，保守处理，视为有副作用
+    return true;
+  }
+}
 
 // ============================================================================
 // 检测函数
@@ -370,4 +401,41 @@ export function getRiskScore(level: RiskLevel): number {
     default:
       return 0;
   }
+}
+
+/**
+ * 异步版本的 isKeyDecision
+ * 
+ * 集成了 checkToolMutating 动态判断：
+ * - 如果工具的 isMutating 返回 false，视为只读操作，跳过审批
+ * - 如果返回 true 或未定义，使用常规静态规则判断
+ * 
+ * @param toolName - 工具名称
+ * @param input - 工具输入
+ * @param tool - 工具定义（可选）
+ * @param context - 执行上下文（用于 isMutating 调用）
+ * @param policy - 关键决策策略
+ * @param riskPolicy - 风险策略
+ * @param unknownToolPolicy - 未知工具策略
+ * @returns 检测结果
+ */
+export async function isKeyDecisionAsync(
+  toolName: string,
+  input: Record<string, unknown>,
+  tool: Tool | undefined,
+  context: ExecutionContext,
+  policy?: Partial<KeyDecisionPolicy>,
+  riskPolicy?: RiskPolicy,
+  unknownToolPolicy?: 'approve' | 'reject' | 'require_approval'
+): Promise<KeyDecisionResult> {
+  // 1. 先检查动态 isMutating
+  const mutatingResult = await checkToolMutating(tool, input, context);
+  
+  // 如果明确返回 false（只读操作），跳过审批
+  if (mutatingResult === false) {
+    return NOT_KEY_DECISION;
+  }
+  
+  // 2. 使用常规静态规则判断
+  return isKeyDecision(toolName, input, tool, policy, riskPolicy, unknownToolPolicy);
 }

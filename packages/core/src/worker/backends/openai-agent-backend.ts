@@ -26,7 +26,7 @@ import type {
   RiskPolicy,
 } from '../types';
 import type { RetryPolicy, Tool } from '../../types';
-import { isKeyDecision } from '../key-decision';
+import { isKeyDecision, isKeyDecisionAsync } from '../key-decision';
 import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
 
 // 共享基础层
@@ -947,12 +947,14 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         needsApproval: this.needsApproval(options, tachikomaTool.name)
           ? async (_context: unknown, params: unknown) => {
               // 用实际输入判断
-              const inputDecision = isKeyDecision(
+              const inputDecision = await isKeyDecisionAsync(
                 tachikomaTool.name,
                 params as Record<string, unknown>,
                 tachikomaTool,
+                executionContext,
                 options.keyDecisionPolicy,
-                options.riskPolicy
+                options.riskPolicy,
+                options.unknownToolPolicy
               );
               return inputDecision.isKeyDecision;
             }

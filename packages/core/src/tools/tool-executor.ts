@@ -113,6 +113,8 @@ export class ToolExecutor {
         meta: {
           ...(toolResult.meta || {}),
           executionTime: duration,
+          toolName: tool.name,
+          timestamp: Date.now(),
         },
       };
     } catch (error) {

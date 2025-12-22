@@ -128,6 +128,26 @@ export enum ToolCategory {
 }
 
 /**
+ * 工具执行元数据 (Codex-inspired)
+ * 
+ * 提供执行指标和诊断信息，不污染业务数据
+ */
+export interface ToolResultMeta {
+  /** 执行时间（毫秒） */
+  executionTime?: number;
+  /** 退出码（命令类工具） */
+  exitCode?: number;
+  /** 输出是否被截断 */
+  truncated?: boolean;
+  /** 工具名称 */
+  toolName?: string;
+  /** 执行时间戳 */
+  timestamp?: number;
+  /** 其他元数据 */
+  [key: string]: unknown;
+}
+
+/**
  * 工具执行结果
  */
 export interface ToolResult<T = unknown> {
@@ -138,12 +158,7 @@ export interface ToolResult<T = unknown> {
   /** 失败时的错误信息 */
   error?: string;
   /** 元数据（执行指标等，不污染data） */
-  meta?: {
-    /** 执行时间（毫秒） */
-    executionTime?: number;
-    /** 其他元数据 */
-    [key: string]: unknown;
-  };
+  meta?: ToolResultMeta;
 }
 
 /**

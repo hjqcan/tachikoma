@@ -64,12 +64,12 @@ export interface ToolExecutorCallbacks {
   /**
    * 检查工具是否需要审批
    */
-  requiresApproval: (call: ParsedToolCall) => {
+  requiresApproval: (call: ParsedToolCall) => Promise<{
     required: boolean;
     reason?: string;
     category?: string;
     riskLevel?: string;
-  };
+  }>;
   
   /**
    * 等待审批结果
@@ -118,7 +118,7 @@ export async function executeParallel(
   const needsApproval: ParsedToolCall[] = [];
 
   for (const call of calls) {
-    const approvalCheck = callbacks.requiresApproval(call);
+    const approvalCheck = await callbacks.requiresApproval(call);
     if (approvalCheck.required) {
       needsApproval.push(call);
     } else {
@@ -198,15 +198,15 @@ export async function executeParallel(
 /**
  * 获取需要转移到顺序队列的工具调用
  */
-export function filterApprovalRequired(
+export async function filterApprovalRequired(
   calls: ParsedToolCall[],
   callbacks: Pick<ToolExecutorCallbacks, 'requiresApproval'>
-): { safe: ParsedToolCall[]; needsApproval: ParsedToolCall[] } {
+): Promise<{ safe: ParsedToolCall[]; needsApproval: ParsedToolCall[] }> {
   const safe: ParsedToolCall[] = [];
   const needsApproval: ParsedToolCall[] = [];
 
   for (const call of calls) {
-    const check = callbacks.requiresApproval(call);
+    const check = await callbacks.requiresApproval(call);
     if (check.required) {
       needsApproval.push(call);
     } else {
@@ -266,7 +266,7 @@ export async function executeSequential(
     callbacks.onToolStart?.(call);
 
     // 检查审批
-    const approvalCheck = callbacks.requiresApproval(call);
+    const approvalCheck = await callbacks.requiresApproval(call);
     if (approvalCheck.required) {
       const approved = await callbacks.waitForApproval(
         call,
@@ -364,7 +364,7 @@ export async function* executeSequentialGenerator(
 
     yield { type: 'tool_start', call };
 
-    const approvalCheck = callbacks.requiresApproval(call);
+    const approvalCheck = await callbacks.requiresApproval(call);
     if (approvalCheck.required) {
       // Yield approval required event and wait for input
       // Consumer should call next(true/false)
