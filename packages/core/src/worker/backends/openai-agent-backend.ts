@@ -43,11 +43,22 @@ import {
 } from './base-backend';
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
-  maxRetries: 1,
+  maxRetries: 5,  // Codex-style: allow multiple reconnection attempts
   baseDelay: 1000,
   backoffFactor: 2,
   maxDelay: 10000,
 };
+
+function isConnectionError(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    message.includes('econnreset') ||
+    message.includes('socket connection was closed') ||
+    message.includes('connection error') ||
+    message.includes('econnrefused') ||
+    message.includes('etimedout')
+  );
+}
 
 function resolveRetryPolicy(policy?: RetryPolicy): RetryPolicy {
   if (!policy) return DEFAULT_RETRY_POLICY;
@@ -463,6 +474,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     const retryPolicy = resolveRetryPolicy(options.retryPolicy);
     const maxRetries = Math.max(0, retryPolicy.maxRetries);
     let attempt = 0;
+    const toolResultCache = new Map<string, string>();
 
     try {
       // 集成外部 abortSignal（如果提供）
@@ -481,6 +493,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
       while (true) {
         let toolCallsInAttempt = 0;
+        const useToolResultCache = attempt > 0;
 
         try {
           // 发出初始化状态
@@ -517,7 +530,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             task,
             () => {
               toolCallsInAttempt += 1;
-            }
+            },
+            toolResultCache,
+            useToolResultCache
           );
 
           // 创建 Agent 实例
@@ -736,10 +751,12 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         } catch (error) {
           const err = error instanceof Error ? error : new Error(String(error));
           const retryable = isRetryableError(err);
+          const connectionError = isConnectionError(err);
+          
           const shouldRetry =
             retryable &&
             attempt < maxRetries &&
-            toolCallsInAttempt === 0 &&
+            (toolCallsInAttempt === 0 || connectionError) &&
             !this.executionController.isAborted &&
             options.abortSignal?.aborted !== true;
 
@@ -747,24 +764,39 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             throw err;
           }
 
-          const delay = calculateRetryDelay(retryPolicy, attempt + 1);
-          yield createThinkingMessage(
-            `Transient error: ${err.message}. Retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries}).`
-          );
+          attempt += 1;
+          const delay = calculateRetryDelay(retryPolicy, attempt);
+          
+          // Codex-style retrying/reconnecting message
+          const actionLabel = connectionError ? 'reconnecting' : 'retrying';
+          const reconnectMsg = `${actionLabel} ${attempt}/${maxRetries}...`;
+          console.log(`[OpenAIAgentsBackend] ${reconnectMsg}`);
+          yield createStatusMessage('initializing');
+          yield createThinkingMessage(reconnectMsg);
+          
           await new Promise(resolve => setTimeout(resolve, delay));
 
           if (this.executionController.isAborted) {
             yield createStatusMessage('interrupted');
             return;
           }
-
-          attempt += 1;
         }
       }
     } catch (error) {
       const err = error as Error;
-      console.error('[OpenAIAgentsBackend] Execution error:', err);
-      yield createErrorMessage(err.message, 'EXECUTION_ERROR', isRetryableError(err));
+      // 不再直接 console.error，而是通过消息系统传递
+      const retryable = isRetryableError(err);
+      const connectionError = isConnectionError(err);
+      if (connectionError) {
+        console.warn(`[OpenAIAgentsBackend] Connection failed after retries: ${err.message}`);
+      } else {
+        console.error('[OpenAIAgentsBackend] Execution error:', err);
+      }
+      yield createErrorMessage(
+        err.message,
+        connectionError ? 'CONNECTION_ERROR' : 'EXECUTION_ERROR',
+        retryable
+      );
       yield createStatusMessage('failed');
     } finally {
       if (options.abortSignal && abortHandler) {
@@ -854,7 +886,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     sdkTool: SDKToolFunction,
     options: WorkerExecutionOptions,
     task: WorkerTask,
-    onToolCall?: () => void
+    onToolExecute?: () => void,
+    toolResultCache?: Map<string, string>,
+    useToolResultCache = false
   ): unknown[] {
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
@@ -873,23 +907,39 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         parameters: zodParameters,
         execute: async (params: unknown) => {
           // 调用 Tachikoma Tool.execute，使用 try/catch 封装错误
+          let cacheKey: string | null = null;
           try {
-            onToolCall?.();
+            cacheKey = toolResultCache
+              ? this.buildToolCallKey(tachikomaTool.name, params)
+              : null;
+            if (useToolResultCache && cacheKey && toolResultCache?.has(cacheKey)) {
+              return toolResultCache.get(cacheKey) as string;
+            }
+
+            onToolExecute?.();
             const result = await tachikomaTool.execute(
               params,
               executionContext
             );
             // SDK 要求返回 string
-            return typeof result === 'string' ? result : JSON.stringify(result);
+            const output = typeof result === 'string' ? result : JSON.stringify(result);
+            if (cacheKey) {
+              toolResultCache?.set(cacheKey, output);
+            }
+            return output;
           } catch (error) {
             // 返回结构化错误
             const err = error as Error;
             console.error(`[OpenAIAgentsBackend] Tool ${tachikomaTool.name} error:`, err);
-            return JSON.stringify({
+            const output = JSON.stringify({
               success: false,
               error: err.message,
               tool: tachikomaTool.name,
             });
+            if (cacheKey) {
+              toolResultCache?.set(cacheKey, output);
+            }
+            return output;
           }
         },
         // 设置审批标记

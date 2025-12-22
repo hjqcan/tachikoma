@@ -513,7 +513,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
     this.executionController.abort();
   }
 
-  private buildToolCallKey(toolName: string, input: unknown): string {
+  protected buildToolCallKey(toolName: string, input: unknown): string {
     const payload = `${toolName}:${this.stableStringify(input)}`;
     return this.hashString(payload);
   }
