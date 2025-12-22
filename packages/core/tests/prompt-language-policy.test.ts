@@ -68,6 +68,7 @@ describe('Prompt language policy (user-language internal injections)', () => {
       async generateSummary(): Promise<StructuredSummary> {
         return {
           userGoal: '帮助用户',
+          constraints: [],
           completedSteps: [],
           keyFindings: [],
           modifiedFiles: [],

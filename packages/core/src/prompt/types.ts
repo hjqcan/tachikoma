@@ -237,6 +237,8 @@ export interface SummarizationConfig {
 export interface StructuredSummary {
   /** 用户目标 */
   userGoal: string;
+  /** 关键约束/偏好 */
+  constraints: string[];
   /** 已完成的关键步骤 */
   completedSteps: string[];
   /** 关键发现/结果 */

@@ -392,3 +392,10 @@ export {
   BUILTIN_TOPICS,
   DEFAULT_COLLABORATION_CONFIG,
 } from './collaboration';
+
+// ============================================================================
+// Eval 模块
+// ============================================================================
+
+export * as eval from './eval';
+export * from './eval';

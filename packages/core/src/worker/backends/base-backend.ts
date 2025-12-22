@@ -355,6 +355,18 @@ class ToolCallLoopError extends Error {
 }
 
 /**
+ * Tool call budget error
+ *
+ * Emitted when tool calls exceed the configured limit.
+ */
+export class ToolCallBudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ToolCallBudgetExceededError';
+  }
+}
+
+/**
  * SDK 可用性检查器
  *
  * 缓存动态 import 结果

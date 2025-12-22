@@ -33,7 +33,8 @@ import {
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
 import { isKeyDecisionAsync } from '../key-decision';
-import { WORKER_BEHAVIOR_GUIDELINES_EN } from '../prompts/behavior-guidelines';
+import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
+import { buildTaskPrompt } from '../prompts/task-prompt';
 // Prompt 上下文工程模块（内部）
 import {
   createPromptContextEngine,
@@ -92,12 +93,7 @@ import {
 /**
  * 默认系统提示
  */
-const DEFAULT_SYSTEM_PROMPT = `You are a helpful AI assistant that can use tools to accomplish tasks.
-When given a task, think step by step about how to accomplish it, then use the available tools.
-Always provide clear explanations of what you're doing and why.
-
-${WORKER_BEHAVIOR_GUIDELINES_EN}
-`;
+const DEFAULT_SYSTEM_PROMPT = buildWorkerSystemPrompt();
 
 // ============================================================================
 // 错误类型
@@ -430,30 +426,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     }
 
     // 构建工具描述与原生工具集（Function Calling）
-    const toolDescriptions = this.buildToolDescriptions(tools);
     const nativeToolSet = convertToolsToAITools(tools);
     const useNativeToolCalls = Object.keys(nativeToolSet).length > 0;
 
-    const toolUsageInstructions = useNativeToolCalls
-      ? 'Please accomplish this task step by step. Use the available tools when needed.'
-      : `Please accomplish this task step by step. When you need to use a tool, output it in this format:
-<tool_use>
-<name>tool_name</name>
-<input>{"param": "value"}</input>
-</tool_use>`;
-
     // 初始用户消息
-    context.addMessage(createUserMessage(`Task: ${task.objective}
-
-Constraints:
-${task.constraints?.map((c) => `- ${c}`).join('\n') || 'None'}
-
-Available tools:
-${toolDescriptions}
-
-${toolUsageInstructions}
-
-When the task is complete, provide a final summary of what was accomplished.`));
+    const taskPrompt = buildTaskPrompt(task, tools, { useNativeToolCalls });
+    context.addMessage(createUserMessage(taskPrompt));
 
     // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(DEFAULT_SYSTEM_PROMPT);
@@ -1078,23 +1056,6 @@ When the task is complete, provide a final summary of what was accomplished.`));
   // ============================================================================
   // 私有方法
   // ============================================================================
-
-  /**
-   * 构建工具描述
-   */
-  private buildToolDescriptions(tools: Tool[]): string {
-    if (!tools || tools.length === 0) {
-      return 'No tools available.';
-    }
-
-    return tools
-      .map((tool) => {
-        const schemaStr = JSON.stringify(tool.inputSchema, null, 2);
-        return `- ${tool.name}: ${tool.description}
-  Input schema: ${schemaStr}`;
-      })
-      .join('\n\n');
-  }
 
   /**
    * 执行工具

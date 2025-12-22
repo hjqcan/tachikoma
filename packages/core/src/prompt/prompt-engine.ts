@@ -314,6 +314,7 @@ export class PromptContextEngine implements IPromptContextEngine {
           success: false,
           summary: {
             userGoal: '',
+            constraints: [],
             completedSteps: [],
             keyFindings: [],
             modifiedFiles: [],
@@ -528,6 +529,7 @@ export class PromptContextEngine implements IPromptContextEngine {
   private createEmptySummary(): StructuredSummary {
     return {
       userGoal: '',
+      constraints: [],
       completedSteps: [],
       keyFindings: [],
       modifiedFiles: [],

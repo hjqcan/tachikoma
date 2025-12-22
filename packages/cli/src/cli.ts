@@ -5,8 +5,15 @@
  */
 
 import { VERSION } from './index';
-import { resolve } from 'node:path';
-import { ConversationalRunner, type ConversationalRunnerConfig } from '@tachikoma/core';
+import { resolve, dirname } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import {
+  ConversationalRunner,
+  loadEvalSet,
+  runEvalSet,
+  type ConversationalRunnerConfig,
+  type EvalRunOptions,
+} from '@tachikoma/core';
 
 /**
  * 显示帮助信息
@@ -21,17 +28,27 @@ Tachikoma CLI v${VERSION}
 命令:
   init        初始化新项目
   run         运行智能体任务
+  eval        运行评估集
   status      查看任务状态
   help        显示帮助信息
 
 选项:
   -v, --version   显示版本号
   -h, --help      显示帮助信息
+  --workdir       指定工作目录
+  --api-key       指定 API Key
+  --base-url      指定 API Base URL
+  --model         指定模型
+  --eval-set      评估集 JSON 路径 (eval)
+  --report        评估报告输出路径 (eval)
+  --case          仅运行指定用例 ID（逗号分隔）(eval)
+  --no-approval   禁用审批流程 (eval)
 
 示例:
   tachikoma init my-project
   tachikoma run "实现用户认证功能"
   tachikoma run --workdir . --verbose "为这个仓库跑一遍测试并修复失败"
+  tachikoma eval --eval-set ./evals/basic.json --workdir .
 `);
 }
 
@@ -151,6 +168,72 @@ async function runTask(args: CLIArgs): Promise<number> {
   return finalSuccess ? 0 : 1;
 }
 
+async function runEval(args: CLIArgs): Promise<number> {
+  const evalSetPath = parseFlagValue(args, '--eval-set');
+  if (!evalSetPath) {
+    console.error('缺少评估集路径。用法：tachikoma eval --eval-set <path>');
+    return 2;
+  }
+
+  const workdir = parseFlagValue(args, '--workdir') ?? process.cwd();
+  const verbose = hasFlag(args, '--verbose');
+  const apiKey = parseFlagValue(args, '--api-key');
+  const baseUrl = parseFlagValue(args, '--base-url');
+  const model = parseFlagValue(args, '--model');
+  const reportPath = parseFlagValue(args, '--report');
+  const caseIdsRaw = parseFlagValue(args, '--case');
+  const noApproval = hasFlag(args, '--no-approval');
+
+  const caseIds = caseIdsRaw
+    ? caseIdsRaw.split(',').map((id) => id.trim()).filter(Boolean)
+    : undefined;
+
+  const runnerOptions: EvalRunOptions = {
+    sessionDir: resolve(workdir, '.tachikoma', 'evals'),
+    workDir: workdir,
+    llm: {
+      apiKey: apiKey ?? process.env.OPENAI_API_KEY ?? '',
+      ...(baseUrl && { baseUrl }),
+      ...(model && { model }),
+    },
+    verbose,
+    noApproval,
+  };
+
+  if (!runnerOptions.llm.apiKey) {
+    console.error('缺少 OpenAI API Key。请使用 --api-key 或设置 OPENAI_API_KEY。');
+    return 2;
+  }
+
+  const evalSetFile = resolve(workdir, evalSetPath);
+  const evalSet = await loadEvalSet(evalSetFile);
+  const report = await runEvalSet(evalSet, {
+    ...runnerOptions,
+    ...(caseIds ? { caseIds } : {}),
+  });
+
+  console.log(
+    `[eval] ${report.name ?? report.evalId} ` +
+    `${report.passed}/${report.total} passed, avg=${report.averageScore.toFixed(2)}`
+  );
+
+  for (const result of report.results) {
+    const status = result.passed ? 'ok' : 'fail';
+    console.log(`[case] ${result.caseId} => ${status} (${result.score.toFixed(2)})`);
+    if (!result.passed && result.errors.length > 0) {
+      console.log(`  - ${result.errors[0]}`);
+    }
+  }
+
+  if (reportPath) {
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, JSON.stringify(report, null, 2), 'utf-8');
+    console.log(`[eval] report saved to ${reportPath}`);
+  }
+
+  return report.failed === 0 ? 0 : 1;
+}
+
 /**
  * 主入口
  */
@@ -170,6 +253,18 @@ function main() {
 
   if (command === 'run') {
     runTask(args.slice(1))
+      .then((code) => {
+        process.exitCode = code;
+      })
+      .catch((err) => {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exitCode = 1;
+      });
+    return;
+  }
+
+  if (command === 'eval') {
+    runEval(args.slice(1))
       .then((code) => {
         process.exitCode = code;
       })

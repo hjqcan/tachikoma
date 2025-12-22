@@ -63,6 +63,7 @@ export interface StructuredSummarySchema {
 export const DEFAULT_SUMMARY_SCHEMA: StructuredSummarySchema = {
   fields: [
     'userGoal',
+    'constraints',
     'completedSteps',
     'keyFindings',
     'modifiedFiles',
@@ -73,6 +74,7 @@ export const DEFAULT_SUMMARY_SCHEMA: StructuredSummarySchema = {
   ],
   descriptions: {
     userGoal: '用户的目标或请求',
+    constraints: '关键约束或偏好（例如必须/禁止/限定范围）',
     completedSteps: '已完成的关键步骤列表',
     keyFindings: '关键发现或结果',
     modifiedFiles: '修改过的文件路径列表',
@@ -144,6 +146,7 @@ export class SummarizationStrategy {
   private buildCustomSchema(fields: (keyof StructuredSummary)[]): StructuredSummarySchema {
     const descriptions: Record<keyof StructuredSummary, string> = {
       userGoal: '用户的目标或请求',
+      constraints: '关键约束或偏好（例如必须/禁止/限定范围）',
       completedSteps: '已完成的关键步骤列表',
       keyFindings: '关键发现或结果',
       modifiedFiles: '修改过的文件路径列表',
@@ -309,7 +312,11 @@ ${fieldsDescription}
 2. Every field must be present (arrays may be empty).
 3. Be concise but complete.
 4. Preserve critical requirements/constraints from the user.
-5. Use the same language as the source messages for field values whenever possible.`;
+5. Use the same language as the source messages for field values whenever possible.
+
+## Guidance
+- Include key constraints, decisions, progress, and next steps.
+- Exclude verbose tool outputs and raw logs unless they contain critical errors.`;
   }
 
   /**
@@ -414,6 +421,7 @@ ${fieldsDescription}
   private validateAndNormalize(parsed: Partial<StructuredSummary>): StructuredSummary {
     return {
       userGoal: parsed.userGoal || '',
+      constraints: Array.isArray(parsed.constraints) ? parsed.constraints : [],
       completedSteps: Array.isArray(parsed.completedSteps) ? parsed.completedSteps : [],
       keyFindings: Array.isArray(parsed.keyFindings) ? parsed.keyFindings : [],
       modifiedFiles: Array.isArray(parsed.modifiedFiles) ? parsed.modifiedFiles : [],
@@ -508,6 +516,7 @@ ${fieldsDescription}
 
     return {
       userGoal,
+      constraints: [],
       completedSteps: [],
       keyFindings: [rawResponse.slice(0, 500)],
       modifiedFiles: [],

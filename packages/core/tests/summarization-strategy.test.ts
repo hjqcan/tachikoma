@@ -61,6 +61,7 @@ describe('SummarizationStrategy', () => {
       async generateSummary(): Promise<StructuredSummary> {
         return {
           userGoal: 'Build something',
+          constraints: [],
           completedSteps: [],
           keyFindings: [],
           modifiedFiles: [],
@@ -113,4 +114,3 @@ describe('SummarizationStrategy', () => {
     expect(messages).toEqual(before);
   });
 });
-

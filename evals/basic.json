@@ -1,0 +1,24 @@
+{
+  "id": "basic",
+  "name": "Basic Eval Set",
+  "description": "Minimal examples for verifying eval wiring.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "case-hello",
+      "objective": "Reply with exactly: EVAL_OK",
+      "expected": {
+        "contains": ["EVAL_OK"],
+        "minScore": 1
+      }
+    },
+    {
+      "id": "case-files",
+      "objective": "List the repository root entries using tools, then reply with: EVAL_OK_FILE_LIST",
+      "expected": {
+        "contains": ["EVAL_OK_FILE_LIST"],
+        "minScore": 1
+      }
+    }
+  ]
+}

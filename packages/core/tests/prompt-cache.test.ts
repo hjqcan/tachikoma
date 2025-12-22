@@ -97,6 +97,7 @@ describe('prompt/cache LocalPromptCache', () => {
     const hash = 'test-hash-1';
     const summary = {
       userGoal: 'testing',
+      constraints: [],
       completedSteps: [],
       keyFindings: [],
       modifiedFiles: [],
