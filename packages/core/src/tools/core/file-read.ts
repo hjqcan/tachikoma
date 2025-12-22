@@ -553,19 +553,21 @@ export const fileReadTool: Tool = {
       const records = parseLines(textContent);
       const totalLines = records.length;
 
-      // 验证 offset
-      if (offset < 1) {
-        return {
-          success: false,
-          error: 'offset must be >= 1 (1-indexed line number)',
-        };
-      }
+      const needsLineRange = mode !== 'full';
+      if (needsLineRange) {
+        if (offset < 1) {
+          return {
+            success: false,
+            error: 'offset must be >= 1 (1-indexed line number)',
+          };
+        }
 
-      if (limit < 1) {
-        return {
-          success: false,
-          error: 'limit must be >= 1',
-        };
+        if (limit < 1) {
+          return {
+            success: false,
+            error: 'limit must be >= 1',
+          };
+        }
       }
 
       let outputRecords: LineRecord[];

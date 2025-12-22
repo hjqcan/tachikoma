@@ -384,9 +384,9 @@ describe('renderSkillsSection', () => {
 
     expect(result).not.toBeNull();
     expect(result).toContain('## Skills');
-    // Note: renderer no longer exposes absolute paths for security
-    expect(result).toContain('- pdf: Process PDFs');
-    expect(result).toContain('- docx: Process Word docs');
+    // Note: renderer now uses bold formatting for skill names
+    expect(result).toContain('- **pdf**: Process PDFs');
+    expect(result).toContain('- **docx**: Process Word docs');
     // Path should NOT be in the output
     expect(result).not.toContain('/path/to/pdf/SKILL.md');
   });

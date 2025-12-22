@@ -8,6 +8,8 @@
 
 import type { Tool, ExecutionContext } from '../types';
 import type { ToolResult } from '../tools/types';
+import { DEFAULT_RESOURCE_LIMITS as DEFAULT_WORKER_LIMITS } from '../worker/types';
+import { checkToolInputSize } from '../worker/engines';
 
 // ============================================================================
 // 类型定义
@@ -43,6 +45,8 @@ export interface ToolBridgeConfig {
   workDir?: string;
   /** 环境变量 */
   env?: Record<string, string>;
+  /** 最大工具输入大小（字节） */
+  maxToolInputBytes?: number;
 }
 
 // ============================================================================
@@ -77,6 +81,7 @@ export class ToolToMCPBridge {
       includeMetadata: config.includeMetadata ?? true,
       workDir: config.workDir ?? process.cwd(),
       env: config.env ?? {},
+      maxToolInputBytes: config.maxToolInputBytes ?? DEFAULT_WORKER_LIMITS.maxToolInputBytes,
     };
   }
 
@@ -105,7 +110,7 @@ export class ToolToMCPBridge {
    */
   async convertToMCPServers(
     tools: Tool[],
-    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env'>>
+    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes'>>
   ): Promise<unknown[]> {
     if (!tools || tools.length === 0) {
       return [];
@@ -138,7 +143,9 @@ export class ToolToMCPBridge {
       // 创建 MCP 工具定义
       const context = this.buildContext(overrides);
 
-      const mcpTools = tools.map((t) => this.createMCPTool(t, tool, context));
+      const maxToolInputBytes =
+        overrides?.maxToolInputBytes ?? this.config.maxToolInputBytes;
+      const mcpTools = tools.map((t) => this.createMCPTool(t, tool, context, maxToolInputBytes));
 
       // 创建 MCP Server
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -168,7 +175,8 @@ export class ToolToMCPBridge {
     tachikoma: Tool,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     toolFactory: any,
-    context: ExecutionContext
+    context: ExecutionContext,
+    maxToolInputBytes: number
   ): unknown {
     // 使用 SDK 的 tool() 函数创建 MCP Tool
     return toolFactory(
@@ -177,6 +185,10 @@ export class ToolToMCPBridge {
       tachikoma.inputSchema ?? { type: 'object', properties: {} },
       async (args: Record<string, unknown>): Promise<string> => {
         try {
+          const sizeCheck = checkToolInputSize(tachikoma.name, args, maxToolInputBytes);
+          if (!sizeCheck.ok) {
+            return `Error: ${sizeCheck.message ?? 'Tool input too large.'}`;
+          }
           const result = await tachikoma.execute(args, context) as ToolResult;
 
           if (result.success) {

@@ -354,6 +354,8 @@ export interface ResourceLimits {
   maxThinkingRounds?: number;
   /** 最大工具调用次数 */
   maxToolCalls?: number;
+  /** 最大工具输入大小（字节） */
+  maxToolInputBytes?: number;
 }
 
 /**
@@ -365,6 +367,7 @@ export const DEFAULT_RESOURCE_LIMITS: Required<ResourceLimits> = {
   maxMessageWindow: 50,        // 保留最近 50 条消息
   maxThinkingRounds: 50,       // 最大 50 轮
   maxToolCalls: 100,           // 最大 100 次工具调用
+  maxToolInputBytes: 100 * 1024, // 单次工具输入最大 100KB
 };
 
 // ============================================================================

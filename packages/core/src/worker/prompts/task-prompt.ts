@@ -53,6 +53,15 @@ export function buildTaskPrompt(
       ? task.constraints.map((c) => `- ${c}`).join('\n')
       : 'None';
 
+  const hardRules = `Hard rules:
+- Constraints are hard requirements; do not change language/framework/stack unless explicitly allowed.
+- If constraints conflict or block progress, stop and ask for clarification.`;
+
+  const toolFormattingGuide = `Tool call formatting (critical):
+- Tool arguments must be valid JSON (double quotes, no trailing commas).
+- Split large edits into multiple tool calls; keep each call small.
+- Avoid unescaped backticks or code fences inside JSON strings.`;
+
   const toolDescriptions = formatToolDescriptions(tools, {
     mode: toolDescriptionMode,
     maxDescriptionLength: useNativeToolCalls ? 160 : 240,
@@ -70,6 +79,10 @@ export function buildTaskPrompt(
 
 Constraints:
 ${constraints}
+
+${hardRules}
+
+${toolFormattingGuide}
 
 Available tools:
 ${toolDescriptions}

@@ -20,6 +20,7 @@ Common patterns:
 - File not found / ENOENT -> verify path with file_list, then file_read.
 - Permission denied -> request approval or reduce scope; avoid risky commands.
 - JSON parse error -> re-run the tool; strip backticks; output valid JSON only.
+- Tool input too large -> split into smaller tool calls (append for file_write, smaller hunks for apply_patch).
 - Tool loop detected -> change inputs or stop and ask for guidance.
 - Network/connection error -> retry with backoff; then summarize and ask.`;
 

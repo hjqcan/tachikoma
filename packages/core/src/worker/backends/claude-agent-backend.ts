@@ -264,7 +264,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           };
 
           // 构建 SDK 配置 (inject memories into systemPrompt, not user prompt)
-          const sdkOptions = await this.buildSDKOptions(tools, options, memoryContext, skillsManager);
+          const sdkOptions = await this.buildSDKOptions(tools, options, memoryContext, skillsManager, task.objective);
             
           const taskPrompt = buildTaskPrompt(task, tools, {
             useNativeToolCalls: true,
@@ -498,29 +498,35 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     tools: Tool[],
     options: WorkerExecutionOptions,
     memoryContext?: string,
-    skillsManager?: SkillsManager
+    skillsManager?: SkillsManager,
+    taskObjective?: string
   ): Promise<Record<string, unknown>> {
     const sdkConfig = this.config.sdkOptions || {};
 
     // 构造 overrides 对象（过滤 undefined 以满足 exactOptionalPropertyTypes）
-    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env'>> = {};
+    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes'>> = {};
     if (options.workDir !== undefined) {
       overrides.workDir = options.workDir;
     }
     if (options.env !== undefined) {
       overrides.env = options.env;
     }
+    overrides.maxToolInputBytes =
+      options.resourceLimits?.maxToolInputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolInputBytes;
 
     // 将 Tachikoma 工具转换为 MCP Server（同步等待，保证首轮可用）
     const mcpServers = await this.toolBridge.convertToMCPServers(tools, overrides);
 
     // Build unified system prompt with memory context (if available)
-    let systemPrompt = buildWorkerSystemPrompt({
-      memoryContext,
-      extraSystemPrompt: sdkConfig.systemPrompt,
-    });
+    // Filter undefined values for exactOptionalPropertyTypes
+    const promptOptions: { memoryContext?: string; extraSystemPrompt?: string } = {};
+    if (memoryContext) promptOptions.memoryContext = memoryContext;
+    if (sdkConfig.systemPrompt) promptOptions.extraSystemPrompt = sdkConfig.systemPrompt;
+    
+    let systemPrompt = buildWorkerSystemPrompt(promptOptions);
     if (skillsManager) {
-      systemPrompt = await skillsManager.renderSystemPromptSection(systemPrompt);
+      // Pass task objective for skill recommendations
+      systemPrompt = await skillsManager.renderSystemPromptSection(systemPrompt, taskObjective);
     }
 
     return {

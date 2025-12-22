@@ -43,6 +43,9 @@ export {
   computeExecutionStats,
 } from './tool-executor';
 
+// Tool Input Guard
+export { checkToolInputSize } from './tool-input-guard';
+
 // Context Helpers
 export {
   type LLMMessageFormat,

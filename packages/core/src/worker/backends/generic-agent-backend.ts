@@ -72,6 +72,7 @@ import {
   type ToolExecutorCallbacks,
   type ToolExecutionResult,
   type ToolExecutorEvent,
+  checkToolInputSize,
   // Tool Schema
   convertToolsToAITools,
   // LLM Executor
@@ -437,7 +438,11 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     context.addMessage(createUserMessage(taskPrompt));
 
     // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
-    const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(DEFAULT_SYSTEM_PROMPT);
+    // Pass task objective for skill recommendations
+    const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(
+      DEFAULT_SYSTEM_PROMPT,
+      task.objective
+    );
 
 	    let finalStatus: WorkerStatus = 'failed';
 	    try {
@@ -1282,6 +1287,16 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       return {
         success: false,
         output: `Tool not found: ${call.name}`,
+      };
+    }
+
+    const maxToolInputBytes =
+      options.resourceLimits?.maxToolInputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolInputBytes;
+    const sizeCheck = checkToolInputSize(call.name, call.input, maxToolInputBytes);
+    if (!sizeCheck.ok) {
+      return {
+        success: false,
+        output: sizeCheck.message ?? 'Tool input too large.',
       };
     }
 

@@ -30,7 +30,7 @@ import type { RetryPolicy, Tool } from '../../types';
 import { isKeyDecision, isKeyDecisionAsync } from '../key-decision';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
-import { createSkillsManager } from '../engines';
+import { createSkillsManager, checkToolInputSize } from '../engines';
 
 // 共享基础层
 import {
@@ -53,6 +53,12 @@ const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxDelay: 10000,
 };
 
+const TOOL_ARGS_RETRY_HINT = `## Tool Call Formatting (Recovery)
+The previous tool call failed because its arguments were not valid JSON.
+- Re-issue tool calls with strict JSON only (double quotes, escape newlines).
+- Split large edits into multiple tool calls; keep each call small.
+- Avoid unescaped backticks or code fences inside JSON strings.`;
+
 function isConnectionError(error: Error): boolean {
   const message = error.message.toLowerCase();
   return (
@@ -61,6 +67,18 @@ function isConnectionError(error: Error): boolean {
     message.includes('connection error') ||
     message.includes('econnrefused') ||
     message.includes('etimedout')
+  );
+}
+
+function isToolArgsParseError(error: Error): boolean {
+  const message = error.message.toLowerCase();
+  return (
+    error.name === 'ToolCallError' ||
+    message.includes('failed to run function tools')
+  ) && (
+    message.includes('json parse') ||
+    message.includes('unterminated string') ||
+    message.includes('invalid json')
   );
 }
 
@@ -484,6 +502,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       ...options.resourceLimits,
     };
     let totalToolCalls = 0;
+    let toolArgsRetryHint: string | null = null;
     const skillsManager = createSkillsManager(
       this.config.skillsConfig,
       options.workDir ?? process.cwd()
@@ -533,8 +552,10 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           );
 
           // 构建系统提示（注入 skills 元数据）
+          // Pass task objective for skill recommendations
           const systemPrompt = await skillsManager.renderSystemPromptSection(
-            this.buildSystemPrompt(memoryContext)
+            this.buildSystemPrompt(memoryContext, toolArgsRetryHint),
+            task.objective
           );
 
           // 转换工具为 SDK tool() 格式
@@ -553,7 +574,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
               totalToolCalls += 1;
             },
             toolResultCache,
-            useToolResultCache
+            useToolResultCache,
+            limits.maxToolInputBytes
           );
 
           // 创建 Agent 实例
@@ -776,7 +798,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           const err = error instanceof Error ? error : new Error(String(error));
           const isToolLoopError = err.name === 'ToolCallLoopError';
           const isToolBudgetError = err.name === 'ToolCallBudgetExceededError';
-          const retryable = isRetryableError(err) && !isToolLoopError && !isToolBudgetError;
+          const toolArgsParseError = isToolArgsParseError(err);
+          const retryable =
+            (isRetryableError(err) || toolArgsParseError) &&
+            !isToolLoopError &&
+            !isToolBudgetError;
           const connectionError = isConnectionError(err);
           
           const shouldRetry =
@@ -790,12 +816,21 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             throw err;
           }
 
+          if (toolArgsParseError) {
+            toolArgsRetryHint = TOOL_ARGS_RETRY_HINT;
+          }
+
           attempt += 1;
           const delay = calculateRetryDelay(retryPolicy, attempt);
           
           // Codex-style retrying/reconnecting message
           const actionLabel = connectionError ? 'reconnecting' : 'retrying';
-          const reconnectMsg = `${actionLabel} ${attempt}/${maxRetries}...`;
+          const reasonLabel = connectionError
+            ? 'connection error'
+            : toolArgsParseError
+              ? 'tool args parse error'
+              : 'retryable error';
+          const reconnectMsg = `${actionLabel} ${attempt}/${maxRetries} (${reasonLabel})...`;
           console.log(`[OpenAIAgentsBackend] ${reconnectMsg}`);
           yield createStatusMessage('initializing');
           yield createThinkingMessage(reconnectMsg);
@@ -813,7 +848,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       // 不再直接 console.error，而是通过消息系统传递
       const isToolLoopError = err.name === 'ToolCallLoopError';
       const isToolBudgetError = err.name === 'ToolCallBudgetExceededError';
-      const retryable = isRetryableError(err) && !isToolLoopError && !isToolBudgetError;
+      const toolArgsParseError = isToolArgsParseError(err);
+      const retryable =
+        (isRetryableError(err) || toolArgsParseError) &&
+        !isToolLoopError &&
+        !isToolBudgetError;
       const connectionError = isConnectionError(err);
       let errorCode = 'EXECUTION_ERROR';
       if (isToolBudgetError) {
@@ -822,6 +861,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         errorCode = 'TOOL_CALL_LOOP';
       } else if (connectionError) {
         errorCode = 'CONNECTION_ERROR';
+      } else if (toolArgsParseError) {
+        errorCode = 'TOOL_ARGS_PARSE_ERROR';
       }
       if (connectionError) {
         console.warn(`[OpenAIAgentsBackend] Connection failed after retries: ${err.message}`);
@@ -882,8 +923,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
   /**
    * 构建系统提示
    */
-  private buildSystemPrompt(memoryContext: string): string {
-    return buildWorkerSystemPrompt({ memoryContext });
+  private buildSystemPrompt(memoryContext: string, extraSystemPrompt?: string | null): string {
+    return buildWorkerSystemPrompt({
+      memoryContext,
+      extraSystemPrompt: extraSystemPrompt ?? undefined,
+    });
   }
 
   /**
@@ -916,7 +960,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     task: WorkerTask,
     onToolExecute?: (toolName: string, input: unknown) => void,
     toolResultCache?: Map<string, string>,
-    useToolResultCache = false
+    useToolResultCache = false,
+    maxToolInputBytes = DEFAULT_RESOURCE_LIMITS.maxToolInputBytes
   ): unknown[] {
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
@@ -945,6 +990,21 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             }
 
             onToolExecute?.(tachikomaTool.name, params);
+            const sizeCheck = checkToolInputSize(tachikomaTool.name, params, maxToolInputBytes);
+            if (!sizeCheck.ok) {
+              const output = JSON.stringify({
+                success: false,
+                error: sizeCheck.message ?? 'Tool input too large.',
+                tool: tachikomaTool.name,
+                code: 'TOOL_INPUT_TOO_LARGE',
+                size: sizeCheck.size,
+                limit: maxToolInputBytes,
+              });
+              if (cacheKey) {
+                toolResultCache?.set(cacheKey, output);
+              }
+              return output;
+            }
             const result = await tachikomaTool.execute(
               params,
               executionContext
