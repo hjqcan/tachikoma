@@ -82,6 +82,7 @@ export {
 
 export {
   renderSkillsSection,
+  renderSkillsSectionWithRecommendations,
   renderSkillContentPrompt,
   estimateSkillsSectionTokens,
 } from './renderer';
@@ -95,3 +96,18 @@ export {
   hasExecutableScripts,
   listSkillScripts,
 } from './executor';
+
+// ============================================================================
+// 技能匹配器导出
+// ============================================================================
+
+export {
+  matchSkillsToTask,
+  getHighlyRelevantSkills,
+  getRelevantSkills,
+} from './skill-matcher';
+
+export type {
+  SkillRelevance,
+  SkillRecommendation,
+} from './skill-matcher';

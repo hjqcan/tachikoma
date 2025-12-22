@@ -8,6 +8,7 @@
 
 import type { SkillMetadata } from './types';
 import { DEFAULT_MAX_SKILL_TOKENS } from './types';
+import { matchSkillsToTask, getHighlyRelevantSkills, type SkillRecommendation } from './skill-matcher';
 
 // ============================================================================
 // 渲染函数
@@ -46,15 +47,21 @@ export function renderSkillsSection(
   lines.push('## Skills');
   lines.push('');
 
-  // 说明（不提及文件路径，保持安全）
+  // 说明（更清晰的引导）
   lines.push(
-    'These skills are available. When a skill is relevant to the task, ' +
-    'use the file_read tool to read the SKILL.md from the skill directory for detailed instructions.'
+    'The following skills contain expert-curated best practices that can help improve your work quality. ' +
+    'When a skill appears relevant to the current task, consider reading its SKILL.md for detailed guidance.'
   );
+  lines.push('');
+  lines.push('**How to use a skill:**');
+  lines.push('1. Review the skill descriptions below');
+  lines.push('2. For relevant skills, use `file_read` to read the full SKILL.md');
+  lines.push('3. Follow the instructions in the skill when implementing');
   lines.push('');
 
   // 估算 token 用量，超过预算时截断
-  let currentTokens = 50; // 标题 + 说明的基础开销
+  // 基础开销: 标题(10) + 说明(60) + 使用指南(50) = ~120 tokens
+  let currentTokens = 120;
   let includedCount = 0;
   const maxSkills = skills.length;
 
@@ -69,9 +76,97 @@ export function renderSkillsSection(
       break;
     }
     
-    lines.push(`- ${skill.name}: ${skill.description}`);
+    lines.push(`- **${skill.name}**: ${skill.description}`);
     currentTokens += skillTokens;
     includedCount++;
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * 渲染带推荐的 Skills section
+ *
+ * 根据任务描述高亮显示最相关的技能
+ *
+ * @param skills - Skill 元数据列表
+ * @param taskDescription - 任务描述（用于匹配推荐）
+ * @param maxTokens - 最大 token 预算
+ * @returns 渲染后的 section
+ */
+export function renderSkillsSectionWithRecommendations(
+  skills: SkillMetadata[],
+  taskDescription: string,
+  maxTokens: number = DEFAULT_MAX_SKILL_TOKENS
+): string | null {
+  if (skills.length === 0) {
+    return null;
+  }
+
+  const recommendations = matchSkillsToTask(taskDescription, skills);
+  const highlyRelevant = getHighlyRelevantSkills(recommendations);
+
+  const lines: string[] = [];
+
+  // 标题
+  lines.push('## Skills');
+  lines.push('');
+
+  // 说明
+  lines.push(
+    'The following skills contain expert-curated best practices. ' +
+    'Consider reading the SKILL.md of relevant skills for detailed guidance.'
+  );
+  lines.push('');
+
+  // 动态计算已用 tokens: 标题(10) + 说明(40) = ~50 base
+  let currentTokens = 50;
+
+  // 如果有高相关度技能，优先展示（但受预算控制）
+  if (highlyRelevant.length > 0) {
+    const headerTokens = 15; // "### Recommended for This Task"
+    currentTokens += headerTokens;
+    
+    lines.push('### [Recommended] For This Task');
+    lines.push('');
+    
+    for (const rec of highlyRelevant) {
+      const recTokens = Math.ceil((rec.skill.name.length + rec.skill.description.length + rec.reason.length + 20) / 4);
+      if (currentTokens + recTokens > maxTokens) {
+        break; // 预算不足，不再添加推荐
+      }
+      lines.push(`- **${rec.skill.name}** [*]: ${rec.skill.description}`);
+      lines.push(`  -> _${rec.reason}_`);
+      currentTokens += recTokens;
+    }
+    lines.push('');
+  }
+
+  // 其他技能
+  const recommendedNames = new Set(highlyRelevant.map((r: SkillRecommendation) => r.skill.name));
+  const otherSkills = skills.filter(s => !recommendedNames.has(s.name));
+
+  if (otherSkills.length > 0) {
+    if (highlyRelevant.length > 0) {
+      lines.push('### Other Available Skills');
+      lines.push('');
+      currentTokens += 10; // header overhead
+    }
+    
+    let includedCount = 0;
+    
+    for (const skill of otherSkills) {
+      const skillTokens = Math.ceil((skill.name.length + skill.description.length + 10) / 4);
+      
+      if (currentTokens + skillTokens > maxTokens && includedCount > 0) {
+        lines.push(`- ... and ${otherSkills.length - includedCount} more skills`);
+        break;
+      }
+      
+      lines.push(`- **${skill.name}**: ${skill.description}`);
+      currentTokens += skillTokens;
+      includedCount++;
+    }
   }
 
   return lines.join('\n');
@@ -112,8 +207,8 @@ export function estimateSkillsSectionTokens(skills: SkillMetadata[]): number {
     return 0;
   }
 
-  // 基础开销（标题 + 说明）
-  let tokens = 50;
+  // 基础开销（标题 + 说明 + 使用指南）
+  let tokens = 120;
 
   // 每个 skill 的开销（name + description，不含 path）
   for (const skill of skills) {

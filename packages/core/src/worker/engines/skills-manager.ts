@@ -10,6 +10,7 @@ import {
   type SkillLoadOutcome,
   loadSkills,
   renderSkillsSection,
+  renderSkillsSectionWithRecommendations,
 } from '../../skills';
 import type { ContextMessage } from '../../prompt/types';
 import { 
@@ -111,16 +112,30 @@ export class SkillsManager {
 
   /**
    * 渲染 System Prompt 附加部分 (Skills + Project Context)
+   * @param basePrompt - 基础提示词
+   * @param taskDescription - 可选任务描述，用于推荐相关技能
    */
-  async renderSystemPromptSection(basePrompt: string): Promise<string> {
+  async renderSystemPromptSection(
+    basePrompt: string,
+    taskDescription?: string
+  ): Promise<string> {
     let finalPrompt = basePrompt;
 
-    // 1. Render Skills
-    // Note: renderSkillsSection returns empty string if no skills
-    const skillsSection = renderSkillsSection(
-      this.skills,
-      this.config?.maxSkillTokens
-    );
+    // 1. Render Skills (with recommendations if task description provided)
+    let skillsSection: string | null;
+    if (taskDescription) {
+      skillsSection = renderSkillsSectionWithRecommendations(
+        this.skills,
+        taskDescription,
+        this.config?.maxSkillTokens
+      );
+    } else {
+      skillsSection = renderSkillsSection(
+        this.skills,
+        this.config?.maxSkillTokens
+      );
+    }
+    
     if (skillsSection) {
       finalPrompt += '\n\n' + skillsSection;
     }
