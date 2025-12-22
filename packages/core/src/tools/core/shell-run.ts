@@ -531,8 +531,9 @@ export const shellRunTool: Tool = {
         };
       }
 
-      // 确定工作目录
-      const workingDir = cwd ? validatePath(cwd, context.workDir) : context.workDir;
+      // P1-A: 使用 effectiveCwd 作为默认工作目录，cwd 参数相对于 effectiveCwd 解析
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const workingDir = cwd ? validatePath(cwd, baseDir) : baseDir;
 
       // Background mode: spawn and return immediately
       if (background) {
@@ -588,6 +589,11 @@ export const shellRunTool: Tool = {
             console.warn(`[shell_run] Command timed out after ${timeout}ms: ${command.substring(0, 50)}...`);
           }
           
+          // P1-A: 成功执行后更新 effectiveCwd
+          if (result.exitCode === 0 && cwd && context.updateCwd) {
+            context.updateCwd(workingDir);
+          }
+          
           return {
             success: result.exitCode === 0,
             data: {
@@ -611,6 +617,11 @@ export const shellRunTool: Tool = {
       // 截断输出
       const stdoutTruncated = result.stdout.length > maxOutput;
       const stderrTruncated = result.stderr.length > maxOutput;
+
+      // P1-A: 成功执行后更新 effectiveCwd
+      if (result.exitCode === 0 && cwd && context.updateCwd) {
+        context.updateCwd(workingDir);
+      }
 
       return {
         success: result.exitCode === 0,

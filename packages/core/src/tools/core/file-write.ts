@@ -103,8 +103,9 @@ export const fileWriteTool: Tool = {
           error: workDirCheck.error ?? 'Unknown workDir error',
         };
       }
-
-      const absolutePath = validatePath(filePath, context.workDir);
+      // P1-A: 使用 effectiveCwd 作为基础目录
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const absolutePath = validatePath(filePath, baseDir);
 
       // 确保父目录存在
       const parentDir = dirname(absolutePath);

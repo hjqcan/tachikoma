@@ -419,6 +419,9 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   private lastToolCallKey: string | null = null;
   private repeatedToolCallCount = 0;
 
+  // P1-A: 当前有效工作目录状态
+  protected effectiveCwd = '';
+
   // Detect repeated calls to identical tool+input combinations.
   private static readonly TOOL_CALL_REPEAT_LIMIT = 3;
   private static readonly TOOL_CALL_REPEAT_LIMIT_RELAXED = 6;
@@ -556,11 +559,27 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
     task: WorkerTask,
     options: WorkerExecutionOptions
   ): ExecutionContext {
+    // P1-A: 每个任务强制重置 effectiveCwd 到 workDir，防止跨任务污染
+    const initialCwd = options.workDir ?? process.cwd();
+    this.effectiveCwd = initialCwd;
+
+    // P1-A Fix: 使用可变状态容器，让 updateCwd 和工具读取同一引用
+    // 这样 updateCwd 的改动能即时反映到 context.effectiveCwd
+    const cwdState = { current: initialCwd };
+
     return {
       taskId: task.id,
       agentId: `worker-${task.id}`,
       traceId: `trace-${task.id}-${Date.now()}`,
-      workDir: options.workDir ?? process.cwd(),
+      workDir: initialCwd,
+      // 使用 getter 让工具始终读取最新值
+      get effectiveCwd() {
+        return cwdState.current;
+      },
+      updateCwd: (newCwd: string) => {
+        this.effectiveCwd = newCwd;
+        cwdState.current = newCwd;
+      },
       env: options.env ?? {},
       permissions: {
         allowed: [],

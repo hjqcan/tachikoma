@@ -29,6 +29,9 @@ export type {
   SharedContextFile,
   MessageDirection,
   MessageRecord,
+  // P1-B: API 接口定义类型
+  ApiSpec,
+  ApiEndpoint,
   // 事件类型
   SessionFileEventType,
   SessionFileEvent,

@@ -188,8 +188,9 @@ export const runTestsTool: Tool = {
         };
       }
 
-      // 确定工作目录
-      const workingDir = cwd ? validatePath(cwd, context.workDir) : context.workDir;
+      // P1-A: 使用 effectiveCwd 作为默认工作目录，cwd 参数相对于 effectiveCwd 解析
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const workingDir = cwd ? validatePath(cwd, baseDir) : baseDir;
 
       // 构建命令
       let command: string;

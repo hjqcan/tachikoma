@@ -54,6 +54,8 @@ import {
   type DecisionRecord,
   type CheckpointRestoreOptions,
   type RecoveryStrategy,
+  type ApiSpec,
+  type ApiEndpoint,
 } from './session';
 import { MemoryService } from '../memory';
 import { CollaborationManager } from '../collaboration';
@@ -1928,10 +1930,16 @@ Is this a genuine deviation? Answer YES or NO only.`,
     if (refinementResult) {
       return refinementResult;
     }
+    // P2: 增强集成类子任务的上下文（注入 API 信息和文件清单）
+    const activeSubtask = await this.enhanceSubtaskForIntegration(subtask);
+    // 更新 subtaskMap 中的子任务（如果有增强）
+    if (activeSubtask !== subtask) {
+      subtaskMap.set(subtaskId, activeSubtask);
+    }
 
     // 标记为运行中
     this.executionState!.runningSubtasks.add(subtaskId);
-    subtask.status = 'running';
+    activeSubtask.status = 'running';
 
     let retryCount = 0;
     let lastError: string | undefined;
@@ -1948,8 +1956,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
       }
 
       try {
-        // 分配给 Worker
-        const assignResult = await this.assignToWorker(subtask, timeout, retryPolicy);
+        // 分配给 Worker（使用增强后的子任务）
+        const assignResult = await this.assignToWorker(activeSubtask, timeout, retryPolicy);
 
         if (!assignResult.success) {
           lastError = assignResult.error;
@@ -1958,7 +1966,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
           if (shouldRetry(retryPolicy, retryCount)) {
             retryCount++;
             this.executionState!.totalRetries++;
-            subtask.status = 'retrying';
+            activeSubtask.status = 'retrying';
 
             this.emit('subtask:retrying', taskId, { retryCount, error: lastError }, subtaskId);
 
@@ -1970,7 +1978,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
           // 重试耗尽，标记为失败
           const failureError = lastError || 'Unknown error';
-          this.markSubtaskFailed(subtask, subtaskId, failureError);
+          this.markSubtaskFailed(activeSubtask, subtaskId, failureError);
 
           this.emit('subtask:failed', taskId, { error: failureError, retryCount }, subtaskId);
 
@@ -1983,22 +1991,22 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
 
         const workerId = assignResult.workerId!;
-        subtask.assignedWorkerId = workerId;
+        activeSubtask.assignedWorkerId = workerId;
 
         // Emit after a concrete worker is chosen so consumers can display accurate routing info.
-        this.emit('subtask:assigned', taskId, { subtaskId, subtask, workerId }, subtaskId);
+        this.emit('subtask:assigned', taskId, { subtaskId, subtask: activeSubtask, workerId }, subtaskId);
 
         // 等待 Worker 完成（WorkerAgent 驱动）
-        const result = await this.waitForWorkerCompletion(subtask, workerId, timeout, signal);
+        const result = await this.waitForWorkerCompletion(activeSubtask, workerId, timeout, signal);
 
         // selective sync：将关键决策/产物写入 shared context（best-effort）
-        await this.syncSharedContextSelective(workerId, subtask, result).catch(() => undefined);
+        await this.syncSharedContextSelective(workerId, activeSubtask, result).catch(() => undefined);
 
         // 标记为完成
         this.executionState!.runningSubtasks.delete(subtaskId);
         this.executionState!.completedSubtasks.set(subtaskId, result);
-        subtask.status = 'success';
-        subtask.result = result;
+        activeSubtask.status = 'success';
+        activeSubtask.result = result;
 
         // 累加 Worker 执行的 token 用量
         if (result.metrics?.tokensUsed) {
@@ -2020,7 +2028,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         if (shouldRetry(retryPolicy, retryCount)) {
           retryCount++;
           this.executionState!.totalRetries++;
-          subtask.status = 'retrying';
+          activeSubtask.status = 'retrying';
 
           this.emit('subtask:retrying', taskId, { retryCount, error: lastError }, subtaskId);
 
@@ -2030,7 +2038,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
 
         // 重试耗尽
-        this.markSubtaskFailed(subtask, subtaskId, lastError);
+        this.markSubtaskFailed(activeSubtask, subtaskId, lastError);
 
         this.emit('subtask:failed', taskId, { error: lastError, retryCount }, subtaskId);
 
@@ -2401,6 +2409,21 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
     nextData.syncLog = syncLog;
 
+    // P1-B: 同步 generatedFiles (按 worker ID 分组累积)
+    if (modifiedFiles.length > 0) {
+      const generatedFiles = (nextData.generatedFiles as Record<string, string[]>) ?? {};
+      const existingFiles = generatedFiles[workerId] ?? [];
+      const merged = Array.from(new Set([...existingFiles, ...modifiedFiles]));
+      generatedFiles[workerId] = merged;
+      nextData.generatedFiles = generatedFiles;
+    }
+
+    // P1-B: 从 backend worker 提取 API 接口定义
+    const extractedApiSpec = this.extractApiSpecFromResult(result, workerId, subtask);
+    if (extractedApiSpec) {
+      nextData.apiSpec = extractedApiSpec;
+    }
+
     await this.sessionManager.writeSharedContext({
       objective: shared.objective,
       constraints: shared.constraints,
@@ -2470,12 +2493,309 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   /**
+   * P1-B: 从 backend worker 的结果中提取 API 接口定义
+   *
+   * 检测条件（满足任一）：
+   * 1. workerId 包含 "backend" 或 "api"
+   * 2. subtask.objective 包含 "API", "endpoint", "backend", "server" 等关键词
+   * 3. subtask.roleId 包含 "backend"
+   *
+   * 提取逻辑：
+   * - 从 result.output 中解析 JSON 格式的 API 定义
+   * - 或从 result.artifacts 中寻找 API 规格文件
+   */
+  private extractApiSpecFromResult(
+    result: TaskResult,
+    workerId: string,
+    subtask: SubTask
+  ): ApiSpec | null {
+    // 1. 检测是否是 backend/API 相关的 worker
+    const isBackendWorker = this.isBackendOrApiWorker(workerId, subtask);
+    if (!isBackendWorker) return null;
+
+    // 2. 尝试从 result.output 中提取 API 信息
+    let output = result.output as unknown;
+    
+    // P1-B Fix: 当 output 为字符串时，尝试解析为 JSON
+    if (typeof output === 'string' && output.trim()) {
+      const parsed = this.tryParseApiSpecFromText(output);
+      if (parsed) {
+        return {
+          ...parsed,
+          updatedAt: Date.now(),
+          producedBy: workerId,
+        };
+      }
+      // 尝试直接 JSON.parse
+      try {
+        output = JSON.parse(output);
+      } catch {
+        // 解析失败，继续检查 artifacts
+      }
+    }
+    
+    if (!output || typeof output !== 'object') return null;
+
+    const outputObj = output as Record<string, unknown>;
+
+    // 2a. 检查是否有显式的 apiSpec 字段
+    if (outputObj.apiSpec && typeof outputObj.apiSpec === 'object') {
+      const spec = outputObj.apiSpec as Record<string, unknown>;
+      if (Array.isArray(spec.endpoints)) {
+        return {
+          endpoints: this.normalizeApiEndpoints(spec.endpoints),
+          ...(typeof spec.baseUrl === 'string' && { baseUrl: spec.baseUrl }),
+          updatedAt: Date.now(),
+          producedBy: workerId,
+        };
+      }
+    }
+
+    // 2b. 检查是否有 endpoints 字段
+    if (Array.isArray(outputObj.endpoints)) {
+      return {
+        endpoints: this.normalizeApiEndpoints(outputObj.endpoints),
+        ...(typeof outputObj.baseUrl === 'string' && { baseUrl: outputObj.baseUrl }),
+        updatedAt: Date.now(),
+        producedBy: workerId,
+      };
+    }
+
+    // 2c. 尝试从 text/message 中解析 JSON
+    const textContent = outputObj.text || outputObj.message;
+    if (typeof textContent === 'string') {
+      const parsed = this.tryParseApiSpecFromText(textContent);
+      if (parsed) {
+        return {
+          ...parsed,
+          updatedAt: Date.now(),
+          producedBy: workerId,
+        };
+      }
+    }
+
+    // 3. 检查 artifacts 中是否有 API 规格文件
+    if (result.artifacts && result.artifacts.length > 0) {
+      for (const artifact of result.artifacts) {
+        if (
+          artifact.name?.toLowerCase().includes('api') ||
+          artifact.name?.toLowerCase().includes('openapi') ||
+          artifact.name?.toLowerCase().includes('swagger')
+        ) {
+          // 如果有 API 相关的 artifact，尝试解析其内容
+          if (typeof artifact.content === 'string') {
+            const parsed = this.tryParseApiSpecFromText(artifact.content);
+            if (parsed) {
+              return {
+                ...parsed,
+                updatedAt: Date.now(),
+                producedBy: workerId,
+              };
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * 检测是否是 backend 或 API 相关的 worker
+   */
+  private isBackendOrApiWorker(workerId: string, subtask: SubTask): boolean {
+    const backendKeywords = ['backend', 'api', 'server', 'endpoint'];
+    const workerIdLower = workerId.toLowerCase();
+    const objectiveLower = subtask.objective.toLowerCase();
+    const roleIdLower = (subtask.roleId ?? '').toLowerCase();
+
+    // 检查 workerId
+    if (backendKeywords.some(k => workerIdLower.includes(k))) return true;
+
+    // 检查 objective
+    if (backendKeywords.some(k => objectiveLower.includes(k))) return true;
+
+    // 检查 roleId
+    if (backendKeywords.some(k => roleIdLower.includes(k))) return true;
+
+    return false;
+  }
+
+  /**
+   * 规范化 API endpoints 数组
+   */
+  private normalizeApiEndpoints(
+    endpoints: unknown[]
+  ): ApiEndpoint[] {
+    return endpoints
+      .filter((e): e is Record<string, unknown> => e !== null && typeof e === 'object')
+      .map(e => ({
+        path: typeof e.path === 'string' ? e.path : String(e.path ?? '/unknown'),
+        method: typeof e.method === 'string' ? e.method.toUpperCase() : 'GET',
+        description: typeof e.description === 'string' ? e.description : '',
+        ...(e.requestParams && typeof e.requestParams === 'object'
+          ? { requestParams: e.requestParams as Record<string, string> }
+          : {}),
+        ...(typeof e.responseFormat === 'string'
+          ? { responseFormat: e.responseFormat }
+          : {}),
+      }));
+  }
+
+  /**
+   * 尝试从文本中解析 API 规格
+   */
+  private tryParseApiSpecFromText(
+    text: string
+  ): { endpoints: ApiEndpoint[]; baseUrl?: string } | null {
+    // 尝试找到 JSON 块
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || 
+                      text.match(/\{[\s\S]*"endpoints"[\s\S]*\}/);
+    
+    if (!jsonMatch) return null;
+
+    try {
+      const jsonStr = jsonMatch[1] || jsonMatch[0];
+      const parsed = JSON.parse(jsonStr);
+      
+      if (Array.isArray(parsed.endpoints)) {
+        return {
+          endpoints: this.normalizeApiEndpoints(parsed.endpoints),
+          baseUrl: typeof parsed.baseUrl === 'string' ? parsed.baseUrl : undefined,
+        };
+      }
+      
+      if (Array.isArray(parsed)) {
+        return { endpoints: this.normalizeApiEndpoints(parsed) };
+      }
+    } catch {
+      // JSON 解析失败，忽略
+    }
+
+    return null;
+  }
+
+  /**
    * 标记子任务失败
    */
   private markSubtaskFailed(subtask: SubTask, subtaskId: string, error: string): void {
     this.executionState!.runningSubtasks.delete(subtaskId);
     this.executionState!.failedSubtasks.set(subtaskId, error);
     subtask.status = 'failure';
+  }
+
+  // ============================================================================
+  // P2: 集成阶段上下文注入
+  // ============================================================================
+
+  /**
+   * P2: 检测是否是集成类子任务
+   *
+   * 检测条件（满足任一）：
+   * 1. 名称或描述包含 "integration", "connect", "integrate", "wire up" 等关键词
+   * 2. 依赖多个不同类型的子任务（如 frontend + backend）
+   */
+  private isIntegrationSubtask(subtask: SubTask): boolean {
+    const integrationKeywords = [
+      'integration', 'integrate', 'connect', 'wire up', 'wiring',
+      'hook up', 'combine', 'merge', 'link', 'bridge',
+    ];
+    const objectiveLower = subtask.objective.toLowerCase();
+
+    // 1. 检查 objective 中是否包含集成关键词
+    if (integrationKeywords.some(k => objectiveLower.includes(k))) {
+      return true;
+    }
+
+    // 2. 检查是否有多个依赖且依赖类型多样（如同时依赖 frontend 和 backend）
+    const deps = subtask.dependencies ?? [];
+    if (deps.length >= 2) {
+      // 简单启发式：如果依赖包含不同角色的任务，可能是集成任务
+      // 后续可以扩展为检查实际的 roleId
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * P2: 为集成类子任务构建上下文
+   *
+   * 从 sharedKnowledge 读取：
+   * - apiSpec: 后端 API 接口定义
+   * - generatedFiles: 各 Worker 生成的文件清单
+   *
+   * 返回格式化的上下文字符串，可直接附加到子任务的 objective 或 constraints
+   */
+  private async buildIntegrationContext(subtask: SubTask): Promise<string> {
+    if (!this.isIntegrationSubtask(subtask)) return '';
+    if (!this.sessionManager) return '';
+
+    const context = await this.sessionManager.readSharedContext().catch(() => null);
+    if (!context?.sharedKnowledge?.data) return '';
+
+    const parts: string[] = [];
+    const data = context.sharedKnowledge.data;
+
+    // 1. 注入 API 接口定义
+    if (data.apiSpec && data.apiSpec.endpoints?.length > 0) {
+      parts.push('[已有 API 接口]');
+      if (data.apiSpec.baseUrl) {
+        parts.push(`Base URL: ${data.apiSpec.baseUrl}`);
+      }
+      parts.push('Endpoints:');
+      for (const ep of data.apiSpec.endpoints.slice(0, 10)) { // 限制最多10个
+        parts.push(`  ${ep.method} ${ep.path} - ${ep.description}`);
+      }
+      if (data.apiSpec.endpoints.length > 10) {
+        parts.push(`  ... 还有 ${data.apiSpec.endpoints.length - 10} 个端点`);
+      }
+    }
+
+    // 2. 注入依赖子任务的生成文件清单
+    if (data.generatedFiles) {
+      const generatedFiles = data.generatedFiles as Record<string, string[]>;
+      const workerIds = Object.keys(generatedFiles);
+      if (workerIds.length > 0) {
+        parts.push('');
+        parts.push('[已生成文件]');
+        for (const workerId of workerIds.slice(0, 5)) { // 限制最多5个 worker
+          const files = generatedFiles[workerId];
+          if (files && files.length > 0) {
+            parts.push(`${workerId}:`);
+            for (const file of files.slice(0, 5)) { // 每个 worker 最多5个文件
+              parts.push(`  - ${file}`);
+            }
+            if (files.length > 5) {
+              parts.push(`  ... 还有 ${files.length - 5} 个文件`);
+            }
+          }
+        }
+      }
+    }
+
+    return parts.length > 0 ? parts.join('\n') : '';
+  }
+
+  /**
+   * P2: 在分配子任务前增强其上下文
+   *
+   * 如果检测到集成类子任务，自动附加 API 接口和文件清单信息
+   */
+  private async enhanceSubtaskForIntegration(subtask: SubTask): Promise<SubTask> {
+    const integrationContext = await this.buildIntegrationContext(subtask);
+    if (!integrationContext) return subtask;
+
+    // 将集成上下文附加到 constraints
+    const enhancedConstraints = [
+      ...(subtask.constraints ?? []),
+      integrationContext,
+    ];
+
+    return {
+      ...subtask,
+      constraints: enhancedConstraints,
+    };
   }
 
   /**

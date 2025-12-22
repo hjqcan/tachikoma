@@ -260,8 +260,22 @@ export interface ExecutionContext {
   sandboxId?: string;
   /** 追踪 ID */
   traceId: string;
-  /** 工作目录 */
+  /** 工作目录（初始值，只读） */
   workDir: string;
+  /**
+   * 当前有效工作目录（P1-A）
+   *
+   * 由 shell_run 等工具在执行 cd 命令后更新。
+   * 后续工具调用应优先使用此字段而非 workDir。
+   * 如未设置，默认回退到 workDir。
+   */
+  effectiveCwd?: string;
+  /**
+   * 更新有效工作目录的回调（P1-A）
+   *
+   * 工具在成功执行带 cwd 参数的命令后调用此回调。
+   */
+  updateCwd?: (newCwd: string) => void;
   /** 环境变量 */
   env: Record<string, string>;
 

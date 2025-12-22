@@ -393,8 +393,38 @@ export interface SyncLogEntry {
   objective: string;
   updatedAt: number;
   modifiedFiles?: string[];
-  decisions?: Array<{ type: string; reason: string; approved?: boolean }>;
+  decisions?: { type: string; reason: string; approved?: boolean }[];
   output?: string;
+}
+
+/**
+ * API 端点定义 (由 backend worker 产出)
+ */
+export interface ApiEndpoint {
+  /** API 路径 (例如 /api/users) */
+  path: string;
+  /** HTTP 方法 (GET, POST, PUT, DELETE 等) */
+  method: string;
+  /** 端点描述 */
+  description: string;
+  /** 请求参数 (可选) */
+  requestParams?: Record<string, string>;
+  /** 响应格式说明 (可选) */
+  responseFormat?: string;
+}
+
+/**
+ * API 接口定义 (用于跨 Worker 共享)
+ */
+export interface ApiSpec {
+  /** API 端点列表 */
+  endpoints: ApiEndpoint[];
+  /** API 基础 URL (例如 http://localhost:8000) */
+  baseUrl?: string;
+  /** 更新时间 */
+  updatedAt: number;
+  /** 产出者 Worker ID */
+  producedBy: string;
 }
 
 /**
@@ -402,6 +432,10 @@ export interface SyncLogEntry {
  */
 export interface SharedKnowledgeData {
   syncLog?: SyncLogEntry[];
+  /** API 接口定义 (由 backend worker 产出) */
+  apiSpec?: ApiSpec;
+  /** 生成的文件清单 (按 worker ID 分组) */
+  generatedFiles?: Record<string, string[]>;
   [key: string]: unknown;
 }
 

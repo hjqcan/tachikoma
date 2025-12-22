@@ -91,8 +91,9 @@ export const fileReadTool: Tool = {
           error: workDirCheck.error ?? 'Unknown workDir error',
         };
       }
-
-      const absolutePath = validatePath(filePath, context.workDir);
+      // P1-A: 使用 effectiveCwd 作为基础目录
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const absolutePath = validatePath(filePath, baseDir);
 
       // 应用资源限制（使用统一默认值）
       const maxFileSize = context.resourceLimits?.maxFileSize || DEFAULT_RESOURCE_LIMITS.maxFileSize;

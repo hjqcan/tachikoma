@@ -267,8 +267,9 @@ export const fileListTool: Tool = {
           error: workDirCheck.error ?? 'Unknown workDir error',
         };
       }
-
-      const absolutePath = validatePath(dirPath, context.workDir);
+      // P1-A: 使用 effectiveCwd 作为基础目录
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const absolutePath = validatePath(dirPath, baseDir);
 
       // 检查是否为目录
       const dirStat = await stat(absolutePath);

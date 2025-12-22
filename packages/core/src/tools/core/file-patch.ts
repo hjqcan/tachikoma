@@ -216,8 +216,9 @@ export const applyPatchTool: Tool = {
           error: workDirCheck.error ?? 'Unknown workDir error',
         };
       }
-
-      const absolutePath = validatePath(filePath, context.workDir);
+      // P1-A: 使用 effectiveCwd 作为基础目录
+      const baseDir = context.effectiveCwd ?? context.workDir;
+      const absolutePath = validatePath(filePath, baseDir);
 
       // 读取原始内容
       let content: string;
