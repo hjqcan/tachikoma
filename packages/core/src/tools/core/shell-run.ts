@@ -107,6 +107,13 @@ interface ExtendedShellRunOutput extends ShellRunOutput {
   processId?: string;
 }
 
+/**
+ * 规范化超时时间
+ */
+function normalizeTimeoutMs(timeout?: number): number | undefined {
+  return timeout;
+}
+
 // =============================================================================
 // Background Process Registry (Claude Code-like /bashes)
 // =============================================================================
@@ -248,20 +255,14 @@ export async function cleanupAllForTask(taskId: string): Promise<void> {
 /**
  * Execute command in background (Claude Code-like)
  */
-function executeBackgroundCommand(
+function registerBackgroundProcess(
+  child: ReturnType<typeof spawn>,
   command: string,
   cwd: string,
   context: ExecutionContext
 ): { pid: number; processId: string; error?: string } {
-  const child = spawn('sh', ['-c', command], {
-    cwd,
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: mergeEnv(context),
-  });
-
   const pid = child.pid;
-  
+
   // CRITICAL: Validate PID before registering
   if (!pid || pid <= 0) {
     child.on('error', () => {
@@ -319,6 +320,61 @@ function executeBackgroundCommand(
   });
 
   return { pid, processId };
+}
+
+function executeBackgroundCommand(
+  command: string,
+  cwd: string,
+  context: ExecutionContext
+): { pid: number; processId: string; error?: string } {
+  const child = spawn('sh', ['-c', command], {
+    cwd,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: mergeEnv(context),
+  });
+
+  return registerBackgroundProcess(child, command, cwd, context);
+}
+
+function executeBackgroundCommandWithArgs(
+  command: string,
+  args: string[],
+  cwd: string,
+  context: ExecutionContext
+): { pid: number; processId: string; error?: string } {
+  const child = spawn(command, args, {
+    cwd,
+    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: mergeEnv(context),
+  });
+
+  const displayCommand = [command, ...args].join(' ').trim();
+  return registerBackgroundProcess(child, displayCommand, cwd, context);
+}
+
+/**
+ * 启动后台进程（对外导出）
+ */
+export function startBackgroundProcess(
+  command: string,
+  cwd: string,
+  context: ExecutionContext
+): { pid: number; processId: string; error?: string } {
+  return executeBackgroundCommand(command, cwd, context);
+}
+
+/**
+ * 启动后台进程（无 shell，使用 args）
+ */
+export function startBackgroundProcessWithArgs(
+  command: string,
+  args: string[],
+  cwd: string,
+  context: ExecutionContext
+): { pid: number; processId: string; error?: string } {
+  return executeBackgroundCommandWithArgs(command, args, cwd, context);
 }
 
 /**
@@ -559,7 +615,8 @@ export const shellRunTool: Tool = {
     } = input as ExtendedShellRunInput;
     
     // Get smart timeout based on command type (enforces minimum)
-    const { timeout, reason: timeoutReason } = getSmartTimeout(command, explicitTimeout);
+    const normalizedTimeout = normalizeTimeoutMs(explicitTimeout);
+    const { timeout, reason: timeoutReason } = getSmartTimeout(command, normalizedTimeout);
     if (timeoutReason) {
       console.log(`[shell_run] Auto-detected ${timeoutReason}, using ${timeout}ms timeout`);
     }

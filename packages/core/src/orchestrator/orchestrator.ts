@@ -2054,6 +2054,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
     // 标记为运行中
     this.executionState!.runningSubtasks.add(subtaskId);
     activeSubtask.status = 'running';
+    await this.updateProgressToSession(taskId);
 
     let retryCount = 0;
     let lastError: string | undefined;
@@ -2095,6 +2096,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
           this.markSubtaskFailed(activeSubtask, subtaskId, failureError);
 
           this.emit('subtask:failed', taskId, { error: failureError, retryCount }, subtaskId);
+          await this.updateProgressToSession(taskId);
           await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-failed');
 
           return {
@@ -2129,6 +2131,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
 
         this.emit('subtask:complete', taskId, { result }, subtaskId);
+        await this.updateProgressToSession(taskId);
         await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-complete');
 
         return {

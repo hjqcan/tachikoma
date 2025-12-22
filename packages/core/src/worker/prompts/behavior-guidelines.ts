@@ -42,6 +42,19 @@ When using \`file_list\`:
 
 When developing web applications:
 
+### Installing Dependencies
+CRITICAL: Use \`package_install\` for dependency installation (npm/pnpm/yarn/bun).
+
+Examples:
+- Install all deps (auto-detect by lockfile):
+  \`\`\`
+  { "packages": [] }
+  \`\`\`
+- Add dev dependencies:
+  \`\`\`
+  { "packages": ["tailwindcss", "postcss", "autoprefixer"], "dev": true }
+  \`\`\`
+
 ### Starting Dev Servers
 CRITICAL: Do NOT use \`shell_run\` for long-running commands like \`npm run dev\`, \`vite\`, \`uvicorn\`, etc.
 
@@ -87,6 +100,7 @@ After starting a server, use Chrome DevTools MCP tools to verify the page:
 
 ### DO NOT:
 - Run \`npm run dev\` with regular \`shell_run\` (will timeout after 30s)
+- Run \`npm install\`/\`yarn install\`/\`pnpm install\` with \`shell_run\` (use \`package_install\`)
 - Skip verification after starting a server
 - Ignore console errors in verification output
 

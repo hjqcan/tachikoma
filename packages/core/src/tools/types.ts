@@ -472,6 +472,58 @@ export interface PackageInfoOutput {
 }
 
 // ============================================================================
+// package_install 工具类型
+// ============================================================================
+
+/**
+ * 包安装输入
+ */
+export interface PackageInstallInput {
+  /** 要安装的包列表（空表示 install） */
+  packages?: string[];
+  /** 是否安装为 devDependencies */
+  dev?: boolean;
+  /** 工作目录（相对于上下文 workDir） */
+  cwd?: string;
+  /** 指定包管理器（默认 auto） */
+  packageManager?: PackageManager | 'auto';
+  /** 超时时间（毫秒） */
+  timeoutMs?: number;
+  /** 日志轮询间隔（毫秒） */
+  pollIntervalMs?: number;
+  /** 最大输出长度 */
+  maxOutput?: number;
+  /** 额外参数 */
+  extraArgs?: string[];
+}
+
+/**
+ * 包安装输出
+ */
+export interface PackageInstallOutput {
+  /** 实际使用的包管理器 */
+  packageManager: PackageManager;
+  /** 实际执行的命令 */
+  command: string;
+  /** 工作目录 */
+  cwd: string;
+  /** 退出码 */
+  exitCode: number;
+  /** 日志输出 */
+  logs: string;
+  /** 日志是否被截断 */
+  logsTruncated: boolean;
+  /** 执行耗时（毫秒） */
+  durationMs: number;
+  /** 是否超时 */
+  timedOut: boolean;
+  /** 后台进程 ID */
+  processId: string;
+  /** 警告信息 */
+  warnings?: string[];
+}
+
+// ============================================================================
 // env_get 工具类型
 // ============================================================================
 

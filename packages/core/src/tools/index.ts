@@ -18,6 +18,7 @@ import {
   runTestsTool,
   typeCheckTool,
   packageInfoTool,
+  packageInstallTool,
   envGetTool,
   // devServerTool 从 core 导入但不放入 baseTools
   devServerTool,
@@ -66,6 +67,8 @@ export type {
   TypeCheckOutput,
   PackageInfoInput,
   PackageInfoOutput,
+  PackageInstallInput,
+  PackageInstallOutput,
   PackageManager,
   EnvGetInput,
   EnvGetOutput,
@@ -108,6 +111,7 @@ export {
   runTestsTool,
   typeCheckTool,
   packageInfoTool,
+  packageInstallTool,
   envGetTool,
   // 安全工具函数
   DEFAULT_ENV_WHITELIST,
@@ -167,6 +171,7 @@ export const baseTools: Tool[] = [
   runTestsTool,
   typeCheckTool,
   packageInfoTool,
+  packageInstallTool,
   envGetTool,
   // RAG 工具（本地向量存储）
   knowledgeRetrievalTool,

@@ -16,6 +16,7 @@ export { replaceBetweenMarkersTool } from './file-replace-markers';
 export { runTestsTool } from './run-tests';
 export { typeCheckTool } from './type-check';
 export { packageInfoTool } from './package-info';
+export { packageInstallTool } from './package-install';
 export { envGetTool } from './env-get';
 
 // Agent/子任务工具
@@ -44,6 +45,7 @@ export {
   listBackgroundProcesses, 
   killBackgroundProcess, 
   getBackgroundProcessOutput,
+  startBackgroundProcess,
   cleanupBackgroundProcesses,
   cleanupBackgroundProcessesForTask,
 } from './shell-run';

@@ -7,7 +7,7 @@
 
 import type { Tool } from '../types';
 import type { SubTask } from '../orchestrator/types';
-import type { ISessionFileManager, SharedContextFile, SyncLogEntry } from '../orchestrator/session/types';
+import type { ISessionFileManager, SharedContextFile, SyncLogEntry, WorkerStatusFile } from '../orchestrator/session/types';
 import type {
   IWorkerBackend,
   WorkerMessage,
@@ -28,6 +28,9 @@ import { cleanupServersForTask } from '../tools/core/dev-server';
 // ============================================================================
 // 类型定义
 // ============================================================================
+
+/** Worker 心跳间隔（避免长时间工具调用导致 stale） */
+const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Worker 执行器配置
@@ -341,11 +344,53 @@ export class WorkerExecutor {
     let thinkingRounds = 0;
     let tokensUsed = 0;
     const allMessages: WorkerMessage[] = [];
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let currentStatus: Omit<WorkerStatusFile, 'workerId'> | null = null;
+    let heartbeatWrite: Promise<void> | null = null;
+    let heartbeatEnabled = false;
+
+    const writeWorkerStatus = async (status: Omit<WorkerStatusFile, 'workerId'>) => {
+      currentStatus = status;
+      if (sessionManager) {
+        await sessionManager.writeWorkerStatus(workerId, status);
+      }
+    };
+
+    const enqueueHeartbeatWrite = () => {
+      if (!sessionManager || !currentStatus || !heartbeatEnabled) return;
+      const payload = {
+        ...currentStatus,
+        lastHeartbeat: Date.now(),
+      };
+      heartbeatWrite = (heartbeatWrite ?? Promise.resolve())
+        .then(() => sessionManager.writeWorkerStatus(workerId, payload))
+        .catch(() => undefined);
+    };
+
+    const startHeartbeat = () => {
+      if (!sessionManager || heartbeatTimer) return;
+      heartbeatEnabled = true;
+      heartbeatTimer = setInterval(() => {
+        enqueueHeartbeatWrite();
+      }, HEARTBEAT_INTERVAL_MS);
+    };
+
+    const stopHeartbeat = async () => {
+      heartbeatEnabled = false;
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (heartbeatWrite) {
+        await heartbeatWrite.catch(() => undefined);
+        heartbeatWrite = null;
+      }
+    };
 
     try {
       // 更新 Worker 状态
       if (sessionManager) {
-        await sessionManager.writeWorkerStatus(workerId, {
+        await writeWorkerStatus({
           status: 'thinking',
           progress: 0,
           currentSubtask: {
@@ -355,6 +400,7 @@ export class WorkerExecutor {
           },
           lastHeartbeat: Date.now(),
         });
+        startHeartbeat();
       }
 
       // 执行任务
@@ -406,7 +452,8 @@ export class WorkerExecutor {
 
       // 更新 Worker 状态为完成
       if (sessionManager) {
-        await sessionManager.writeWorkerStatus(workerId, {
+        await stopHeartbeat();
+        await writeWorkerStatus({
           status: 'idle',
           progress: 100,
           lastHeartbeat: Date.now(),
@@ -427,7 +474,8 @@ export class WorkerExecutor {
     } catch (error) {
       // 更新 Worker 状态为失败
       if (sessionManager) {
-        await sessionManager.writeWorkerStatus(workerId, {
+        await stopHeartbeat();
+        await writeWorkerStatus({
           status: 'error',
           progress: 0,
           error: {
@@ -453,6 +501,7 @@ export class WorkerExecutor {
       throw error;
     } finally {
       try {
+        await stopHeartbeat();
         // Cleanup all shell resources (background processes + persistent shell sessions)
         await cleanupAllForTask(subtask.id);
         cleanupServersForTask(subtask.id);
