@@ -19,7 +19,7 @@ conversation/
 ┌─────────────────────────────────────────────────────────────────┐
 │                    ConversationalRunner                         │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │  Slash Commands (/undo, /clear, /checkpoints, /continue)   ││
+│  │  Slash Commands (/undo, /clear, /checkpoints, /continue, /retry)   ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                              │                                  │
 │  ┌─────────────────────────────────────────────────────────────┐│
@@ -41,6 +41,7 @@ conversation/
 | `/undo [steps\|id]`      | Roll back to a checkpoint         |
 | `/checkpoints`           | List all available checkpoints    |
 | `/continue [context]`    | Continue the last unfinished task |
+| `/retry [checkpointId]`  | Resume from the latest checkpoint |
 | `/clear [--checkpoints]` | Clear conversation history        |
 | `/help`                  | Show available commands           |
 

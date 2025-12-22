@@ -41,6 +41,7 @@ import {
   createAndInitializeSessionFileManager,
   generateTimestampId,
   CheckpointManager,
+  createSubtaskSnapshots,
   listDir,
   fileExists,
   type ISessionFileManager,
@@ -52,6 +53,7 @@ import {
   type ActionRecord,
   type InterventionFile,
   type DecisionRecord,
+  type CheckpointData,
   type CheckpointRestoreOptions,
   type RecoveryStrategy,
   type ApiSpec,
@@ -207,6 +209,15 @@ export class Orchestrator extends BaseAgent {
 
   /** 当前执行状态 */
   private executionState: ExecutionState | null = null;
+
+  /** 检查点管理器（用于断点恢复） */
+  private checkpointManager: CheckpointManager | null = null;
+
+  /** 当前规划输出（用于生成子任务快照） */
+  private currentPlanOutput: PlannerOutput | null = null;
+
+  /** 检查点保存中标记（防止并发写入） */
+  private checkpointInFlight = false;
 
   /** 审批处理器（绑定的方法引用，用于事件订阅/取消） */
   private readonly boundApprovalHandler: (event: SessionFileEvent<PendingApprovalFile>) => Promise<void>;
@@ -807,6 +818,13 @@ export class Orchestrator extends BaseAgent {
       totalRetries: 0,
     };
 
+    if (this.checkpointManager && this.shouldCheckpoint()) {
+      this.checkpointManager.setAutoSaveCallback(async () => {
+        return this.buildCheckpointData(task.id, 'executing');
+      });
+      this.checkpointManager.startAutoSave();
+    }
+
     try {
       // 阶段 1: 规划
       this.emit('plan:start', task.id, { task: orchestratorTask });
@@ -832,6 +850,9 @@ export class Orchestrator extends BaseAgent {
 
       // 保存计划到会话文件
       await this.savePlanToSession(task.id, normalizedPlan);
+
+      this.currentPlanOutput = normalizedPlan;
+      await this.saveCheckpointSnapshot(task.id, 'executing', 'plan-ready');
 
       // 入口评估：信息不足时不执行，转为对话澄清
       if (normalizedPlan.intake?.ready === false) {
@@ -897,6 +918,7 @@ export class Orchestrator extends BaseAgent {
     } finally {
       // 清理
       this.executionState = null;
+      this.currentPlanOutput = null;
       await this.closeSession();
       this.currentRunMetadata = null;
       
@@ -967,6 +989,13 @@ export class Orchestrator extends BaseAgent {
           watchPollInterval: this.orchestratorConfig.session.watchPollInterval ?? 500,
         }
       );
+    }
+
+    if (this.sessionManager) {
+      this.checkpointManager = new CheckpointManager(this.currentSessionId, this.sessionManager, {
+        ...this.orchestratorConfig.checkpoint,
+        rootDir: this.orchestratorConfig.session.rootDir,
+      });
     }
 
     // 注册审批请求事件处理器
@@ -1052,6 +1081,11 @@ export class Orchestrator extends BaseAgent {
       // 显式停止文件监控（虽然 close() 内部也会调用，但显式调用更清晰）
       this.sessionManager.stopWatching();
       await this.sessionManager.close();
+    }
+
+    if (this.checkpointManager) {
+      await this.checkpointManager.close().catch(() => undefined);
+      this.checkpointManager = null;
     }
 
     // 清理缓存
@@ -1587,6 +1621,86 @@ Is this a genuine deviation? Answer YES or NO only.`,
     await this.sessionManager.writeProgress(progress);
   }
 
+  private shouldCheckpoint(): boolean {
+    return this.orchestratorConfig.checkpoint.autoSave;
+  }
+
+  private buildCheckpointData(
+    taskId: string,
+    planStatus: CheckpointData['planStatus']
+  ): Omit<CheckpointData, 'id' | 'sessionId' | 'createdAt' | 'updatedAt' | 'version'> | null {
+    if (!this.executionState || !this.currentPlanOutput) return null;
+
+    const executionPlan = this.currentPlanOutput.executionPlan
+      ? {
+          steps: this.currentPlanOutput.executionPlan.steps.map((step) => ({
+            order: step.order,
+            subtaskIds: step.subtaskIds,
+            parallel: step.parallel,
+          })),
+        }
+      : undefined;
+
+    const subtaskSnapshots = createSubtaskSnapshots(
+      this.currentPlanOutput.subtasks.map((subtask) => ({
+        id: subtask.id,
+        status: subtask.status ?? 'pending',
+        assignedWorkerId: subtask.assignedWorkerId,
+      })),
+      {
+        completedSubtasks: this.executionState.completedSubtasks,
+        failedSubtasks: this.executionState.failedSubtasks,
+        runningSubtasks: this.executionState.runningSubtasks,
+      }
+    );
+
+    const completedResults: Record<string, unknown> = {};
+    for (const [id, result] of this.executionState.completedSubtasks.entries()) {
+      completedResults[id] = result.output;
+    }
+
+    return {
+      taskId,
+      planStatus,
+      currentStep: this.executionState.currentStep,
+      totalSteps: this.executionState.totalSteps,
+      completedSubtaskIds: Array.from(this.executionState.completedSubtasks.keys()),
+      failedSubtaskIds: Array.from(this.executionState.failedSubtasks.keys()),
+      runningSubtaskIds: Array.from(this.executionState.runningSubtasks),
+      subtaskSnapshots,
+      completedResults,
+      totalRetries: this.executionState.totalRetries,
+      totalTokens: this.executionState.totalTokens,
+      ...(executionPlan && { executionPlan }),
+      ...(this.currentRunMetadata && { contextData: this.currentRunMetadata }),
+    };
+  }
+
+  private async saveCheckpointSnapshot(
+    taskId: string,
+    planStatus: CheckpointData['planStatus'],
+    reason?: string
+  ): Promise<void> {
+    if (!this.checkpointManager || !this.shouldCheckpoint()) return;
+    if (this.checkpointInFlight) return;
+
+    const payload = this.buildCheckpointData(taskId, planStatus);
+    if (!payload) return;
+
+    this.checkpointInFlight = true;
+    try {
+      const checkpoint = await this.checkpointManager.saveCheckpoint(payload);
+      this.emit('checkpoint:created', taskId, {
+        checkpointId: checkpoint.id,
+        ...(reason && { reason }),
+      });
+    } catch (error) {
+      console.warn('[Orchestrator] Failed to save checkpoint (non-fatal):', error);
+    } finally {
+      this.checkpointInFlight = false;
+    }
+  }
+
   // ============================================================================
   // 阶段 1: 规划
   // ============================================================================
@@ -1981,6 +2095,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
           this.markSubtaskFailed(activeSubtask, subtaskId, failureError);
 
           this.emit('subtask:failed', taskId, { error: failureError, retryCount }, subtaskId);
+          await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-failed');
 
           return {
             subtaskId,
@@ -2014,6 +2129,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         }
 
         this.emit('subtask:complete', taskId, { result }, subtaskId);
+        await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-complete');
 
         return {
           subtaskId,
@@ -2041,6 +2157,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         this.markSubtaskFailed(activeSubtask, subtaskId, lastError);
 
         this.emit('subtask:failed', taskId, { error: lastError, retryCount }, subtaskId);
+        await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-failed');
 
         return {
           subtaskId,

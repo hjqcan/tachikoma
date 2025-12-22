@@ -4,9 +4,11 @@
  * 会话持久化存储，支持检查点管理
  */
 
-import { mkdir, readFile, readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises';
+import { dirname, join, relative, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import type { SessionState, Checkpoint, ConversationMessage } from './types';
 import type { PlanFile, ProgressFile } from '../orchestrator/session/types';
 import { atomicWriteJson } from '../orchestrator/session/utils';
@@ -18,6 +20,24 @@ import { atomicWriteJson } from '../orchestrator/session/utils';
 const SESSION_FILE = 'session.json';
 const CANONICAL_SESSIONS_DIR = 'sessions';
 const CONVERSATION_DIR = 'conversation';
+const CHECKPOINTS_DIR = 'checkpoints';
+const WORKSPACE_SNAPSHOT_FILE = 'workspace.json';
+const WORKSPACE_FILES_DIR = 'workspace_files';
+const ORCHESTRATOR_SNAPSHOT_DIR = 'orchestrator';
+const ORCHESTRATOR_SNAPSHOT_FILES = ['plan.json', 'progress.json', 'decisions.jsonl'];
+
+const execFileAsync = promisify(execFile);
+
+interface WorkspaceSnapshot {
+  id: string;
+  createdAt: number;
+  workDir: string;
+  repoRoot: string;
+  trackedModified: string[];
+  trackedDeleted: string[];
+  untracked: string[];
+  filesDir: string;
+}
 
 // =============================================================================
 // SessionStore 类
@@ -181,7 +201,11 @@ export class SessionStore {
    */
   async createCheckpoint(
     sessionId: string,
-    description: string
+    description: string,
+    options?: {
+      includeWorkspaceSnapshot?: boolean;
+      includeOrchestratorSnapshot?: boolean;
+    }
   ): Promise<Checkpoint> {
     const session = await this.getSession(sessionId);
     if (!session) {
@@ -194,6 +218,36 @@ export class SessionStore {
       description,
       messageIndex: session.messages.length,
     };
+    checkpoint.hasWorkspaceSnapshot = false;
+    checkpoint.hasOrchestratorSnapshot = false;
+
+    const includeWorkspaceSnapshot = options?.includeWorkspaceSnapshot ?? false;
+    const includeOrchestratorSnapshot = options?.includeOrchestratorSnapshot ?? includeWorkspaceSnapshot;
+
+    if (includeWorkspaceSnapshot) {
+      try {
+        const snapshotPath = await this.createWorkspaceSnapshot(
+          sessionId,
+          checkpoint.id,
+          session.workDir
+        );
+        if (snapshotPath) {
+          checkpoint.snapshotPath = snapshotPath;
+          checkpoint.hasWorkspaceSnapshot = true;
+        }
+      } catch (error) {
+        console.warn('[SessionStore] Failed to create workspace snapshot (non-fatal):', error);
+      }
+    }
+
+    if (includeOrchestratorSnapshot) {
+      try {
+        await this.captureOrchestratorSnapshot(sessionId, checkpoint.id);
+        checkpoint.hasOrchestratorSnapshot = true;
+      } catch (error) {
+        console.warn('[SessionStore] Failed to capture orchestrator snapshot (non-fatal):', error);
+      }
+    }
 
     session.checkpoints.push(checkpoint);
     await this.saveSession(session);
@@ -225,6 +279,17 @@ export class SessionStore {
       throw new Error(`Checkpoint data is undefined: ${checkpointId}`);
     }
 
+    if (checkpoint.snapshotPath) {
+      await this.restoreWorkspaceSnapshot(checkpoint.snapshotPath);
+    }
+    const hasOrchestratorSnapshot =
+      checkpoint.hasOrchestratorSnapshot ?? (await this.hasOrchestratorSnapshot(sessionId, checkpoint.id));
+    if (hasOrchestratorSnapshot) {
+      await this.restoreOrchestratorSnapshot(sessionId, checkpoint.id).catch((error) => {
+        console.warn('[SessionStore] Failed to restore orchestrator snapshot (non-fatal):', error);
+      });
+    }
+
     // 截断消息历史
     session.messages = session.messages.slice(0, checkpoint.messageIndex);
 
@@ -251,6 +316,65 @@ export class SessionStore {
       return null;
     }
     return session.checkpoints[session.checkpoints.length - 1] ?? null;
+  }
+
+  /**
+   * 关联 orchestrator 检查点（用于恢复执行）
+   */
+  async attachOrchestratorCheckpoint(
+    sessionId: string,
+    checkpointId: string,
+    orchestratorCheckpointId: string
+  ): Promise<void> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    const checkpoint = session.checkpoints.find((cp) => cp.id === checkpointId);
+    if (!checkpoint) {
+      throw new Error(`Checkpoint not found: ${checkpointId}`);
+    }
+
+    checkpoint.orchestratorCheckpointId = orchestratorCheckpointId;
+    await this.saveSession(session);
+  }
+
+  /**
+   * 恢复检查点相关的文件快照（不修改对话消息）
+   */
+  async restoreCheckpointAssets(
+    sessionId: string,
+    checkpointId: string,
+    options: { workspace?: boolean; orchestrator?: boolean } = {}
+  ): Promise<{ restoredWorkspace: boolean; restoredOrchestrator: boolean }> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      throw new Error(`Session not found: ${sessionId}`);
+    }
+
+    const checkpoint = session.checkpoints.find((cp) => cp.id === checkpointId);
+    if (!checkpoint) {
+      throw new Error(`Checkpoint not found: ${checkpointId}`);
+    }
+
+    let restoredWorkspace = false;
+    if (options.workspace !== false && checkpoint.snapshotPath) {
+      await this.restoreWorkspaceSnapshot(checkpoint.snapshotPath);
+      restoredWorkspace = true;
+    }
+
+    let restoredOrchestrator = false;
+    if (options.orchestrator !== false) {
+      const hasOrchestratorSnapshot =
+        checkpoint.hasOrchestratorSnapshot ?? (await this.hasOrchestratorSnapshot(sessionId, checkpoint.id));
+      if (hasOrchestratorSnapshot) {
+        await this.restoreOrchestratorSnapshot(sessionId, checkpoint.id);
+        restoredOrchestrator = true;
+      }
+    }
+
+    return { restoredWorkspace, restoredOrchestrator };
   }
 
   // ---------------------------------------------------------------------------
@@ -373,5 +497,201 @@ export class SessionStore {
       const planIds = session.currentPlan?.subtasks?.map((s) => s.id) ?? [];
       session.pendingSubtasks = planIds.filter((id) => !completed.has(id) && !failed.has(id));
     }
+  }
+
+  private getCheckpointRoot(sessionId: string, checkpointId: string): string {
+    return join(this.getCanonicalSessionPath(sessionId), CHECKPOINTS_DIR, checkpointId);
+  }
+
+  private async runGit(args: string[], cwd: string): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsync('git', args, { cwd });
+      return stdout.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  private async readGitPaths(args: string[], cwd: string): Promise<string[]> {
+    const output = await this.runGit(args, cwd);
+    if (!output) return [];
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  private async createWorkspaceSnapshot(
+    sessionId: string,
+    checkpointId: string,
+    workDir: string
+  ): Promise<string | undefined> {
+    if (!workDir) return undefined;
+
+    const repoRootRaw = await this.runGit(['rev-parse', '--show-toplevel'], workDir);
+    if (!repoRootRaw) return undefined;
+    const repoRoot = repoRootRaw.trim();
+    if (!repoRoot) return undefined;
+
+    const modified = await this.readGitPaths(
+      ['diff', '--name-only', '--diff-filter=ACMRTUXB'],
+      repoRoot
+    );
+    const modifiedStaged = await this.readGitPaths(
+      ['diff', '--name-only', '--staged', '--diff-filter=ACMRTUXB'],
+      repoRoot
+    );
+    const deleted = await this.readGitPaths(
+      ['diff', '--name-only', '--diff-filter=D'],
+      repoRoot
+    );
+    const deletedStaged = await this.readGitPaths(
+      ['diff', '--name-only', '--staged', '--diff-filter=D'],
+      repoRoot
+    );
+    const untracked = await this.readGitPaths(
+      ['ls-files', '--others', '--exclude-standard'],
+      repoRoot
+    );
+
+    const trackedDeletedSet = new Set([...deleted, ...deletedStaged]);
+    const trackedModified = Array.from(
+      new Set([...modified, ...modifiedStaged].filter((p) => !trackedDeletedSet.has(p)))
+    );
+    const trackedDeleted = Array.from(trackedDeletedSet);
+
+    const snapshotDir = this.getCheckpointRoot(sessionId, checkpointId);
+    const filesDir = join(snapshotDir, WORKSPACE_FILES_DIR);
+    await mkdir(filesDir, { recursive: true });
+
+    const snapshot: WorkspaceSnapshot = {
+      id: checkpointId,
+      createdAt: Date.now(),
+      workDir,
+      repoRoot,
+      trackedModified,
+      trackedDeleted,
+      untracked,
+      filesDir: WORKSPACE_FILES_DIR,
+    };
+
+    const copyTargets = [...trackedModified, ...untracked];
+    for (const relativePath of copyTargets) {
+      const sourcePath = join(repoRoot, relativePath);
+      try {
+        const info = await stat(sourcePath);
+        if (!info.isFile()) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      const destPath = join(filesDir, relativePath);
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(sourcePath, destPath);
+    }
+
+    const snapshotPath = join(snapshotDir, WORKSPACE_SNAPSHOT_FILE);
+    await atomicWriteJson(snapshotPath, snapshot);
+    return snapshotPath;
+  }
+
+  private async restoreWorkspaceSnapshot(snapshotPath: string): Promise<void> {
+    const snapshotRaw = await readFile(snapshotPath, 'utf-8');
+    const snapshot = JSON.parse(snapshotRaw) as WorkspaceSnapshot;
+    const repoRoot = snapshot.repoRoot;
+    if (!repoRoot) {
+      throw new Error('Workspace snapshot missing repoRoot');
+    }
+
+    const workDirRelative = relative(repoRoot, snapshot.workDir);
+    const normalizedWorkDir = workDirRelative.split(sep).join('/');
+    const shouldScope =
+      normalizedWorkDir &&
+      normalizedWorkDir !== '.' &&
+      !normalizedWorkDir.startsWith('..') &&
+      !normalizedWorkDir.startsWith('/');
+    const scopePrefix = shouldScope ? normalizedWorkDir : '';
+    const inScope = (relativePath: string): boolean =>
+      !scopePrefix || relativePath === scopePrefix || relativePath.startsWith(`${scopePrefix}/`);
+
+    const trackedModified = snapshot.trackedModified.filter(inScope);
+    const trackedDeleted = snapshot.trackedDeleted.filter(inScope);
+    const untracked = snapshot.untracked.filter(inScope);
+
+    for (const relativePath of trackedDeleted) {
+      const targetPath = join(repoRoot, relativePath);
+      await rm(targetPath, { recursive: true, force: true }).catch(() => undefined);
+    }
+
+    const filesDir = join(dirname(snapshotPath), snapshot.filesDir);
+    const restoreTargets = [...trackedModified, ...untracked];
+    for (const relativePath of restoreTargets) {
+      const sourcePath = join(filesDir, relativePath);
+      try {
+        await stat(sourcePath);
+      } catch {
+        continue;
+      }
+      const destPath = join(repoRoot, relativePath);
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(sourcePath, destPath);
+    }
+
+  }
+
+  private async captureOrchestratorSnapshot(sessionId: string, checkpointId: string): Promise<void> {
+    const sessionRoot = this.getCanonicalSessionRoot(sessionId);
+    const sourceDir = join(sessionRoot, 'orchestrator');
+    const snapshotDir = join(this.getCheckpointRoot(sessionId, checkpointId), ORCHESTRATOR_SNAPSHOT_DIR);
+    await mkdir(snapshotDir, { recursive: true });
+
+    for (const fileName of ORCHESTRATOR_SNAPSHOT_FILES) {
+      const sourcePath = join(sourceDir, fileName);
+      try {
+        await stat(sourcePath);
+      } catch {
+        continue;
+      }
+      const destPath = join(snapshotDir, fileName);
+      await mkdir(dirname(destPath), { recursive: true });
+      await copyFile(sourcePath, destPath);
+    }
+  }
+
+  private async restoreOrchestratorSnapshot(sessionId: string, checkpointId: string): Promise<void> {
+    const sessionRoot = this.getCanonicalSessionRoot(sessionId);
+    const snapshotDir = join(this.getCheckpointRoot(sessionId, checkpointId), ORCHESTRATOR_SNAPSHOT_DIR);
+
+    let restoredAny = false;
+    for (const fileName of ORCHESTRATOR_SNAPSHOT_FILES) {
+      const snapshotPath = join(snapshotDir, fileName);
+      const targetPath = join(sessionRoot, 'orchestrator', fileName);
+      try {
+        await stat(snapshotPath);
+        await mkdir(dirname(targetPath), { recursive: true });
+        await copyFile(snapshotPath, targetPath);
+        restoredAny = true;
+      } catch {
+        continue;
+      }
+    }
+    if (!restoredAny) {
+      return;
+    }
+  }
+
+  private async hasOrchestratorSnapshot(sessionId: string, checkpointId: string): Promise<boolean> {
+    const snapshotDir = join(this.getCheckpointRoot(sessionId, checkpointId), ORCHESTRATOR_SNAPSHOT_DIR);
+    for (const fileName of ORCHESTRATOR_SNAPSHOT_FILES) {
+      const snapshotPath = join(snapshotDir, fileName);
+      try {
+        await stat(snapshotPath);
+        return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
   }
 }

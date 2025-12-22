@@ -66,6 +66,12 @@ export interface Checkpoint {
   messageIndex: number;
   /** 文件快照路径 */
   snapshotPath?: string;
+  /** 是否包含工作区快照 */
+  hasWorkspaceSnapshot?: boolean;
+  /** 是否包含 orchestrator 快照 */
+  hasOrchestratorSnapshot?: boolean;
+  /** 关联的 orchestrator 检查点 ID */
+  orchestratorCheckpointId?: string;
 }
 
 // =============================================================================

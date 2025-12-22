@@ -22,7 +22,7 @@ import {
   type StreamEvent,
   type ExecutionSummary,
 } from './types';
-import type { ActionRecord, ThinkingRecord } from '../orchestrator/session/types';
+import type { ActionRecord, ThinkingRecord, RecoveryStrategy } from '../orchestrator/session/types';
 import { MCPClientManager, loadMCPConfig } from '../mcp';
 
 type UserLanguage = 'en' | 'zh';
@@ -77,12 +77,123 @@ export class ConversationalRunner {
   }
 
   /**
+   * 从检查点恢复执行（供 UI/CLI 调用）
+   */
+  async *resumeFromCheckpoint(
+    sessionId: string,
+    options: { checkpointId?: string; strategy?: RecoveryStrategy; restoreWorkspace?: boolean } = {}
+  ): AsyncGenerator<StreamEvent> {
+    const session = await this.getSession(sessionId);
+    if (!session) {
+      yield {
+        type: 'error',
+        error: `Session not found: ${sessionId}`,
+        retryable: false,
+        timestamp: Date.now(),
+      };
+      return;
+    }
+
+    const checkpointId =
+      options.checkpointId ||
+      (typeof session.variables.lastSessionCheckpointId === 'string'
+        ? session.variables.lastSessionCheckpointId
+        : session.checkpoints[session.checkpoints.length - 1]?.id);
+
+    if (!checkpointId) {
+      yield {
+        type: 'complete',
+        success: true,
+        summary: this.t(session, {
+          en: 'No checkpoint available to retry.',
+          zh: '没有可用于重试的检查点。',
+        }),
+        timestamp: Date.now(),
+      };
+      return;
+    }
+
+    const targetCheckpoint = session.checkpoints.find((cp) => cp.id === checkpointId);
+    if (!targetCheckpoint) {
+      yield {
+        type: 'complete',
+        success: false,
+        summary: this.t(session, {
+          en: `Checkpoint not found: ${checkpointId}. Use /checkpoints to list available checkpoints.`,
+          zh: `未找到检查点: ${checkpointId}。可用检查点请运行 /checkpoints。`,
+        }),
+        timestamp: Date.now(),
+      };
+      return;
+    }
+
+    const orchestratorCheckpointId = targetCheckpoint.orchestratorCheckpointId;
+    if (!orchestratorCheckpointId) {
+      yield {
+        type: 'complete',
+        success: false,
+        summary: this.t(session, {
+          en: `Checkpoint ${checkpointId} has no orchestrator state. Try /continue instead.`,
+          zh: `检查点 ${checkpointId} 没有可恢复的执行状态，请尝试 /continue。`,
+        }),
+        timestamp: Date.now(),
+      };
+      return;
+    }
+
+    const objective =
+      typeof session.variables.lastObjective === 'string'
+        ? session.variables.lastObjective
+        : '';
+    const resumePrompt = objective || 'Resume the last task';
+
+    yield {
+      type: 'thinking',
+      content: this.t(session, {
+        en: `Retrying from checkpoint ${checkpointId}...`,
+        zh: `从检查点 ${checkpointId} 继续执行...`,
+      }),
+      timestamp: Date.now(),
+    };
+
+    session.variables.activeSessionCheckpointId = checkpointId;
+    session.variables.lastSessionCheckpointId = checkpointId;
+    delete session.variables.lastOrchestratorCheckpointId;
+    await this.sessionStore.saveSession(session);
+
+    const restoreWorkspace = options.restoreWorkspace === true;
+    if (restoreWorkspace) {
+      const restoreResult = await this.sessionStore.restoreCheckpointAssets(session.sessionId, checkpointId, {
+        workspace: true,
+        orchestrator: false,
+      });
+      if (!restoreResult.restoredWorkspace) {
+        yield {
+          type: 'thinking',
+          content: this.t(session, {
+            en: 'No workspace snapshot found; resuming without workspace restore.',
+            zh: '未找到工作区快照，将在不恢复工作区的情况下继续执行。',
+          }),
+          timestamp: Date.now(),
+        };
+      }
+    }
+
+    yield* this.runWithOrchestrator(session, resumePrompt, {
+      plannerMode: 'patch',
+      resumeFromCheckpointId: orchestratorCheckpointId,
+      resumeStrategy: options.strategy ?? 'resume',
+    });
+  }
+
+  /**
    * 处理用户消息（核心入口）
    *
    * 支持 Slash Commands 作为确定性逃生舱:
    * - /undo [steps|checkpointId] - 撤销到检查点
    * - /checkpoints - 列出所有检查点
    * - /continue - 继续上次任务
+   * - /retry - 从最近的检查点继续执行
    * - /clear [--checkpoints] - 清空会话
    * - /help - 显示帮助
    */
@@ -203,6 +314,10 @@ export class ConversationalRunner {
 
       case 'continue':
         yield* this.executeContinue(session, args);
+        return { handled: true };
+
+      case 'retry':
+        yield* this.executeRetry(session, args);
         return { handled: true };
 
       case 'clear':
@@ -396,6 +511,29 @@ export class ConversationalRunner {
       ? `Continue the previous task: ${objective}\n\nAdditional context: ${additionalContext}`
       : `Continue the previous task: ${objective}`;
 
+    if (this.config.enableCheckpoints) {
+      const normalized = continuePrompt.replace(/\s+/g, ' ').trim();
+      const preview = normalized.length > 50 ? `${normalized.substring(0, 50)}...` : normalized;
+      const checkpoint = await this.sessionStore.createCheckpoint(
+        session.sessionId,
+        this.t(session, {
+          en: `Continue task: ${preview}`,
+          zh: `继续任务: ${preview}`,
+        }),
+        {
+          includeWorkspaceSnapshot: true,
+          includeOrchestratorSnapshot: true,
+        }
+      );
+      if (!session.checkpoints.some((cp) => cp.id === checkpoint.id)) {
+        session.checkpoints.push(checkpoint);
+      }
+      session.variables.activeSessionCheckpointId = checkpoint.id;
+      session.variables.lastSessionCheckpointId = checkpoint.id;
+      delete session.variables.lastOrchestratorCheckpointId;
+      await this.sessionStore.saveSession(session);
+    }
+
     yield {
       type: 'thinking',
       content: this.t(session, {
@@ -410,6 +548,26 @@ export class ConversationalRunner {
     const hasPendingWork = pendingSubtasks.length > 0 || session.currentPlan;
     yield* this.runWithOrchestrator(session, continuePrompt, { 
       plannerMode: hasPendingWork ? 'patch' : 'full' 
+    });
+  }
+
+  /**
+   * /retry - Resume from the latest checkpoint (best-effort)
+   */
+  private async *executeRetry(
+    session: SessionState,
+    args: string[]
+  ): AsyncGenerator<StreamEvent> {
+    const candidate = args[0];
+    const checkpointId =
+      (candidate && candidate.startsWith('ckpt-') && candidate) ||
+      (typeof session.variables.lastSessionCheckpointId === 'string'
+        ? session.variables.lastSessionCheckpointId
+        : session.checkpoints[session.checkpoints.length - 1]?.id);
+
+    yield* this.resumeFromCheckpoint(session.sessionId, {
+      ...(checkpointId && { checkpointId }),
+      restoreWorkspace: false,
     });
   }
 
@@ -473,6 +631,7 @@ export class ConversationalRunner {
 /undo [steps|id]         - Roll back to a checkpoint (default: latest)
 /checkpoints             - List all available checkpoints
 /continue [context]      - Continue the last unfinished task
+/retry [checkpointId]    - Resume from latest checkpoint
 /clear [--checkpoints]   - Clear conversation history
 /help                    - Show this help message
 
@@ -481,6 +640,7 @@ All other messages are sent to the AI for processing.`,
 /undo [steps|id]         - 回滚到检查点（默认：最近）
 /checkpoints             - 列出所有检查点
 /continue [context]      - 继续上一次未完成任务
+/retry [checkpointId]    - 从最近检查点继续执行
 /clear [--checkpoints]   - 清空对话历史
 /help                    - 显示帮助
 
@@ -539,13 +699,24 @@ All other messages are sent to the AI for processing.`,
       if (this.config.enableCheckpoints) {
         const normalized = task.replace(/\s+/g, ' ').trim();
         const preview = normalized.length > 50 ? `${normalized.substring(0, 50)}...` : normalized;
-        await this.sessionStore.createCheckpoint(
+        const checkpoint = await this.sessionStore.createCheckpoint(
           session.sessionId,
           this.t(session, {
             en: `Start new task: ${preview}`,
             zh: `开始新任务: ${preview}`,
-          }, task)
+          }, task),
+          {
+            includeWorkspaceSnapshot: true,
+            includeOrchestratorSnapshot: true,
+          }
         );
+        if (!session.checkpoints.some((cp) => cp.id === checkpoint.id)) {
+          session.checkpoints.push(checkpoint);
+        }
+        session.variables.activeSessionCheckpointId = checkpoint.id;
+        session.variables.lastSessionCheckpointId = checkpoint.id;
+        delete session.variables.lastOrchestratorCheckpointId;
+        await this.sessionStore.saveSession(session);
       }
 
       // 2. 执行（对话驱动 → Orchestrator）
@@ -657,6 +828,13 @@ All other messages are sent to the AI for processing.`,
           enableWatch: true,
           watchPollInterval: 300,
         },
+        checkpoint: {
+          autoSave: this.config.enableCheckpoints ?? false,
+          autoSaveInterval: 15000,
+          maxCheckpoints: 20,
+          enableGitIntegration: false,
+          validateGitOnRestore: false,
+        },
         // 禁用审批：自动批准所有请求
         ...(this.config.noApproval && {
           approval: {
@@ -733,7 +911,12 @@ All other messages are sent to the AI for processing.`,
   private async *runWithOrchestrator(
     session: SessionState,
     objective: string,
-    options: { plannerMode: 'full' | 'patch'; maxSubtasks?: number } = { plannerMode: 'full' }
+    options: {
+      plannerMode: 'full' | 'patch';
+      maxSubtasks?: number;
+      resumeFromCheckpointId?: string;
+      resumeStrategy?: RecoveryStrategy;
+    } = { plannerMode: 'full' }
   ): AsyncGenerator<StreamEvent> {
     const orchestrator = await this.getOrchestrator(session);
     const taskId = `task-${randomUUID().substring(0, 8)}`;
@@ -1081,6 +1264,23 @@ All other messages are sent to the AI for processing.`,
       onWorkerThinking(evt.data.workerId, evt.data.record);
     const workerActionHandler = (evt: OrchestratorEvent<{ workerId: string; record: ActionRecord }>) =>
       onWorkerAction(evt.data.workerId, evt.data.record);
+    const checkpointCreatedHandler = (evt: OrchestratorEvent<{ checkpointId: string }>) => {
+      const orchestratorCheckpointId = evt.data?.checkpointId;
+      if (!orchestratorCheckpointId) return;
+      const activeSessionCheckpointId =
+        typeof session.variables.activeSessionCheckpointId === 'string'
+          ? session.variables.activeSessionCheckpointId
+          : undefined;
+      if (activeSessionCheckpointId) {
+        const target = session.checkpoints.find((cp) => cp.id === activeSessionCheckpointId);
+        if (target) {
+          target.orchestratorCheckpointId = orchestratorCheckpointId;
+        }
+        session.variables.lastSessionCheckpointId = activeSessionCheckpointId;
+      }
+      session.variables.lastOrchestratorCheckpointId = orchestratorCheckpointId;
+      void this.sessionStore.saveSession(session);
+    };
 
     orchestrator.on('plan:start', planStartHandler);
     orchestrator.on('plan:complete', planCompleteHandler);
@@ -1089,9 +1289,13 @@ All other messages are sent to the AI for processing.`,
     orchestrator.on('subtask:failed', subtaskFailedHandler);
     orchestrator.on('worker:thinking', workerThinkingHandler);
     orchestrator.on('worker:action', workerActionHandler);
+    orchestrator.on('checkpoint:created', checkpointCreatedHandler);
 
-    const runPromise = orchestrator
-      .run(task)
+    const runPromise = (options.resumeFromCheckpointId
+      ? orchestrator.resumeFrom(options.resumeFromCheckpointId, {
+          strategy: options.resumeStrategy ?? 'resume',
+        })
+      : orchestrator.run(task))
       .then(async (result) => {
         const out = result.output as unknown;
         if (
@@ -1191,6 +1395,10 @@ All other messages are sent to the AI for processing.`,
         });
       })
       .finally(() => {
+        if (session.variables.activeSessionCheckpointId) {
+          delete session.variables.activeSessionCheckpointId;
+          void this.sessionStore.saveSession(session);
+        }
         done = true;
         notify?.();
         notify = null;
@@ -1211,6 +1419,7 @@ All other messages are sent to the AI for processing.`,
     orchestrator.off('subtask:failed', subtaskFailedHandler);
     orchestrator.off('worker:thinking', workerThinkingHandler);
     orchestrator.off('worker:action', workerActionHandler);
+    orchestrator.off('checkpoint:created', checkpointCreatedHandler);
 
     await runPromise;
   }
