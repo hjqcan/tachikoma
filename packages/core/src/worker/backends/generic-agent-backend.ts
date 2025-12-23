@@ -90,6 +90,12 @@ import {
   InteractionEngine,
 } from '../engines';
 
+// 工具调用追踪器（防循环）
+import { ToolCallTracker } from '../tool-call-tracker';
+
+// 失败记忆系统（上下文注入）
+import { FailureMemory } from '../failure-memory';
+
 // ============================================================================
 // 常量
 // ============================================================================
@@ -171,6 +177,10 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private isExecuting = false;
   private sandboxNeedsInit = false; // 是否需要初始化
   private constraintPolicy: ConstraintPolicy | null = null;
+  
+  // 失败后增量恢复支持
+  private toolCallTracker: ToolCallTracker | null = null;
+  private failureMemory: FailureMemory | null = null;
   
   // Collaboration 支持
   private collaborationManager?: CollaborationManager;
@@ -308,9 +318,21 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     this.isExecuting = true;
 
     // Reset memory state for new task (avoid cross-task dedup interference)
-    // Reset memory state for new task (avoid cross-task dedup interference)
     this.memoryRetriever.reset();
     this.constraintPolicy = deriveConstraintPolicy(task.constraints);
+    
+    // Initialize failure tracking systems for incremental recovery
+    this.toolCallTracker = new ToolCallTracker({
+      maxHistory: 100,
+      duplicateWindowMs: 5 * 60 * 1000, // 5 minutes
+      blockAfterFailures: 3,
+      enableBlocking: true,
+    });
+    this.failureMemory = new FailureMemory({
+      maxPatterns: 50,
+      patternWindowMs: 10 * 60 * 1000, // 10 minutes
+      minOccurrences: 2,
+    });
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
@@ -518,9 +540,26 @@ export class GenericAgentBackend extends BaseWorkerBackend {
           console.warn('[GenericAgentBackend] Memory retrieval failed (continuing):', memoryError);
         }
 
+        // 生成失败警告并注入 system prompt（如果有）
+        let effectiveSystemPrompt = systemPromptWithSkills;
+        if (this.failureMemory) {
+          const failureWarnings = this.failureMemory.generateWarnings();
+          if (failureWarnings) {
+            effectiveSystemPrompt = `${systemPromptWithSkills}\n\n${failureWarnings}`;
+            console.debug('[GenericAgentBackend] Injected failure warnings into system prompt');
+          }
+        }
+        // 注入工具调用追踪器警告（如果有重复失败模式）
+        if (this.toolCallTracker) {
+          const trackerWarning = this.toolCallTracker.generateContextWarning();
+          if (trackerWarning) {
+            effectiveSystemPrompt = `${effectiveSystemPrompt}\n\n${trackerWarning}`;
+          }
+        }
+
         // 调用 LLM
         const request: LLMRequest = {
-          systemPrompt: systemPromptWithSkills,
+          systemPrompt: effectiveSystemPrompt,
           messages: contextToLLMMessages(context.getContext()),
           maxTokens: Math.min(
             this.config.maxTokens ?? 4096,
@@ -1297,9 +1336,30 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       };
     }
 
+    // 检查是否为重复调用（防循环）
+    if (this.toolCallTracker) {
+      const duplicateCheck = this.toolCallTracker.checkDuplicate(call.name, call.input);
+      if (duplicateCheck.shouldBlock) {
+        // 阻止执行并返回警告
+        const warning = duplicateCheck.warning ?? 'Blocked: repeated failed call';
+        console.warn(`[GenericAgentBackend] ToolCallTracker blocked call: ${call.name}`);
+        return {
+          success: false,
+          output: warning,
+        };
+      }
+      // 如果是重复调用但未被阻止，记录警告日志
+      if (duplicateCheck.isDuplicate && duplicateCheck.failureCount > 0) {
+        console.warn(`[GenericAgentBackend] Duplicate call detected: ${call.name} (${duplicateCheck.failureCount} previous failures)`);
+      }
+    }
+
     if (this.constraintPolicy) {
       const violation = checkToolCallAgainstConstraints(call.name, call.input, this.constraintPolicy);
       if (violation) {
+        // 记录约束违反到失败记忆
+        this.failureMemory?.recordFailure(call.name, call.input, violation.message);
+        this.toolCallTracker?.record(call.name, call.input, false, violation.message);
         return {
           success: false,
           output: violation.message,
@@ -1311,9 +1371,13 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       options.resourceLimits?.maxToolInputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolInputBytes;
     const sizeCheck = checkToolInputSize(call.name, call.input, maxToolInputBytes);
     if (!sizeCheck.ok) {
+      const errorMsg = sizeCheck.message ?? 'Tool input too large.';
+      // 记录大小超限到失败记忆
+      this.failureMemory?.recordFailure(call.name, call.input, errorMsg);
+      this.toolCallTracker?.record(call.name, call.input, false, errorMsg);
       return {
         success: false,
-        output: sizeCheck.message ?? 'Tool input too large.',
+        output: errorMsg,
       };
     }
 
@@ -1327,6 +1391,15 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       ...(options.env && { env: options.env }),
       ...(options.securityPolicy && { securityPolicy: options.securityPolicy }),
     });
+
+    // 记录工具调用结果到追踪器
+    if (!result.success) {
+      const errorMsg = typeof result.error === 'string' ? result.error : JSON.stringify(result.error);
+      this.failureMemory?.recordFailure(call.name, call.input, errorMsg);
+      this.toolCallTracker?.record(call.name, call.input, false, errorMsg);
+    } else {
+      this.toolCallTracker?.record(call.name, call.input, true);
+    }
 
     return {
       success: result.success,

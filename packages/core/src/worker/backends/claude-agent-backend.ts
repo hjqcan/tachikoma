@@ -23,6 +23,12 @@ import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy } from '../engines';
 
+// 工具调用追踪器（防循环）
+import { ToolCallTracker } from '../tool-call-tracker';
+
+// 失败记忆系统（上下文注入）
+import { FailureMemory } from '../failure-memory';
+
 // ============================================================================
 // Claude Agent SDK 类型（延迟导入）
 // ============================================================================
@@ -119,6 +125,10 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
   private memoryService?: MemoryService;
   private lastMemoryRetrievalAt?: number;
   private injectedMemoryIds = new Set<string>();
+  
+  // 失败后增量恢复支持
+  private toolCallTracker: ToolCallTracker | null = null;
+  private failureMemory: FailureMemory | null = null;
 
   constructor(config: ClaudeAgentSDKBackendConfig) {
     // 调用基类构造函数（不使用基类 Memory，保留本地实现）
@@ -203,6 +213,19 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     this.injectedMemoryIds.clear();
     delete this.lastMemoryRetrievalAt;
     this.resetToolCallGuard();
+    
+    // Initialize failure tracking systems for incremental recovery
+    this.toolCallTracker = new ToolCallTracker({
+      maxHistory: 100,
+      duplicateWindowMs: 5 * 60 * 1000, // 5 minutes
+      blockAfterFailures: 3,
+      enableBlocking: true,
+    });
+    this.failureMemory = new FailureMemory({
+      maxPatterns: 50,
+      patternWindowMs: 10 * 60 * 1000, // 10 minutes
+      minOccurrences: 2,
+    });
 
     // Memory: 自动检索相关记忆 (best-effort)
     const memoryConfig = this.config.memoryConfig;
@@ -546,6 +569,22 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         { autoActivate: true, ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }) }
       );
     }
+    
+    // 注入失败警告到 system prompt（如果有）
+    if (this.failureMemory) {
+      const failureWarnings = this.failureMemory.generateWarnings();
+      if (failureWarnings) {
+        systemPrompt = `${systemPrompt}\n\n${failureWarnings}`;
+        console.debug('[ClaudeAgentSDKBackend] Injected failure warnings into system prompt');
+      }
+    }
+    // 注入工具调用追踪器警告（如果有重复失败模式）
+    if (this.toolCallTracker) {
+      const trackerWarning = this.toolCallTracker.generateContextWarning();
+      if (trackerWarning) {
+        systemPrompt = `${systemPrompt}\n\n${trackerWarning}`;
+      }
+    }
 
     return {
       // 工作目录
@@ -583,28 +622,54 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           timestamp,
         };
 
-      case 'tool_use':
-        this.recordToolCall(String(sdkMessage.name || 'unknown'), sdkMessage.input);
+      case 'tool_use': {
+        const toolName = String(sdkMessage.name || 'unknown');
+        const input = sdkMessage.input;
+        
+        // 检查是否为重复调用（防循环）
+        if (this.toolCallTracker) {
+          const duplicateCheck = this.toolCallTracker.checkDuplicate(toolName, input);
+          if (duplicateCheck.shouldBlock) {
+            console.warn(`[ClaudeAgentSDKBackend] ToolCallTracker would block: ${toolName} (cannot intercept SDK call)`);
+          }
+        }
+        
+        this.recordToolCall(toolName, input);
         // 工具调用
         return {
           type: 'tool_call',
-          tool: String(sdkMessage.name || 'unknown'),
-          input: sdkMessage.input,
+          tool: toolName,
+          input,
           callId: String(sdkMessage.id || `call-${timestamp}`),
           timestamp,
         };
+      }
 
-      case 'tool_result':
+      case 'tool_result': {
+        const toolName = String(sdkMessage.name || 'unknown');
+        const isSuccess = !sdkMessage.is_error;
+        const resultContent = sdkMessage.content || sdkMessage.output;
+        
+        // 记录工具调用结果到追踪器
+        if (!isSuccess) {
+          const errorMsg = typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent);
+          this.failureMemory?.recordFailure(toolName, {}, errorMsg);
+          this.toolCallTracker?.record(toolName, {}, false, errorMsg);
+        } else {
+          this.toolCallTracker?.record(toolName, {}, true);
+        }
+        
         // 工具结果
         return {
           type: 'tool_result',
-          tool: String(sdkMessage.name || 'unknown'),
+          tool: toolName,
           callId: String(sdkMessage.tool_use_id || `call-${timestamp}`),
-          result: sdkMessage.content || sdkMessage.output,
-          success: !sdkMessage.is_error,
+          result: resultContent,
+          success: isSuccess,
           duration: 0, // SDK 不提供持续时间
           timestamp,
         };
+      }
 
       case 'result':
         // 最终结果
