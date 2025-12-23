@@ -46,6 +46,12 @@ export interface SubTask {
   parentId: string;
   /** 子任务目标 */
   objective: string;
+  /**
+   * 父任务目标（继承上下文）
+   * 
+   * 用于技能匹配时的上下文补充，确保子任务能获取到父任务的领域关键词
+   */
+  parentObjective?: string;
   /** 约束条件 */
   constraints: string[];
   /**

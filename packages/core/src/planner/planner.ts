@@ -682,8 +682,8 @@ export class Planner {
         }))
       : undefined;
 
-    // 转换子任务
-    let subtasks = convertToSubTasks(planningOutput, task.id);
+    // 转换子任务（注入父任务目标以支持技能匹配上下文传递）
+    let subtasks = convertToSubTasks(planningOutput, task.id, task.objective);
 
     // 验证并优化子任务（注入工具推荐）
     const subtasksForValidation = subtasks.map(st => ({

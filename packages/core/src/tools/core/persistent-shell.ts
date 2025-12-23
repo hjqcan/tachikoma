@@ -99,12 +99,12 @@ export class PersistentShell extends EventEmitter {
   private commandIdCounter = 0;
   private isInitialized = false;
   private isDestroyed = false;
-  private currentCwd: string;  // Track current working directory
+  // NOTE: We no longer track currentCwd because we always cd to workDir before each command
+  // This is the MAINTAIN_PROJECT_WORKING_DIR fix inspired by Claude Code
   private isWindows = process.platform === 'win32';
 
   constructor(options: PersistentShellOptions) {
     super();
-    this.currentCwd = options.cwd;
     this.options = {
       cwd: options.cwd,
       env: options.env || {},
@@ -406,10 +406,14 @@ export class PersistentShell extends EventEmitter {
       // Build the actual command with cd and env exports if needed
       const commandParts: string[] = [];
       
-      // Handle cwd change
-      if (opts.cwd && opts.cwd !== this.currentCwd) {
+      // CRITICAL FIX (Claude Code style MAINTAIN_PROJECT_WORKING_DIR):
+      // Always cd to initial workDir first to reset any drift from embedded cd commands
+      // This prevents issues like "cd frontend && npm install" permanently changing the CWD
+      commandParts.push(`cd ${this.escapeShellArg(this.options.cwd)}`);
+      
+      // Then handle per-call cwd if specified (relative to workDir)
+      if (opts.cwd && opts.cwd !== this.options.cwd) {
         commandParts.push(`cd ${this.escapeShellArg(opts.cwd)}`);
-        this.currentCwd = opts.cwd;
       }
       
       // Handle environment variables

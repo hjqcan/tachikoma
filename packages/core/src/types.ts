@@ -148,6 +148,11 @@ export interface Task {
   type: TaskType;
   /** 任务目标 */
   objective: string;
+  /**
+   * 父任务目标（继承上下文）
+   * 用于技能匹配时的上下文补充
+   */
+  parentObjective?: string;
   /** 约束条件 */
   constraints: string[];
   /** 输出 Schema */

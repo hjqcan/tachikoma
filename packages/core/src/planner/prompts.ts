@@ -124,6 +124,7 @@ export const PLANNING_SYSTEM_PROMPT = `You are a task planning expert. Your resp
 - Clearly mark dependencies between subtasks
 - Identify subtasks that can execute in parallel whenever possible
 - Consider failure scenarios and rollback strategies
+- **Essential**: Subtask objectives must be self-contained and descriptive (e.g., instead of "Setup project", use "Setup React project structure for Music App"). Do not assume the Worker knows the parent task context implicitly.
 
 ## Large File Creation Strategy (Important)
 When tasks involve creating large code files (>80 lines), use a phased approach:
@@ -144,7 +145,7 @@ You must output in JSON format with the following fields:
 - intake: Task intake assessment (optional but recommended; for clarification needs)
 - roles: Role list (optional; each role corresponds to one Worker)
 - reasoning: Brief explanation of your decomposition rationale (1-3 sentences, no detailed step-by-step reasoning)
-- subtasks: Subtask list, each containing id, objective, constraints, estimatedMinutes, dependencies
+- subtasks: Subtask list, each containing id, objective (must be context-rich), constraints, estimatedMinutes, dependencies
 - executionPlan: Execution plan with isParallel, steps
 - estimatedTotalMinutes: Estimated total execution time
 - complexityScore: Complexity score (1-10)
@@ -616,12 +617,14 @@ export function extractJsonFromResponse(response: string): string {
  */
 export function convertToSubTasks(
   output: PlanningOutputFormat,
-  parentId: string
+  parentId: string,
+  parentObjective?: string
 ): SubTask[] {
   return output.subtasks.map((st) => ({
     id: st.id,
     parentId,
     objective: st.objective,
+    ...(parentObjective !== undefined && { parentObjective }),
     ...(st.roleId !== undefined && { roleId: st.roleId }),
     ...(Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.length > 0
       ? { requiredCapabilities: st.requiredCapabilities }

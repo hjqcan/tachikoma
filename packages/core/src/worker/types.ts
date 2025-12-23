@@ -180,6 +180,12 @@ export type WorkerMessage =
 export interface WorkerTask extends Task {
   /** 父任务 ID（如果是子任务） */
   parentTaskId?: string;
+  /** 
+   * 父任务目标（用于技能匹配上下文传递）
+   * 
+   * 继承父任务的领域关键词，确保技能激活机制能正确命中相关技能
+   */
+  parentObjective?: string;
   /** 会话 ID */
   sessionId?: string;
   /** 优先级 */

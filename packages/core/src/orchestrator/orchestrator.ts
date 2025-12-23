@@ -3490,6 +3490,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
         id: subtask.id,
         type: 'atomic',
         objective: subtask.objective,
+        ...(subtask.parentObjective !== undefined && { parentObjective: subtask.parentObjective }),
         constraints: subtask.constraints,
         ...(subtask.outputSchema !== undefined && { outputSchema: subtask.outputSchema }),
         context: {
