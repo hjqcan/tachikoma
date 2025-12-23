@@ -46,6 +46,16 @@ export {
 // Tool Input Guard
 export { checkToolInputSize } from './tool-input-guard';
 
+// Constraint Guard
+export {
+  type ConstraintPolicy,
+  type ConstraintConflict,
+  type ConstraintViolation,
+  deriveConstraintPolicy,
+  detectConstraintConflicts,
+  checkToolCallAgainstConstraints,
+} from './constraint-guard';
+
 // Context Helpers
 export {
   type LLMMessageFormat,

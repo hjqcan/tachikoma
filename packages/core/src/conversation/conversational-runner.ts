@@ -127,7 +127,24 @@ export class ConversationalRunner {
       return;
     }
 
-    const orchestratorCheckpointId = targetCheckpoint.orchestratorCheckpointId;
+    let orchestratorCheckpointId = targetCheckpoint.orchestratorCheckpointId;
+    const fallbackOrchestratorCheckpointId =
+      typeof session.variables.lastOrchestratorCheckpointId === 'string'
+        ? session.variables.lastOrchestratorCheckpointId
+        : undefined;
+    if (!orchestratorCheckpointId && fallbackOrchestratorCheckpointId) {
+      orchestratorCheckpointId = fallbackOrchestratorCheckpointId;
+      targetCheckpoint.orchestratorCheckpointId = fallbackOrchestratorCheckpointId;
+      await this.sessionStore.saveSession(session);
+      yield {
+        type: 'thinking',
+        content: this.t(session, {
+          en: `Checkpoint ${checkpointId} has no orchestrator snapshot; using latest orchestrator checkpoint.`,
+          zh: `检查点 ${checkpointId} 缺少 orchestrator 快照，改用最新的 orchestrator 检查点继续。`,
+        }),
+        timestamp: Date.now(),
+      };
+    }
     if (!orchestratorCheckpointId) {
       yield {
         type: 'complete',

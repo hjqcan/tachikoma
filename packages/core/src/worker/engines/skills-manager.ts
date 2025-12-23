@@ -8,9 +8,12 @@ import {
   type SkillMetadata,
   type SkillDiscoveryConfig,
   type SkillLoadOutcome,
+  type SkillRenderOptions,
+  type ActivatedSkill,
   loadSkills,
   renderSkillsSection,
   renderSkillsSectionWithRecommendations,
+  renderSkillsSectionWithActivation,
 } from '../../skills';
 import type { ContextMessage } from '../../prompt/types';
 import { 
@@ -44,6 +47,9 @@ export class SkillsManager {
   private skills: SkillMetadata[] = [];
   private loadErrors: SkillError[] = [];
   private projectContextInjector?: ProjectContextInjector;
+  
+  /** 最近一次渲染时激活的 Skills */
+  private lastActivatedSkills: ActivatedSkill[] = [];
 
   /**
    * @param config - Skills 配置
@@ -111,17 +117,72 @@ export class SkillsManager {
   }
 
   /**
+   * 获取最近激活的 Skills
+   */
+  getLastActivatedSkills(): ActivatedSkill[] {
+    return this.lastActivatedSkills;
+  }
+
+  /**
    * 渲染 System Prompt 附加部分 (Skills + Project Context)
+   * 
+   * 支持两种模式：
+   * - 旧模式（默认）：只渲染 skills 列表，不激活正文
+   * - 新模式（autoActivate: true）：自动激活匹配 skills 并注入正文
+   * 
    * @param basePrompt - 基础提示词
    * @param taskDescription - 可选任务描述，用于推荐相关技能
+   * @param options - 渲染选项（包含激活配置和父任务上下文）
    */
   async renderSystemPromptSection(
     basePrompt: string,
-    taskDescription?: string
+    taskDescription?: string,
+    options?: SkillRenderOptions & { parentObjective?: string }
   ): Promise<string> {
     let finalPrompt = basePrompt;
 
-    // 1. Render Skills (with recommendations if task description provided)
+    // 合并上下文用于技能匹配（父任务目标 + 子任务描述）
+    // 这确保了子任务能继承父任务的领域关键词
+    const matchContext = [
+      options?.parentObjective,
+      taskDescription
+    ].filter((s): s is string => typeof s === 'string' && s.length > 0).join(' | ');
+
+    // 新模式：使用带激活的渲染
+    if (options?.autoActivate && matchContext) {
+      const renderOptions: SkillRenderOptions = { ...options };
+      // Only set maxSkillTokens if it's defined (for exactOptionalPropertyTypes)
+      if (options.maxSkillTokens !== undefined) {
+        renderOptions.maxSkillTokens = options.maxSkillTokens;
+      } else if (this.config?.maxSkillTokens !== undefined) {
+        renderOptions.maxSkillTokens = this.config.maxSkillTokens;
+      }
+      
+      // 使用合并后的上下文进行技能匹配
+      const { section, activated } = renderSkillsSectionWithActivation(
+        this.skills,
+        matchContext,
+        renderOptions
+      );
+      
+      this.lastActivatedSkills = activated;
+      
+      if (activated.length > 0) {
+        console.debug(
+          `[SkillsManager] Activated ${activated.length} skills: ` +
+          activated.map(a => `${a.metadata.name} (${a.reason})`).join(', ')
+        );
+      }
+      
+      if (section) {
+        finalPrompt += '\n\n' + section;
+      }
+      
+      return finalPrompt;
+    }
+
+    // 旧模式：只渲染列表（向后兼容）
+    this.lastActivatedSkills = [];
     let skillsSection: string | null;
     if (taskDescription) {
       skillsSection = renderSkillsSectionWithRecommendations(

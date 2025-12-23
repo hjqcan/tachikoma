@@ -6,9 +6,10 @@
  * @module skills/renderer
  */
 
-import type { SkillMetadata } from './types';
+import type { SkillMetadata, SkillRenderOptions, ActivatedSkill } from './types';
 import { DEFAULT_MAX_SKILL_TOKENS } from './types';
 import { matchSkillsToTask, getHighlyRelevantSkills, type SkillRecommendation } from './skill-matcher';
+import { activateSkills, renderActivatedSkills } from './activator';
 
 // ============================================================================
 // 渲染函数
@@ -170,6 +171,77 @@ export function renderSkillsSectionWithRecommendations(
   }
 
   return lines.join('\n');
+}
+
+/**
+ * 渲染带激活的完整 Skills section（推荐使用）
+ *
+ * 这是符合 Agent Skills 规范的完整实现：
+ * - Level 1: 元数据列表（所有 skills）
+ * - Level 2: 自动激活匹配 skills 的完整正文
+ *
+ * @param skills - Skill 元数据列表
+ * @param taskDescription - 任务描述
+ * @param options - 渲染选项
+ * @returns 渲染后的 section（包含激活的 skill 正文）
+ */
+export function renderSkillsSectionWithActivation(
+  skills: SkillMetadata[],
+  taskDescription: string,
+  options: SkillRenderOptions = {}
+): { section: string | null; activated: ActivatedSkill[] } {
+  if (skills.length === 0) {
+    return { section: null, activated: [] };
+  }
+
+  const { maxSkillTokens = DEFAULT_MAX_SKILL_TOKENS, ...activationOptions } = options;
+
+  // 1. 激活匹配的 skills
+  const activated = activateSkills(skills, taskDescription, activationOptions);
+
+  // 2. 渲染激活的 skills 正文
+  const activatedSection = renderActivatedSkills(activated);
+
+  // 3. 渲染 skills 列表（排除已激活的）
+  const activatedNames = new Set(activated.map(a => a.metadata.name));
+  const remainingSkills = skills.filter(s => !activatedNames.has(s.name));
+
+  const lines: string[] = [];
+
+  // 如果有激活的 skills，先输出它们
+  if (activatedSection) {
+    lines.push(activatedSection);
+    lines.push('');
+  }
+
+  // 其他可用 skills 列表
+  if (remainingSkills.length > 0) {
+    lines.push('## Other Available Skills');
+    lines.push('');
+    lines.push(
+      'The following skills are available but not activated for this task. ' +
+      'You can explicitly reference them using $skill-name syntax if needed.'
+    );
+    lines.push('');
+
+    let currentTokens = 60; // header overhead
+
+    for (const skill of remainingSkills) {
+      const skillTokens = Math.ceil((skill.name.length + skill.description.length + 10) / 4);
+
+      if (currentTokens + skillTokens > maxSkillTokens) {
+        lines.push(`- ... and more skills available`);
+        break;
+      }
+
+      lines.push(`- **${skill.name}**: ${skill.description}`);
+      currentTokens += skillTokens;
+    }
+  }
+
+  const section = lines.length > 0 ? lines.join('\n') : null;
+
+  return { section, activated };
 }
 
 /**

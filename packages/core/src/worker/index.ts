@@ -86,3 +86,18 @@ export {
 export type { KeyDecisionResult, RiskLevel } from './key-decision';
 export { isKeyDecision, isDeleteOperation, isLargeModification, isMultiFileOperation, isExternalApiCall, isHighRiskTool, getRiskScore } from './key-decision';
 
+// 工具调用追踪器（防循环）
+export { ToolCallTracker } from './tool-call-tracker';
+export type { TrackedCall, FailurePattern, DuplicateCheckResult, ToolCallTrackerConfig, TrackerMetrics } from './tool-call-tracker';
+
+// 工具输入验证器（参数预检）
+export { validateToolInput, generateValidationError } from './tool-input-validator';
+export type { ValidationResult, JSONSchemaDefinition } from './tool-input-validator';
+
+// 失败记忆系统（上下文注入）
+export { FailureMemory } from './failure-memory';
+export type { DetectedPattern, FailureMemoryConfig, FailurePatternType } from './failure-memory';
+
+// 工作区结构缓存（上下文注入）
+export { WorkspaceStructureCache, parseFileListOutput } from './workspace-cache';
+export type { CachedDirectory, WorkspaceCacheConfig } from './workspace-cache';

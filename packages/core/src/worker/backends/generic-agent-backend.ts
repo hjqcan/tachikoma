@@ -73,6 +73,9 @@ import {
   type ToolExecutionResult,
   type ToolExecutorEvent,
   checkToolInputSize,
+  checkToolCallAgainstConstraints,
+  deriveConstraintPolicy,
+  type ConstraintPolicy,
   // Tool Schema
   convertToolsToAITools,
   // LLM Executor
@@ -167,6 +170,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private abortController: AbortController | null = null;
   private isExecuting = false;
   private sandboxNeedsInit = false; // 是否需要初始化
+  private constraintPolicy: ConstraintPolicy | null = null;
   
   // Collaboration 支持
   private collaborationManager?: CollaborationManager;
@@ -306,6 +310,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     // Reset memory state for new task (avoid cross-task dedup interference)
     // Reset memory state for new task (avoid cross-task dedup interference)
     this.memoryRetriever.reset();
+    this.constraintPolicy = deriveConstraintPolicy(task.constraints);
 
     // 确保 Sandbox 已初始化（如果使用自动创建）
     await this.ensureSandboxInitialized();
@@ -438,10 +443,11 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     context.addMessage(createUserMessage(taskPrompt));
 
     // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
-    // Pass task objective for skill recommendations
+    // Pass task objective for skill recommendations with auto-activation
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(
       DEFAULT_SYSTEM_PROMPT,
-      task.objective
+      task.objective,
+      { autoActivate: true, ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }) }
     );
 
 	    let finalStatus: WorkerStatus = 'failed';
@@ -959,6 +965,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
 	    } finally {
 	      this.isExecuting = false;
 	      this.abortController = null;
+	      this.constraintPolicy = null;
 
 	      // 更新协作注册状态回 online（P1: 状态同步）
 	      if (this.collaborationManager?.isStarted()) {
@@ -1288,6 +1295,16 @@ export class GenericAgentBackend extends BaseWorkerBackend {
         success: false,
         output: `Tool not found: ${call.name}`,
       };
+    }
+
+    if (this.constraintPolicy) {
+      const violation = checkToolCallAgainstConstraints(call.name, call.input, this.constraintPolicy);
+      if (violation) {
+        return {
+          success: false,
+          output: violation.message,
+        };
+      }
     }
 
     const maxToolInputBytes =

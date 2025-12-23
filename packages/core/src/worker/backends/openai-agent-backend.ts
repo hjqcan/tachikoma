@@ -30,7 +30,13 @@ import type { RetryPolicy, Tool } from '../../types';
 import { isKeyDecision, isKeyDecisionAsync } from '../key-decision';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
-import { createSkillsManager, checkToolInputSize } from '../engines';
+import {
+  createSkillsManager,
+  checkToolInputSize,
+  deriveConstraintPolicy,
+  checkToolCallAgainstConstraints,
+  type ConstraintPolicy,
+} from '../engines';
 
 // 共享基础层
 import {
@@ -45,6 +51,19 @@ import {
   createToolResultMessage,
   isRetryableError,
 } from './base-backend';
+
+// 工具调用追踪器（防循环）
+import { ToolCallTracker } from '../tool-call-tracker';
+
+// 工具输入验证器（参数预检）
+import { validateToolInput, generateValidationError } from '../tool-input-validator';
+
+// 失败记忆系统（上下文注入）
+import { FailureMemory } from '../failure-memory';
+
+// 工作区结构缓存（上下文注入）
+import { WorkspaceStructureCache, parseFileListOutput } from '../workspace-cache';
+import { resolve } from 'node:path';
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 5,  // Codex-style: allow multiple reconnection attempts
@@ -497,6 +516,24 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     const maxRetries = Math.max(0, retryPolicy.maxRetries);
     let attempt = 0;
     const toolResultCache = new Map<string, string>();
+    // 工具调用追踪器：防止重复失败调用导致的循环
+    const toolCallTracker = new ToolCallTracker({
+      maxHistory: 100,
+      duplicateWindowMs: 5 * 60 * 1000, // 5 minutes
+      blockAfterFailures: 3,
+      enableBlocking: true,
+    });
+    // 失败记忆：跨轮次跟踪失败模式并注入上下文警告
+    const failureMemory = new FailureMemory({
+      maxPatterns: 50,
+      patternWindowMs: 10 * 60 * 1000, // 10 minutes
+      minOccurrences: 2,
+    });
+    // 工作区结构缓存：从 file_list 输出中提取和注入上下文
+    const workspaceCache = new WorkspaceStructureCache({
+      maxEntries: 100,
+      ttlMs: 10 * 60 * 1000, // 10 minutes
+    });
     const limits = {
       ...DEFAULT_RESOURCE_LIMITS,
       ...options.resourceLimits,
@@ -507,6 +544,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       this.config.skillsConfig,
       options.workDir ?? process.cwd()
     );
+    const constraintPolicy = deriveConstraintPolicy(task.constraints);
 
     try {
       // 集成外部 abortSignal（如果提供）
@@ -552,10 +590,26 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           );
 
           // 构建系统提示（注入 skills 元数据）
-          // Pass task objective for skill recommendations
+          // Pass task objective for skill recommendations with auto-activation
+          // 注入失败记忆警告（如果有）
+          const failureWarnings = failureMemory.generateWarnings();
+          // 注入工作区结构上下文（如果有）
+          const workspaceContext = workspaceCache.generateContext();
+          
+          const baseSystemPrompt = this.buildSystemPrompt(memoryContext, toolArgsRetryHint);
+          const contextParts = [baseSystemPrompt];
+          if (failureWarnings) {
+            contextParts.push(failureWarnings);
+          }
+          if (workspaceContext) {
+            contextParts.push(workspaceContext);
+          }
+          const systemPromptWithContext = contextParts.join('\n\n');
+          
           const systemPrompt = await skillsManager.renderSystemPromptSection(
-            this.buildSystemPrompt(memoryContext, toolArgsRetryHint),
-            task.objective
+            systemPromptWithContext,
+            task.objective,
+            { autoActivate: true, ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }) }
           );
 
           // 转换工具为 SDK tool() 格式
@@ -575,7 +629,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             },
             toolResultCache,
             useToolResultCache,
-            limits.maxToolInputBytes
+            limits.maxToolInputBytes,
+            constraintPolicy,
+            toolCallTracker,
+            failureMemory,
+            workspaceCache
           );
 
           // 创建 Agent 实例
@@ -961,7 +1019,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     onToolExecute?: (toolName: string, input: unknown) => void,
     toolResultCache?: Map<string, string>,
     useToolResultCache = false,
-    maxToolInputBytes = DEFAULT_RESOURCE_LIMITS.maxToolInputBytes
+    maxToolInputBytes = DEFAULT_RESOURCE_LIMITS.maxToolInputBytes,
+    constraintPolicy?: ConstraintPolicy,
+    toolCallTracker?: ToolCallTracker,
+    failureMemory?: FailureMemory,
+    workspaceCache?: WorkspaceStructureCache
   ): unknown[] {
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
@@ -981,20 +1043,78 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         execute: async (params: unknown) => {
           // 调用 Tachikoma Tool.execute，使用 try/catch 封装错误
           let cacheKey: string | null = null;
+          
+          // 检查是否为重复调用（防循环）
+          if (toolCallTracker) {
+            const duplicateCheck = toolCallTracker.checkDuplicate(tachikomaTool.name, params);
+            if (duplicateCheck.shouldBlock) {
+              // 阻止执行并返回警告
+              const output = JSON.stringify({
+                success: false,
+                error: duplicateCheck.warning ?? 'Blocked: repeated failed call',
+                tool: tachikomaTool.name,
+                code: 'DUPLICATE_CALL_BLOCKED',
+                duplicateCount: duplicateCheck.count,
+                failureCount: duplicateCheck.failureCount,
+              });
+              return output;
+            } else if (duplicateCheck.warning) {
+              // 仅记录警告，不阻止执行
+              console.warn(`[ToolCallTracker] ${duplicateCheck.warning}`);
+            }
+          }
+          
+          // 参数预验证：检查必需参数是否存在
+          const inputSchema = tachikomaTool.inputSchema as Record<string, unknown>;
+          const validation = validateToolInput(inputSchema, params);
+          if (!validation.valid) {
+            // 记录验证失败
+            const errorMsg = validation.hint ?? 'Missing required parameters';
+            toolCallTracker?.record(tachikomaTool.name, params, false, errorMsg);
+            return generateValidationError(tachikomaTool.name, validation, inputSchema);
+          }
+          
           try {
             cacheKey = toolResultCache
               ? this.buildToolCallKey(tachikomaTool.name, params)
               : null;
             if (useToolResultCache && cacheKey && toolResultCache?.has(cacheKey)) {
+              // 记录缓存命中（成功）
+              toolCallTracker?.record(tachikomaTool.name, params, true);
               return toolResultCache.get(cacheKey) as string;
             }
 
             onToolExecute?.(tachikomaTool.name, params);
+            if (constraintPolicy) {
+              const violation = checkToolCallAgainstConstraints(
+                tachikomaTool.name,
+                params,
+                constraintPolicy
+              );
+              if (violation) {
+                const output = JSON.stringify({
+                  success: false,
+                  error: violation.message,
+                  tool: tachikomaTool.name,
+                  code: 'CONSTRAINT_VIOLATION',
+                  category: violation.category,
+                  detected: violation.detected,
+                  allowed: violation.allowed,
+                });
+                if (cacheKey) {
+                  toolResultCache?.set(cacheKey, output);
+                }
+                // 记录约束违规（失败）
+                toolCallTracker?.record(tachikomaTool.name, params, false, violation.message);
+                return output;
+              }
+            }
             const sizeCheck = checkToolInputSize(tachikomaTool.name, params, maxToolInputBytes);
             if (!sizeCheck.ok) {
+              const errorMsg = sizeCheck.message ?? 'Tool input too large.';
               const output = JSON.stringify({
                 success: false,
-                error: sizeCheck.message ?? 'Tool input too large.',
+                error: errorMsg,
                 tool: tachikomaTool.name,
                 code: 'TOOL_INPUT_TOO_LARGE',
                 size: sizeCheck.size,
@@ -1003,17 +1123,68 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
               if (cacheKey) {
                 toolResultCache?.set(cacheKey, output);
               }
+              // 记录大小超限（失败）
+              toolCallTracker?.record(tachikomaTool.name, params, false, errorMsg);
               return output;
             }
             const result = await tachikomaTool.execute(
               params,
               executionContext
             );
+
+            // Workspace cache wiring: capture file_list results for next-round context injection.
+            if (workspaceCache && tachikomaTool.name === 'file_list') {
+              const paramsObj =
+                (params && typeof params === 'object') ? (params as Record<string, unknown>) : {};
+              const rawPath = typeof paramsObj.path === 'string' ? paramsObj.path : '.';
+              const baseDir =
+                typeof executionContext.effectiveCwd === 'string'
+                  ? executionContext.effectiveCwd
+                  : (executionContext.workDir ?? process.cwd());
+              const resolvedPath = resolve(baseDir, rawPath);
+
+              const parsed = parseFileListOutput(result);
+              if (parsed) {
+                workspaceCache.recordDirectoryListing(
+                  resolvedPath,
+                  parsed.subdirectories,
+                  parsed.files
+                );
+              } else if (typeof result === 'object' && result !== null) {
+                const resultObj = result as Record<string, unknown>;
+                const success = typeof resultObj.success === 'boolean' ? resultObj.success : undefined;
+                const error = typeof resultObj.error === 'string' ? resultObj.error : '';
+                if (
+                  success === false &&
+                  /directory not found|does not exist|enoent/i.test(error)
+                ) {
+                  workspaceCache.recordNonExistent(resolvedPath);
+                }
+              }
+            }
+
             // SDK 要求返回 string
             const output = typeof result === 'string' ? result : JSON.stringify(result);
             if (cacheKey) {
               toolResultCache?.set(cacheKey, output);
             }
+            
+            // 检查结果是否为失败（用于 tracker 记录）
+            let isSuccess = true;
+            let errorMsg: string | undefined;
+            if (typeof result === 'object' && result !== null) {
+              const resultObj = result as Record<string, unknown>;
+              if (resultObj.success === false || resultObj.error) {
+                isSuccess = false;
+                errorMsg = typeof resultObj.error === 'string' ? resultObj.error : undefined;
+                // 记录到失败记忆系统进行模式分析
+                if (errorMsg) {
+                  failureMemory?.recordFailure(tachikomaTool.name, params, errorMsg);
+                }
+              }
+            }
+            toolCallTracker?.record(tachikomaTool.name, params, isSuccess, errorMsg);
+            
             return output;
           } catch (error) {
             const err = error as Error;
@@ -1031,6 +1202,10 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             if (cacheKey) {
               toolResultCache?.set(cacheKey, output);
             }
+            // 记录异常（失败）
+            toolCallTracker?.record(tachikomaTool.name, params, false, err.message);
+            // 记录到失败记忆系统进行模式分析
+            failureMemory?.recordFailure(tachikomaTool.name, params, err.message);
             return output;
           }
         },

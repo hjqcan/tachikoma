@@ -24,6 +24,7 @@ import { MCPToolRegistrar } from '../mcp';
 import { globalToolRegistry } from '../tools/registry';
 import { cleanupAllForTask } from '../tools/core/shell-run';
 import { cleanupServersForTask } from '../tools/core/dev-server';
+import { deriveConstraintPolicy, detectConstraintConflicts } from './engines';
 
 // ============================================================================
 // 类型定义
@@ -182,7 +183,7 @@ export class WorkerExecutor {
     // selective memory sync：从 shared context 注入“关键决策/产物”摘要到约束（best-effort）
     const injectedSharedConstraint = await this.buildSharedContextConstraint(sessionManager);
 
-    // 转换 SubTask 为 WorkerTask
+    // 转换 SubTask 为 WorkerTask（注意：必须传递 parentObjective 以支持技能匹配上下文）
     const workerTask: WorkerTask = {
       id: subtask.id,
       type: 'atomic', // 子任务默认为原子任务
@@ -191,6 +192,7 @@ export class WorkerExecutor {
         ? [...subtask.constraints, injectedSharedConstraint]
         : subtask.constraints,
       parentTaskId: subtask.parentId,
+      ...(subtask.parentObjective !== undefined && { parentObjective: subtask.parentObjective }),
       ...(subtask.priority !== undefined && { priority: subtask.priority }),
     };
 
@@ -388,6 +390,50 @@ export class WorkerExecutor {
     };
 
     try {
+      const constraintPolicy = deriveConstraintPolicy(workerTask.constraints);
+      const constraintConflicts = detectConstraintConflicts(constraintPolicy);
+      if (constraintConflicts.length > 0) {
+        const conflictLines = constraintConflicts.map((conflict) => `- ${conflict.message}`).join('\n');
+        const errorMessage =
+          `Constraint conflict detected.\n${conflictLines}\n` +
+          'Please clarify the required stack/language before continuing.';
+        if (sessionManager) {
+          await writeWorkerStatus({
+            status: 'error',
+            progress: 0,
+            error: {
+              code: 'CONSTRAINT_CONFLICT',
+              message: errorMessage,
+              timestamp: Date.now(),
+            },
+            lastHeartbeat: Date.now(),
+          });
+        }
+        const errorMsg: WorkerMessage = {
+          type: 'error',
+          error: errorMessage,
+          code: 'CONSTRAINT_CONFLICT',
+          retryable: false,
+          timestamp: Date.now(),
+        };
+        const statusMsg: WorkerMessage = {
+          type: 'status',
+          status: 'failed',
+          timestamp: Date.now(),
+        };
+        yield errorMsg;
+        yield statusMsg;
+
+        const duration = Date.now() - startTime;
+        taskSpan.addTag('success', false);
+        taskSpan.setStatus('error', errorMessage);
+        taskSpan.end();
+        this.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, duration, { workerId, status: 'error' });
+        this.metrics.increment(WORKER_METRICS.ERRORS_COUNT, 1, { workerId });
+        this.logger.warn('Subtask blocked by constraint conflict', { ...logContext, error: errorMessage });
+        return;
+      }
+
       // 更新 Worker 状态
       if (sessionManager) {
         await writeWorkerStatus({

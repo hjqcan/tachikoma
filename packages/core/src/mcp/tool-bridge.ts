@@ -9,7 +9,11 @@
 import type { Tool, ExecutionContext } from '../types';
 import type { ToolResult } from '../tools/types';
 import { DEFAULT_RESOURCE_LIMITS as DEFAULT_WORKER_LIMITS } from '../worker/types';
-import { checkToolInputSize } from '../worker/engines';
+import {
+  checkToolInputSize,
+  checkToolCallAgainstConstraints,
+  type ConstraintPolicy,
+} from '../worker/engines';
 
 // ============================================================================
 // 类型定义
@@ -47,6 +51,8 @@ export interface ToolBridgeConfig {
   env?: Record<string, string>;
   /** 最大工具输入大小（字节） */
   maxToolInputBytes?: number;
+  /** 约束策略（用于工具调用约束） */
+  constraintPolicy?: ConstraintPolicy | null;
 }
 
 // ============================================================================
@@ -82,6 +88,7 @@ export class ToolToMCPBridge {
       workDir: config.workDir ?? process.cwd(),
       env: config.env ?? {},
       maxToolInputBytes: config.maxToolInputBytes ?? DEFAULT_WORKER_LIMITS.maxToolInputBytes,
+      constraintPolicy: config.constraintPolicy ?? null,
     };
   }
 
@@ -110,7 +117,7 @@ export class ToolToMCPBridge {
    */
   async convertToMCPServers(
     tools: Tool[],
-    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes'>>
+    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy'>>
   ): Promise<unknown[]> {
     if (!tools || tools.length === 0) {
       return [];
@@ -145,7 +152,11 @@ export class ToolToMCPBridge {
 
       const maxToolInputBytes =
         overrides?.maxToolInputBytes ?? this.config.maxToolInputBytes;
-      const mcpTools = tools.map((t) => this.createMCPTool(t, tool, context, maxToolInputBytes));
+      const constraintPolicy =
+        overrides?.constraintPolicy ?? this.config.constraintPolicy ?? null;
+      const mcpTools = tools.map((t) =>
+        this.createMCPTool(t, tool, context, maxToolInputBytes, constraintPolicy)
+      );
 
       // 创建 MCP Server
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -176,7 +187,8 @@ export class ToolToMCPBridge {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     toolFactory: any,
     context: ExecutionContext,
-    maxToolInputBytes: number
+    maxToolInputBytes: number,
+    constraintPolicy: ConstraintPolicy | null
   ): unknown {
     // 使用 SDK 的 tool() 函数创建 MCP Tool
     return toolFactory(
@@ -185,9 +197,42 @@ export class ToolToMCPBridge {
       tachikoma.inputSchema ?? { type: 'object', properties: {} },
       async (args: Record<string, unknown>): Promise<string> => {
         try {
+          if (constraintPolicy) {
+            const violation = checkToolCallAgainstConstraints(
+              tachikoma.name,
+              args,
+              constraintPolicy
+            );
+            if (violation) {
+              return JSON.stringify(
+                {
+                  success: false,
+                  error: violation.message,
+                  tool: tachikoma.name,
+                  code: 'CONSTRAINT_VIOLATION',
+                  category: violation.category,
+                  detected: violation.detected,
+                  allowed: violation.allowed,
+                },
+                null,
+                2
+              );
+            }
+          }
           const sizeCheck = checkToolInputSize(tachikoma.name, args, maxToolInputBytes);
           if (!sizeCheck.ok) {
-            return `Error: ${sizeCheck.message ?? 'Tool input too large.'}`;
+            return JSON.stringify(
+              {
+                success: false,
+                error: sizeCheck.message ?? 'Tool input too large.',
+                tool: tachikoma.name,
+                code: 'TOOL_INPUT_TOO_LARGE',
+                size: sizeCheck.size,
+                limit: maxToolInputBytes,
+              },
+              null,
+              2
+            );
           }
           const result = await tachikoma.execute(args, context) as ToolResult;
 
@@ -198,10 +243,28 @@ export class ToolToMCPBridge {
               : JSON.stringify(result.data, null, 2);
           } else {
             // 失败：返回错误信息
-            return `Error: ${result.error ?? 'Unknown error'}`;
+            return JSON.stringify(
+              {
+                success: false,
+                error: result.error ?? 'Unknown error',
+                tool: tachikoma.name,
+                code: 'TOOL_EXECUTION_ERROR',
+              },
+              null,
+              2
+            );
           }
         } catch (error) {
-          return `Error: ${error instanceof Error ? error.message : String(error)}`;
+          return JSON.stringify(
+            {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+              tool: tachikoma.name,
+              code: 'TOOL_EXECUTION_ERROR',
+            },
+            null,
+            2
+          );
         }
       }
     );

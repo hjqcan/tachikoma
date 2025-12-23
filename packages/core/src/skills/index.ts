@@ -61,6 +61,16 @@ export {
   NAME_PATTERN,
   DEFAULT_IGNORE_DIRS,
   DEFAULT_MAX_SKILL_TOKENS,
+  DEFAULT_MAX_ACTIVATED_TOKENS,
+  DEFAULT_AUTO_ACTIVATE_THRESHOLD,
+  DEFAULT_MAX_AUTO_ACTIVATED,
+} from './types';
+
+export type {
+  ActivationReason,
+  ActivatedSkill,
+  SkillActivationOptions,
+  SkillRenderOptions,
 } from './types';
 
 // ============================================================================
@@ -83,6 +93,7 @@ export {
 export {
   renderSkillsSection,
   renderSkillsSectionWithRecommendations,
+  renderSkillsSectionWithActivation,
   renderSkillContentPrompt,
   estimateSkillsSectionTokens,
 } from './renderer';
@@ -111,3 +122,18 @@ export type {
   SkillRelevance,
   SkillRecommendation,
 } from './skill-matcher';
+
+// ============================================================================
+// 激活器导出
+// ============================================================================
+
+export {
+  activateSkills,
+  activateSkillsAsync,
+  parseExplicitSkillCalls,
+  loadSkillBody,
+  loadSkillBodyAsync,
+  computeContentHash,
+  renderActivatedSkill,
+  renderActivatedSkills,
+} from './activator';

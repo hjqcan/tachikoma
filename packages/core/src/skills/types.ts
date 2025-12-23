@@ -171,6 +171,91 @@ export interface SkillExecutionResult {
 }
 
 // ============================================================================
+// Skill 激活相关（Level 2）
+// ============================================================================
+
+/**
+ * 激活原因
+ */
+export type ActivationReason = 'explicit' | 'auto-matched';
+
+/**
+ * 已激活的 Skill
+ *
+ * 包含完整的 SKILL.md 正文，准备注入到 context
+ */
+export interface ActivatedSkill {
+  /** Skill 元数据 */
+  metadata: SkillMetadata;
+
+  /** SKILL.md 正文内容 */
+  body: string;
+
+  /** 激活原因 */
+  reason: ActivationReason;
+
+  /** 匹配分数（仅 auto-matched 时有值） */
+  score?: number;
+
+  /** 内容 hash（用于缓存验证） */
+  hash?: string;
+}
+
+/**
+ * Skill 激活选项
+ */
+export interface SkillActivationOptions {
+  /**
+   * 显式激活的 skill 名称列表
+   * 支持 $skill-name 或直接名称
+   */
+  explicitSkills?: string[];
+
+  /**
+   * 是否自动激活 highly-relevant skills
+   * @default true
+   */
+  autoActivate?: boolean;
+
+  /**
+   * 自动激活的最低分数阈值
+   * @default 80 (highly-relevant)
+   */
+  autoActivateThreshold?: number;
+
+  /**
+   * 激活 skills 的最大 token 预算
+   * @default 8000
+   */
+  maxActivatedTokens?: number;
+
+  /**
+   * 最大自动激活 skill 数量
+   * @default 3
+   */
+  maxAutoActivated?: number;
+}
+
+/**
+ * Skill 渲染选项
+ */
+export interface SkillRenderOptions extends SkillActivationOptions {
+  /**
+   * Skills section 最大 token 预算（元数据列表）
+   */
+  maxSkillTokens?: number;
+}
+
+/** 激活 skills 默认最大 token 预算 */
+export const DEFAULT_MAX_ACTIVATED_TOKENS = 8000;
+
+/** 默认自动激活阈值 */
+export const DEFAULT_AUTO_ACTIVATE_THRESHOLD = 80;
+
+/** 默认最大自动激活数量 */
+export const DEFAULT_MAX_AUTO_ACTIVATED = 3;
+
+// ============================================================================
 // 常量
 // ============================================================================
 

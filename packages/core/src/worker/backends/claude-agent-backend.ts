@@ -21,7 +21,7 @@ import { MemoryService } from '../../memory';
 import { BaseWorkerBackend, ToolCallBudgetExceededError, isRetryableError } from './base-backend';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
-import { createSkillsManager, type SkillsManager } from '../engines';
+import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy } from '../engines';
 
 // ============================================================================
 // Claude Agent SDK 类型（延迟导入）
@@ -264,7 +264,16 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           };
 
           // 构建 SDK 配置 (inject memories into systemPrompt, not user prompt)
-          const sdkOptions = await this.buildSDKOptions(tools, options, memoryContext, skillsManager, task.objective);
+          const constraintPolicy = deriveConstraintPolicy(task.constraints);
+          const sdkOptions = await this.buildSDKOptions(
+            tools,
+            options,
+            memoryContext,
+            skillsManager,
+            task.objective,
+            task.parentObjective,
+            constraintPolicy
+          );
             
           const taskPrompt = buildTaskPrompt(task, tools, {
             useNativeToolCalls: true,
@@ -499,12 +508,14 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     options: WorkerExecutionOptions,
     memoryContext?: string,
     skillsManager?: SkillsManager,
-    taskObjective?: string
+    taskObjective?: string,
+    taskParentObjective?: string,
+    constraintPolicy?: ConstraintPolicy
   ): Promise<Record<string, unknown>> {
     const sdkConfig = this.config.sdkOptions || {};
 
     // 构造 overrides 对象（过滤 undefined 以满足 exactOptionalPropertyTypes）
-    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes'>> = {};
+    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy'>> = {};
     if (options.workDir !== undefined) {
       overrides.workDir = options.workDir;
     }
@@ -513,6 +524,9 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     }
     overrides.maxToolInputBytes =
       options.resourceLimits?.maxToolInputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolInputBytes;
+    if (constraintPolicy) {
+      overrides.constraintPolicy = constraintPolicy;
+    }
 
     // 将 Tachikoma 工具转换为 MCP Server（同步等待，保证首轮可用）
     const mcpServers = await this.toolBridge.convertToMCPServers(tools, overrides);
@@ -525,8 +539,12 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     
     let systemPrompt = buildWorkerSystemPrompt(promptOptions);
     if (skillsManager) {
-      // Pass task objective for skill recommendations
-      systemPrompt = await skillsManager.renderSystemPromptSection(systemPrompt, taskObjective);
+      // Pass task objective for skill recommendations with auto-activation
+      systemPrompt = await skillsManager.renderSystemPromptSection(
+        systemPrompt, 
+        taskObjective,
+        { autoActivate: true, ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }) }
+      );
     }
 
     return {
