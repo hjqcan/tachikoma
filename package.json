@@ -57,12 +57,14 @@
     "bun"
   ],
   "dependencies": {
+    "@a2a-js/sdk": "^0.3.7",
     "@ai-sdk/anthropic": "^3.0.0-beta.96",
     "@ai-sdk/openai": "^3.0.0-beta.110",
     "@ai-sdk/react": "^3.0.0-beta.168",
     "@anthropic-ai/claude-agent-sdk": "0.1.74",
     "@openai/agents": "^0.3.6",
     "ai": "^6.0.0-beta.165",
+    "gateway": "^1.0.0",
     "ioredis": "^5.8.2",
     "openai": "^6.15.0",
     "playwright": "^1.57.0",

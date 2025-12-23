@@ -5,12 +5,14 @@
     "": {
       "name": "tachikoma",
       "dependencies": {
+        "@a2a-js/sdk": "^0.3.7",
         "@ai-sdk/anthropic": "^3.0.0-beta.96",
         "@ai-sdk/openai": "^3.0.0-beta.110",
         "@ai-sdk/react": "^3.0.0-beta.168",
         "@anthropic-ai/claude-agent-sdk": "0.1.74",
         "@openai/agents": "^0.3.6",
         "ai": "^6.0.0-beta.165",
+        "gateway": "^1.0.0",
         "ioredis": "^5.8.2",
         "openai": "^6.15.0",
         "playwright": "^1.57.0",
@@ -120,6 +122,8 @@
     },
   },
   "packages": {
+    "@a2a-js/sdk": ["@a2a-js/sdk@0.3.7", "", { "dependencies": { "uuid": "^11.1.0" }, "peerDependencies": { "express": "^4.21.2 || ^5.1.0" }, "optionalPeers": ["express"] }, "sha512-1WBghkOjgiKt4rPNje8jlB9VateVQXqyjlc887bY/H8yM82Hlf0+5JW8zB98BPExKAplI5XqtXVH980J6vqi+w=="],
+
     "@ai-sdk/anthropic": ["@ai-sdk/anthropic@3.0.0-beta.96", "", { "dependencies": { "@ai-sdk/provider": "3.0.0-beta.31", "@ai-sdk/provider-utils": "4.0.0-beta.58" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-MJe1yJx01cxzEehGEmGyPuQMd83+3ANq4RqtKHufgsvY7p4iHOTutq97JOd8s/C+OtccyM/eG9kNQkS9caghgw=="],
 
     "@ai-sdk/gateway": ["@ai-sdk/gateway@2.0.0-beta.91", "", { "dependencies": { "@ai-sdk/provider": "3.0.0-beta.31", "@ai-sdk/provider-utils": "4.0.0-beta.58", "@vercel/oidc": "3.0.5" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-/dvosVUlGZqbBoDIWYPkl6rYoXaJsi1ywDP6lhLQ+cFod24NabP7KT6srmloGBL1g2iAV1ewUTCgOM6RiFWLyA=="],
@@ -471,6 +475,8 @@
     "function.prototype.name": ["function.prototype.name@1.1.8", "", { "dependencies": { "call-bind": "^1.0.8", "call-bound": "^1.0.3", "define-properties": "^1.2.1", "functions-have-names": "^1.2.3", "hasown": "^2.0.2", "is-callable": "^1.2.7" } }, "sha512-e5iwyodOHhbMr/yNrc7fDYG4qlbIvI5gajyzPnb5TCwyhjApznQh1BMFou9b30SevY43gCJKXycoCBjMbsuW0Q=="],
 
     "functions-have-names": ["functions-have-names@1.2.3", "", {}, "sha512-xckBUXyTIqT97tq2x2AMb+g163b5JFysYk0x4qxNFwbfQkmNZoiRHb6sPzI9/QV33WeuvVYBUIiD4NzNIyqaRQ=="],
+
+    "gateway": ["gateway@1.0.0", "", {}, "sha512-+yl70ZpYuhWDLmI6DPolQq/nqbst0Gb2ZHsRlEu9QOMoS4LbIIwWxubfgnbHhdQIhDyveHXd1f0vU8UDgYblfA=="],
 
     "generator-function": ["generator-function@2.0.1", "", {}, "sha512-SFdFmIJi+ybC0vjlHN0ZGVGHc3lgE0DxPAT0djjVg+kjOnSqclqmj0KQ7ykTOLP6YxoqOvuAODGdcHJn+43q3g=="],
 
@@ -861,6 +867,8 @@
     "zod": ["zod@4.2.1", "", {}, "sha512-0wZ1IRqGGhMP76gLqz8EyfBXKk0J2qo2+H3fi4mcUP/KtTocoX08nmIAHl1Z2kJIZbZee8KOpBCSNPRgauucjw=="],
 
     "zod-to-json-schema": ["zod-to-json-schema@3.25.0", "", { "peerDependencies": { "zod": "^3.25 || ^4" } }, "sha512-HvWtU2UG41LALjajJrML6uQejQhNJx+JBO9IflpSja4R03iNWfKXrj6W2h7ljuLyc1nKS+9yDyL/9tD1U/yBnQ=="],
+
+    "@a2a-js/sdk/uuid": ["uuid@11.1.0", "", { "bin": { "uuid": "dist/esm/bin/uuid" } }, "sha512-0/A9rDy9P7cJ+8w1c9WD9V//9Wj15Ce2MPz8Ri6032usz+NfePxx5AcN3bN+r6ZL6jEo066/yNYB3tn4pQEx+A=="],
 
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
