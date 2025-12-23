@@ -62,7 +62,7 @@ export const AGGRESSIVE_RETRY_POLICY: RetryPolicy = {
  */
 export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   minWorkers: 1,
-  maxWorkers: 5,
+  maxWorkers: 16,
   idleTimeout: 300000, // 5 分钟
   healthCheckInterval: 30000, // 30 秒
   selectionStrategy: 'least-loaded',
@@ -76,7 +76,7 @@ export const DEFAULT_WORKER_POOL_CONFIG: WorkerPoolConfig = {
  */
 export const HIGH_CONCURRENCY_WORKER_POOL_CONFIG: WorkerPoolConfig = {
   minWorkers: 3,
-  maxWorkers: 10,
+  maxWorkers: 32,
   idleTimeout: 600000, // 10 分钟
   healthCheckInterval: 15000, // 15 秒
   selectionStrategy: 'least-loaded',
@@ -319,8 +319,11 @@ export function createOrchestratorConfig(
   }
 
   // 深度合并嵌套对象，确保正确处理 retryPolicy 和 agent
-  const { retryPolicy: overrideRetryPolicy, ...restDelegation } =
-    overrides.delegation || {};
+  const {
+    retryPolicy: overrideRetryPolicy,
+    retryPolicyMode: overrideRetryPolicyMode,
+    ...restDelegation
+  } = overrides.delegation || {};
   const { agent: overridePlannerAgent, memoryConfig: overridePlannerMemoryConfig, ...restPlanner } =
     overrides.planner || {};
   
@@ -350,6 +353,7 @@ export function createOrchestratorConfig(
     delegation: {
       ...baseConfig.delegation,
       ...restDelegation,
+      ...(overrideRetryPolicyMode !== undefined ? { retryPolicyMode: overrideRetryPolicyMode } : {}),
       retryPolicy: {
         ...baseConfig.delegation.retryPolicy,
         ...overrideRetryPolicy,
@@ -550,7 +554,7 @@ export function resolveRetryPolicy(
     maxRetries: Math.min(merged.maxRetries, guardrailMaxRetries),
     baseDelay: Math.max(merged.baseDelay, guardrailBaseDelay),
     backoffFactor,
-    maxDelay,
+    ...(maxDelay !== undefined ? { maxDelay } : {}),
   };
 }
 

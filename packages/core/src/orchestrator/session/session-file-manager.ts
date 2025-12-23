@@ -9,7 +9,8 @@ import { watch, type FSWatcher } from 'node:fs';
 import type {
   SessionConfig,
   ISessionFileManager,
-  PlanFile,
+  RuntimeFile,
+  DistributiveOmit,
   ProgressFile,
   DecisionRecord,
   WorkerStatusFile,
@@ -26,8 +27,7 @@ import type {
   PeerReadOptions,
 } from './types';
 import { DEFAULT_SESSION_CONFIG, DEFAULT_PEER_READ_OPTIONS } from './types';
-import type { TaskResult } from '../../types';
-import type { ExecutionPlan, ExecutionStep, SubTask } from '../types';
+import type { SubTask } from '../types';
 import {
   SessionPathBuilder,
   atomicWriteJson,
@@ -69,72 +69,8 @@ interface WatchState {
   lastFileStates: Map<string, number>;
 }
 
-function updateExecutionPlanForRefinement(
-  executionPlan: ExecutionPlan,
-  parentId: string,
-  refinedIds: string[]
-): ExecutionPlan {
-  const uniqueRefinedIds = Array.from(new Set(refinedIds.filter((id) => id && id !== parentId)));
-  if (uniqueRefinedIds.length === 0) {
-    return executionPlan;
-  }
-
-  const updatedSteps: ExecutionStep[] = [];
-  let updated = false;
-
-  for (const step of executionPlan.steps) {
-    const parentIndex = step.subtaskIds.indexOf(parentId);
-    if (parentIndex === -1) {
-      updatedSteps.push(step);
-      continue;
-    }
-
-    updated = true;
-
-    if (!step.parallel) {
-      const expandedIds: string[] = [];
-      for (const id of step.subtaskIds) {
-        if (id === parentId) {
-          expandedIds.push(...uniqueRefinedIds);
-        } else {
-          expandedIds.push(id);
-        }
-      }
-      updatedSteps.push({ ...step, subtaskIds: expandedIds });
-      continue;
-    }
-
-    const [firstId, ...restIds] = uniqueRefinedIds;
-    const replacedIds = [
-      ...step.subtaskIds.slice(0, parentIndex),
-      firstId,
-      ...step.subtaskIds.slice(parentIndex + 1),
-    ];
-    updatedSteps.push({ ...step, subtaskIds: replacedIds });
-    for (const id of restIds) {
-      updatedSteps.push({
-        order: 0,
-        subtaskIds: [id],
-        parallel: false,
-      });
-    }
-  }
-
-  if (!updated) {
-    return executionPlan;
-  }
-
-  const renumberedSteps = updatedSteps.map((step, index) => ({
-    ...step,
-    order: index + 1,
-  }));
-
-  return {
-    ...executionPlan,
-    steps: renumberedSteps,
-    isParallel: renumberedSteps.some((step) => step.parallel),
-  };
-}
+// 注：旧实现曾在 runtime.json 内归档“细分后的 subtasks”并更新 executionPlan。
+// 现在 runtime.json 永远是脱敏引用格式（不包含 plannerOutput），细分/expand 必须写回 tasks.json。
 
 /**
  * SessionFileManager 实现类
@@ -173,7 +109,7 @@ export class SessionFileManager implements ISessionFileManager {
   private readonly listeners = new Map<SessionFileEventType, Set<SessionFileEventHandler>>();
 
   /** 监控状态 */
-  private watchState: WatchState = {
+  private readonly watchState: WatchState = {
     watchedWorkers: new Set(),
     watchers: new Map(),
     isWatching: false,
@@ -281,82 +217,40 @@ export class SessionFileManager implements ISessionFileManager {
   // ============================================================================
 
   /**
-   * 写入计划文件
+   * 写入运行时文件
    */
-  async writePlan(plan: Omit<PlanFile, 'sessionId' | 'updatedAt'>): Promise<void> {
-    const fullPlan: PlanFile = {
-      ...plan,
+  async writeRuntime(
+    runtime: DistributiveOmit<RuntimeFile, 'sessionId' | 'updatedAt'>
+  ): Promise<void> {
+    const fullRuntime: RuntimeFile = {
+      ...runtime,
       sessionId: this.sessionId,
       updatedAt: now(),
     };
-    await atomicWriteJson(this.paths.planFile, fullPlan);
+    await atomicWriteJson(this.paths.runtimeFile, fullRuntime);
   }
 
   /**
-   * 读取计划文件
+   * 读取运行时文件
    */
-  async readPlan(): Promise<PlanFile | null> {
-    return readJsonFile<PlanFile>(this.paths.planFile);
+  async readRuntime(): Promise<RuntimeFile | null> {
+    return readJsonFile<RuntimeFile>(this.paths.runtimeFile);
   }
 
   /**
    * 追加细分子任务到计划文件
    *
-   * 当 Orchestrator 动态细分子任务时，调用此方法将细分后的子任务归档到 plan.json
+   * 当 Orchestrator 动态细分子任务时，调用此方法将细分后的子任务归档到 runtime.json
    *
    * @param params - 细分后的子任务与父任务信息
    */
-  async appendRefinedSubtasks(params: { parentId: string; refinedSubtasks: SubTask[] }): Promise<void> {
-    const plan = await this.readPlan();
-    if (!plan) {
-      console.warn('[SessionFileManager] Cannot append refined subtasks: plan.json not found');
-      return;
-    }
-
-    const { parentId, refinedSubtasks } = params;
-    const refinedIds = refinedSubtasks.map((subtask) => subtask.id);
-
-    // 追加/更新 plannerOutput.subtasks
-    for (const refined of refinedSubtasks) {
-      const existingIndex = plan.plannerOutput.subtasks.findIndex((st) => st.id === refined.id);
-      if (existingIndex === -1) {
-        plan.plannerOutput.subtasks.push(refined);
-      } else {
-        const existing = plan.plannerOutput.subtasks[existingIndex]!;
-        const merged: SubTask = { ...existing, ...refined };
-        if (existing.status && refined.status === 'pending') {
-          merged.status = existing.status;
-        }
-        plan.plannerOutput.subtasks[existingIndex] = merged;
-      }
-    }
-
-    // 更新依赖：下游依赖父任务的改为依赖最后一个细分子任务
-    const lastRefinedId = refinedIds[refinedIds.length - 1];
-    if (lastRefinedId) {
-      for (const subtask of plan.plannerOutput.subtasks) {
-        if (!subtask.dependencies || subtask.dependencies.length === 0) continue;
-        if (!subtask.dependencies.includes(parentId)) continue;
-        const updatedDeps = subtask.dependencies.filter((dep) => dep !== parentId);
-        if (!updatedDeps.includes(lastRefinedId)) {
-          updatedDeps.push(lastRefinedId);
-        }
-        subtask.dependencies = updatedDeps;
-      }
-    }
-
-    // 同步更新执行计划（替换父任务为细分子任务）
-    plan.plannerOutput.executionPlan = updateExecutionPlanForRefinement(
-      plan.plannerOutput.executionPlan,
-      parentId,
-      refinedIds
+  async appendRefinedSubtasks(_params: { parentId: string; refinedSubtasks: SubTask[] }): Promise<void> {
+    // runtime.json 永远是脱敏引用格式（不包含任务描述/子任务列表），因此不支持在此处归档 refined subtasks。
+    // 细分/expand 必须写回 tasks.json（由 Orchestrator/taskmaster-compat 负责）。
+    console.debug(
+      '[SessionFileManager] appendRefinedSubtasks is a no-op under sanitized runtime.json; use tasks.json expansion instead.'
     );
-
-    // 更新版本和时间
-    plan.version++;
-    plan.updatedAt = now();
-
-    await atomicWriteJson(this.paths.planFile, plan);
+    // no-op
   }
 
   /**
@@ -367,30 +261,13 @@ export class SessionFileManager implements ISessionFileManager {
    * @param result - 可选的结果数据
    */
   async updateSubtaskStatus(
-    subtaskId: string,
-    status: 'pending' | 'running' | 'success' | 'failure',
-    result?: unknown
+    _subtaskId: string,
+    _status: 'pending' | 'running' | 'success' | 'failure',
+    _result?: unknown
   ): Promise<void> {
-    const plan = await this.readPlan();
-    if (!plan) {
-      console.warn('[SessionFileManager] Cannot update subtask status: plan.json not found');
-      return;
-    }
-
-    // 查找并更新子任务状态
-    const subtask = plan.plannerOutput.subtasks.find(st => st.id === subtaskId);
-    if (subtask) {
-      subtask.status = status;
-      if (result !== undefined) {
-        // Cast to match SubTask.result type (TaskResult | undefined)
-        subtask.result = result as TaskResult;
-      }
-
-      plan.version++;
-      plan.updatedAt = now();
-
-      await atomicWriteJson(this.paths.planFile, plan);
-    }
+    // runtime.json 不落盘任务描述/子任务列表；子任务状态由 tasks.json 作为唯一真相。
+    // 这里保留接口以兼容历史调用，但不做任何写入。
+    // no-op
   }
 
   /**
@@ -818,16 +695,16 @@ export class SessionFileManager implements ISessionFileManager {
   }
 
   /**
-   * 读取 Orchestrator 计划（别名方法）
+   * 读取 Orchestrator 运行时快照（别名方法）
    *
-   * 用于 Worker 读取当前执行计划
+   * 用于 Worker 读取当前执行顺序/运行信息
    *
    * @param opts - 重试选项
    */
-  async readOrchestratorPlan(opts?: PeerReadOptions): Promise<PlanFile | null> {
+  async readOrchestratorRuntime(opts?: PeerReadOptions): Promise<RuntimeFile | null> {
     const options = { ...DEFAULT_PEER_READ_OPTIONS, ...opts };
-    return safeReadJsonFileWithRetry<PlanFile>(
-      this.paths.planFile,
+    return safeReadJsonFileWithRetry<RuntimeFile>(
+      this.paths.runtimeFile,
       { retries: options.retries, delay: options.backoffDelay }
     );
   }
@@ -1078,7 +955,7 @@ export class SessionFileManager implements ISessionFileManager {
         this.paths.workerInterventionFile(workerId),
         async (filePath) => {
           const intervention = await this.readIntervention(workerId);
-          if (intervention && intervention.acknowledged) {
+          if (intervention?.acknowledged) {
             this.emit('intervention_acknowledged', intervention, workerId, filePath);
           }
         }
@@ -1126,7 +1003,7 @@ export class SessionFileManager implements ISessionFileManager {
       retries: 1,
       delay: 20,
     });
-    const lastAction = tail.length > 0 ? tail[tail.length - 1] : undefined;
+    const lastAction = tail.at(-1);
     const lastActionAge = lastAction ? currentTime - lastAction.timestamp : Number.POSITIVE_INFINITY;
     if (lastAction && lastActionAge <= this.config.staleWorkerActionGraceMs) return;
 

@@ -846,11 +846,11 @@ All other messages are sent to the AI for processing.`,
           watchPollInterval: 300,
         },
         checkpoint: {
-          autoSave: this.config.enableCheckpoints ?? false,
-          autoSaveInterval: 15000,
+          enabled: this.config.enableCheckpoints ?? false,
+          storageDir: '.tachikoma/checkpoints',
+          interval: 15000,
           maxCheckpoints: 20,
-          enableGitIntegration: false,
-          validateGitOnRestore: false,
+          gitIntegration: false,
         },
         // 禁用审批：自动批准所有请求
         ...(this.config.noApproval && {
@@ -956,6 +956,12 @@ All other messages are sent to the AI for processing.`,
         sessionId: session.sessionId,
         metadata: {
           workDir: resolve(this.config.workDir),
+          // 默认使用 `.taskmaster/tasks/tasks.json` 作为唯一任务真相（按 sessionId 做 tag 隔离）
+          planSource: 'taskmaster',
+          taskmaster: {
+            enabled: true,
+            tag: session.sessionId,
+          },
           llm: {
             provider: 'openai',
             apiKey: this.config.llm.apiKey,

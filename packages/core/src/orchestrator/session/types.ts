@@ -5,7 +5,8 @@
  * 定义 .tachikoma 目录结构与文件格式
  */
 
-import type { PlannerOutput, SubTask } from '../types';
+import type { ExecutionPlan, PlannerRole, SubTask } from '../types';
+import type { TaskStatus as TaskMasterTaskStatus } from '../../taskmaster-compat/types';
 
 // ============================================================================
 // 会话目录结构
@@ -18,7 +19,7 @@ import type { PlannerOutput, SubTask } from '../types';
  * ├── conversation/           # ConversationalRunner 会话状态
  * │   └── session.json        # 对话会话持久化（messages/checkpoints/variables）
  * ├── orchestrator/           # 统筹者状态
- * │   ├── plan.json           # 当前执行计划
+ * │   ├── runtime.json        # 当前运行时快照（执行顺序/状态等）
  * │   ├── progress.json       # 进度状态
  * │   └── decisions.jsonl     # 决策日志
  * ├── workers/                # Worker 状态目录
@@ -100,22 +101,59 @@ export const DEFAULT_PEER_READ_OPTIONS: Required<PeerReadOptions> = {
 // ============================================================================
 
 /**
- * 计划文件内容 (plan.json)
+ * 运行时文件内容 (runtime.json) - Task Master tasks.json-only 脱敏格式
+ *
+ * 约束：runtime.json 不落盘任务描述文本；任务描述/依赖/状态以 tasks.json 为唯一真相。
  */
-export interface PlanFile {
-  /** 会话 ID */
+export interface TaskMasterRuntimeFile {
+  kind: 'taskmaster';
   sessionId: string;
-  /** 任务 ID */
   taskId: string;
-  /** 创建时间 */
   createdAt: number;
-  /** 最后更新时间 */
   updatedAt: number;
-  /** 规划输出 */
-  plannerOutput: PlannerOutput;
-  /** 执行计划版本 */
   version: number;
+
+  /** tasks.json 引用（相对 projectRoot 或绝对路径，取决于写入方） */
+  tasksJson: {
+    path: string;
+    tag: string;
+  };
+
+  /** 执行顺序（仅包含 id，不包含 objective/constraints 等描述文本） */
+  executionPlan: ExecutionPlan;
+
+  /** roles 定义（非任务描述，可落盘） */
+  roles?: PlannerRole[];
+
+  /**
+   * 任务/子任务到 role 的映射（仅 id 引用）
+   * key: "1" 或 "1.2"
+   */
+  roleAssignments?: Record<
+    string,
+    {
+      roleId?: string;
+      requiredCapabilities?: string[];
+    }
+  >;
+
+  /**
+   * failure 不回写 tasks.json 的前提下，用于在 session 内保留“原始 status”以便失败回滚
+   * key: "1" 或 "1.2"
+   */
+  originalStatuses?: Record<string, TaskMasterTaskStatus>;
 }
+
+/** 当前仅支持脱敏 runtime 格式（tasks.json 为唯一任务真相） */
+export type RuntimeFile = TaskMasterRuntimeFile;
+
+/**
+ * Distributive Omit（用于 union 类型：避免 keyof 收缩导致字段丢失）
+ *
+ * 说明：`Omit<A | B, K>` 会先计算 `keyof (A | B)`（只保留公共 key），导致 A/B 的专有字段被抹掉。
+ * 这里通过条件类型让 Omit 对 union 分发。
+ */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /**
  * 进度文件内容 (progress.json)
@@ -676,8 +714,8 @@ export interface CheckpointRestoreResult {
   checkpoint?: CheckpointData;
   /** 恢复的 Worker 状态 */
   workerSnapshots?: WorkerSnapshot[];
-  /** 恢复的规划数据 */
-  planData?: PlanFile | null;
+  /** 恢复的运行时数据（runtime.json） */
+  runtimeData?: RuntimeFile | null;
   /** 恢复的进度数据 */
   progressData?: ProgressFile | null;
   /** 建议的恢复策略 */
@@ -880,15 +918,15 @@ export interface ISessionFileManager {
   // === Orchestrator 文件操作 ===
 
   /**
-   * 写入计划文件
-   * @param plan - 计划内容
+   * 写入运行时文件
+   * @param runtime - 运行时内容
    */
-  writePlan(plan: Omit<PlanFile, 'sessionId' | 'updatedAt'>): Promise<void>;
+  writeRuntime(runtime: DistributiveOmit<RuntimeFile, 'sessionId' | 'updatedAt'>): Promise<void>;
 
   /**
-   * 读取计划文件
+   * 读取运行时文件
    */
-  readPlan(): Promise<PlanFile | null>;
+  readRuntime(): Promise<RuntimeFile | null>;
 
   /**
    * 追加细分子任务到计划文件
@@ -1087,7 +1125,7 @@ export interface ISessionFileManager {
    * 读取 Orchestrator 计划（别名方法）
    * @param opts - 重试选项
    */
-  readOrchestratorPlan(opts?: PeerReadOptions): Promise<PlanFile | null>;
+  readOrchestratorRuntime(opts?: PeerReadOptions): Promise<RuntimeFile | null>;
 
   // === 事件监控 ===
 

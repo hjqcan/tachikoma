@@ -22,6 +22,7 @@ export { envGetTool } from './env-get';
 // Agent/子任务工具
 export { spawnSubagentTool } from './spawn-subagent';
 export { reportBackTool } from './report-back';
+export { expandCommitTool } from './expand-commit';
 
 // 项目生成工具
 export { scaffoldProjectTool } from './scaffold-project';

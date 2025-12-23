@@ -697,6 +697,20 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
     taskId?: string
   ): Promise<boolean> {
     try {
+      // Orchestrator 仲裁点：这些工具可能需要“长时间等待锁/写回”，不应被较短的 approvalTimeout 误触发
+      const arbitrationTools = new Set(['apply_patch', 'file_write', 'expand_commit']);
+      const isArbitrationTool = arbitrationTools.has(request.action);
+      const effectiveTimeout = isArbitrationTool ? Math.max(timeout, 12 * 60 * 60 * 1000) : timeout; // >= 12h
+      const effectiveDefaultDecision: 'approve' | 'reject' = isArbitrationTool ? 'reject' : defaultDecision;
+
+      // Best-effort：从 tool input 推导受影响文件（用于 Orchestrator 的文件锁/串行化仲裁）
+      const affectedFiles: string[] | undefined = (() => {
+        const details = request.details as Record<string, unknown> | undefined;
+        const input = (details?.input ?? details) as Record<string, unknown> | undefined;
+        const path = input && typeof input.path === 'string' ? input.path : undefined;
+        return path ? [path] : undefined;
+      })();
+
       // 1. 写入待审批请求
       const approvalInput: PendingApprovalInput = {
         requestId: request.requestId,
@@ -704,12 +718,14 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
         type: this.mapCategoryToApprovalType(request.category),
         description: request.description,
         details: {
-          metadata: request.details,
+          ...(affectedFiles ? { affectedFiles } : {}),
+          // 始终携带 action/toolName，供 Orchestrator 识别（文件锁/expand_commit 等内部流程需要）
+          metadata: { ...(request.details ?? {}), action: request.action },
           impactScope: 'high',
           reversible: false,
         },
-        timeout,
-        defaultDecision,
+        timeout: effectiveTimeout,
+        defaultDecision: effectiveDefaultDecision,
       };
 
       await options.onWritePendingApproval!(approvalInput);

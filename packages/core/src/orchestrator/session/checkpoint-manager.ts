@@ -350,8 +350,8 @@ export class CheckpointManager implements ICheckpointManager {
       // 收集 Worker 状态
       const workerSnapshots = await this.collectWorkerSnapshots();
 
-      // 读取计划和进度文件
-      const planData = await this.sessionManager.readPlan();
+      // 读取运行时和进度文件
+      const runtimeData = await this.sessionManager.readRuntime();
       const progressData = await this.sessionManager.readProgress();
 
       // Git 提交校验（如果启用）
@@ -415,7 +415,7 @@ export class CheckpointManager implements ICheckpointManager {
         success: true,
         checkpoint,
         workerSnapshots,
-        planData,
+        runtimeData,
         progressData,
         suggestedStrategy: analysis.suggestedStrategy,
         appliedStrategy: strategy,

@@ -120,7 +120,7 @@ export {
 export {
   // 类型
   type SessionConfig,
-  type PlanFile,
+  type RuntimeFile,
   type ProgressFile,
   type DecisionType,
   type DecisionRecord,

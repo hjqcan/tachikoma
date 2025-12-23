@@ -299,6 +299,23 @@ export function isKeyDecision(
 
   const { triggers } = fullPolicy;
 
+  // =========================================================================
+  // Orchestrator 内部仲裁点（不依赖“风险评估”，而是用于并行调度一致性）
+  // =========================================================================
+  // 说明：
+  // - apply_patch / file_write：需要通过 Orchestrator 进行“文件锁 + 依赖串行化”仲裁
+  // - expand_commit：需要 Orchestrator 统一写回 tasks.json
+  // 这里将其强制标记为“关键决策”，触发审批文件协议（由 Orchestrator 自动批准/延迟批准）
+  const lowerName = toolName.toLowerCase();
+  if (lowerName === 'apply_patch' || lowerName === 'file_write' || lowerName === 'expand_commit') {
+    return {
+      isKeyDecision: true,
+      category: 'file_modify',
+      reason: `Tool "${toolName}" requires orchestrator arbitration`,
+      riskLevel: 'medium',
+    };
+  }
+
   // 0. 检查未知工具（无元数据）
   if (!tool && unknownToolPolicy === 'require_approval') {
     return {

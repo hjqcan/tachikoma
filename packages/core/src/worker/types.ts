@@ -136,6 +136,13 @@ export type ApprovalCategory =
   | 'key_decision'       // 关键决策点
   | 'high_risk_tool'     // 高风险工具
   | 'dangerous_pattern'  // 危险模式
+  | 'file_modify'        // 文件修改（用于 Orchestrator 仲裁：文件锁/串行化）
+  | 'file_create'        // 文件创建
+  | 'file_delete'        // 文件删除
+  | 'multi_file_refactor' // 多文件重构
+  | 'external_api_call'  // 外部 API 调用
+  | 'dangerous_operation' // 危险操作
+  | 'resource_intensive' // 资源密集型操作
   | 'custom';            // 自定义
 
 /**

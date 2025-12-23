@@ -8,12 +8,11 @@
 import type { Task, TaskResult, Artifact, TaskMetrics, TraceData, RetryPolicy } from '../types';
 import { BaseAgent } from '../abstracts/base-agent';
 import { WorkerAgent } from '../agents/worker-agent';
-import { join } from 'node:path';
+import { join, relative, isAbsolute } from 'node:path';
 import { DEFAULT_RESOURCE_LIMITS } from '../worker/types';
 import type {
   OrchestratorTask,
   SubTask,
-  PlannerInput,
   PlannerOutput,
   OrchestratorConfig,
   AggregatedResult,
@@ -63,6 +62,22 @@ import { MemoryService } from '../memory';
 import { CollaborationManager } from '../collaboration';
 import type { MCPClientManager } from '../mcp';
 import { z } from 'zod';
+import {
+  readTasksJson,
+  writeTasksJson,
+  updateTaskOrSubtaskStatus,
+  addTaskOrSubtaskDependency,
+  expandTaskOrSubtask,
+  type Task as TaskMasterTask,
+  type TaskStatus as TaskMasterTaskStatus,
+  type TaskPriority as TaskMasterTaskPriority,
+  readTaskmeta,
+  writeTaskmeta,
+  ensureTaskmetaV1,
+  upsertRoleAssignment,
+  getRoleDefinitionsFromTaskmeta,
+  getRoleAssignmentFromTaskmeta,
+} from '../taskmaster-compat';
 
 // ============================================================================
 // 类型定义
@@ -237,6 +252,28 @@ export class Orchestrator extends BaseAgent {
   /** 已处理的审批请求缓存（requestId -> 处理时间戳，用于 TTL 清理） */
   private readonly processedApprovalRequests = new Map<string, number>();
 
+  // ============================================================================
+  // 文件写入冲突串行化（通过审批协议仲裁 + 回写 tasks.json 依赖）
+  // ============================================================================
+
+  /** 文件锁：path -> 当前持有锁的 subtaskId */
+  private readonly fileLocks = new Map<string, string>();
+
+  /** 等待队列：path -> 等待该文件锁的 subtaskIds（按到达顺序） */
+  private readonly fileWaitQueues = new Map<string, string[]>();
+
+  /** 子任务最近一次宣称会写入的文件集合（用于多文件请求） */
+  private readonly subtaskWriteFiles = new Map<string, Set<string>>();
+
+  /**
+   * taskId -> { projectRoot, tasksPathAbs, tag }
+   * 用于在“审批仲裁点”回写 tasks.json 依赖（不依赖当前全局状态，避免并行时混乱）。
+   */
+  private readonly taskMasterRefsByTaskId = new Map<
+    string,
+    { projectRoot: string; file: string; tag: string }
+  >();
+
   /** 审批请求缓存 TTL（5 分钟） */
   private static readonly REQUEST_CACHE_TTL = 5 * 60 * 1000;
 
@@ -258,6 +295,37 @@ export class Orchestrator extends BaseAgent {
   /** 子任务复审缓存（避免重复拆分） */
   private readonly refinedSubtaskIds = new Set<string>();
 
+  /** 延迟审批：subtaskId -> 待批准的请求（用于文件锁/expand_commit 等仲裁点） */
+  private readonly delayedApprovalsBySubtaskId = new Map<
+    string,
+    { workerId: string; approval: PendingApprovalFile; reason: string }
+  >();
+
+  /** 执行期发生 expand_commit 后需要重新读取 tasks.json 并刷新执行计划 */
+  private pendingReplan = false;
+
+  /** 记录哪些 subtask 在本轮通过 expand_commit 触发了结构变更（用于避免把其写成 done） */
+  private readonly expandedSubtaskIds = new Set<string>();
+
+  // ============================================================================
+  // tasks.json 作为唯一任务真相（新约束）
+  // ============================================================================
+
+  /** tasks.json 项目根目录（通常来自 metadata.workDir） */
+  private taskMasterProjectRoot: string | null = null;
+
+  /** tasks.json 文件路径（绝对路径） */
+  private taskMasterTasksPath: string | null = null;
+
+  /** 当前 tag（默认 master） */
+  private taskMasterTag = 'master';
+
+  /**
+   * 执行开始时的“原始 status”快照（用于 failure 回滚：保持原 status）
+   * key: "1" 或 "1.2"
+   */
+  private taskMasterOriginalStatuses: Record<string, TaskMasterTaskStatus> = {};
+
   private isDebugEnabled(): boolean {
     const levelRaw = process.env.TACHIKOMA_LOG_LEVEL ?? '';
     const level = String(levelRaw).toLowerCase();
@@ -274,20 +342,25 @@ export class Orchestrator extends BaseAgent {
     return parsed.success ? parsed.data : {};
   }
 
-  private getPlannerMode(): 'full' | 'patch' {
-    return this.getPlannerMetadata().mode === 'patch' ? 'patch' : 'full';
+  private getTaskMasterMetadata(): { tag?: string; file?: string } {
+    const meta = this.currentRunMetadata ?? null;
+    const taskmaster =
+      meta && typeof meta.taskmaster === 'object' && meta.taskmaster
+        ? (meta.taskmaster as Record<string, unknown>)
+        : null;
+    const tag =
+      (taskmaster && typeof taskmaster.tag === 'string' ? taskmaster.tag : undefined) ??
+      (meta && typeof meta.tag === 'string' ? String(meta.tag) : undefined);
+    const file = taskmaster && typeof taskmaster.file === 'string' ? taskmaster.file : undefined;
+
+    return {
+      ...(tag ? { tag } : {}),
+      ...(file ? { file } : {}),
+    };
   }
 
   private getPlannerMaxSubtasks(): number | undefined {
     return this.getPlannerMetadata().maxSubtasks;
-  }
-
-  private getPlannerPreviousError(): string | undefined {
-    return this.getPlannerMetadata().previousError;
-  }
-
-  private getPlannerPreviousFiles(): string[] | undefined {
-    return this.getPlannerMetadata().previousFiles;
   }
 
   constructor(id: string, options: OrchestratorOptions = {}) {
@@ -461,9 +534,42 @@ export class Orchestrator extends BaseAgent {
       });
     }
 
-    const { checkpoint, workerSnapshots, planData, resumableSubtaskIds } = restoreResult;
+    const { checkpoint, workerSnapshots, runtimeData, resumableSubtaskIds } = restoreResult;
 
-    if (!planData?.plannerOutput) {
+    // 恢复 PlannerOutput：仅允许从 tasks.json 引用重建（runtime.json 脱敏，不读取描述文本）
+    let restoredPlanOutput: PlannerOutput | null = null;
+
+    if (runtimeData && runtimeData.kind === 'taskmaster') {
+      // 从 checkpoint.contextData 恢复 workDir，作为 projectRoot
+      const workDir = this.extractWorkDirFromMetadata() ?? process.cwd();
+      const tasksJsonPath = runtimeData.tasksJson?.path;
+      const tasksJsonTag = runtimeData.tasksJson?.tag ?? 'master';
+      if (typeof tasksJsonPath === 'string' && tasksJsonPath) {
+        const abs = isAbsolute(tasksJsonPath) ? tasksJsonPath : join(workDir, tasksJsonPath);
+        this.taskMasterProjectRoot = workDir;
+        this.taskMasterTasksPath = abs;
+        this.taskMasterTag = tasksJsonTag;
+        this.taskMasterOriginalStatuses = runtimeData.originalStatuses ?? {};
+
+        const dummyTask = {
+          id: checkpoint.taskId,
+          type: 'composite',
+          objective: '',
+          constraints: [],
+          priority: 'medium',
+          complexity: 'moderate',
+        } as OrchestratorTask;
+
+        const rebuilt = await this.executeTaskMasterPlanPhase(
+          dummyTask,
+          { projectRoot: workDir, tag: tasksJsonTag, file: abs },
+          signal ?? new AbortController().signal
+        );
+        restoredPlanOutput = rebuilt.success ? rebuilt.output ?? null : null;
+      }
+    }
+
+    if (!restoredPlanOutput) {
       try {
         await checkpointManager.close();
       } finally {
@@ -496,11 +602,11 @@ export class Orchestrator extends BaseAgent {
         .getAllWorkers()
         .filter((w) => !!w.agent);
       if (existingExecutableWorkers.length === 0) {
-        const roles = planData.plannerOutput.roles;
+        const roles = restoredPlanOutput.roles;
         const workerCount =
           (Array.isArray(roles) && roles.length > 0)
             ? roles.length
-            : (planData.plannerOutput.delegation?.workerCount ?? this.orchestratorConfig.delegation.workerCount);
+            : (restoredPlanOutput.delegation?.workerCount ?? this.orchestratorConfig.delegation.workerCount);
         await this.registerDefaultWorkers({
           workerCount,
           ...(Array.isArray(roles) ? { roles } : {}),
@@ -514,7 +620,7 @@ export class Orchestrator extends BaseAgent {
 
       // 6. 构建仅执行“可恢复子任务”的计划：保留全部 subtasks（用于统计/依赖），仅过滤 steps
       const resumableSet = new Set(resumableSubtaskIds ?? []);
-      const resumePlan = this.filterPlanToResumableSubtasks(planData.plannerOutput, resumableSet);
+      const resumePlan = this.filterPlanToResumableSubtasks(restoredPlanOutput, resumableSet);
 
       // 7. 初始化执行状态（从检查点恢复）
       const carriedFailed = checkpoint.failedSubtaskIds.filter((id) => !resumableSet.has(id));
@@ -803,6 +909,13 @@ export class Orchestrator extends BaseAgent {
     // 初始化会话
     this.currentRunMetadata = task.context?.metadata ?? null;
     this.refinedSubtaskIds.clear();
+    // 执行期仲裁状态清理（每次 run 独立）
+    this.fileLocks.clear();
+    this.fileWaitQueues.clear();
+    this.subtaskWriteFiles.clear();
+    this.delayedApprovalsBySubtaskId.clear();
+    this.pendingReplan = false;
+    this.expandedSubtaskIds.clear();
     await this.initializeSession(task.id, task.context?.sessionId);
     await this.initializeSharedContext(orchestratorTask);
 
@@ -828,7 +941,22 @@ export class Orchestrator extends BaseAgent {
     try {
       // 阶段 1: 规划
       this.emit('plan:start', task.id, { task: orchestratorTask });
-      const planResult = await this.executePlanPhase(orchestratorTask, signal);
+      const taskMasterMeta = this.getTaskMasterMetadata();
+      this.taskMasterProjectRoot = this.extractWorkDirFromMetadata() ?? process.cwd();
+      // 默认按 sessionId 做 tag 隔离（避免所有对话都写入 master）
+      this.taskMasterTag = taskMasterMeta.tag ?? this.currentSessionId ?? 'master';
+      this.taskMasterTasksPath = null;
+      this.taskMasterOriginalStatuses = {};
+
+      const planResult = await this.executeTaskMasterPlanPhase(
+        orchestratorTask,
+        {
+          projectRoot: this.taskMasterProjectRoot,
+          tag: this.taskMasterTag,
+          ...(taskMasterMeta.file ? { file: taskMasterMeta.file } : {}),
+        },
+        signal
+      );
 
       if (!planResult.success || !planResult.output) {
         this.emit('plan:failed', task.id, { error: planResult.error });
@@ -848,8 +976,17 @@ export class Orchestrator extends BaseAgent {
 
       this.emit('plan:complete', task.id, { plan: normalizedPlan });
 
-      // 保存计划到会话文件
-      await this.savePlanToSession(task.id, normalizedPlan);
+      // 保存运行时快照到会话文件（runtime.json）
+      await this.saveTaskMasterRuntimeToSession(task.id, normalizedPlan);
+
+      // 记录本次 task 的 tasks.json 引用（用于执行期仲裁点回写依赖/expand）
+      if (this.taskMasterProjectRoot && this.taskMasterTasksPath) {
+        this.taskMasterRefsByTaskId.set(task.id, {
+          projectRoot: this.taskMasterProjectRoot,
+          file: this.taskMasterTasksPath,
+          tag: this.taskMasterTag ?? 'master',
+        });
+      }
 
       this.currentPlanOutput = normalizedPlan;
       await this.saveCheckpointSnapshot(task.id, 'executing', 'plan-ready');
@@ -1125,6 +1262,270 @@ export class Orchestrator extends BaseAgent {
     return m?.[1];
   }
 
+  private getTaskMasterRefForCurrentTask(): { projectRoot: string; file: string; tag: string } | null {
+    const taskId = this.currentTask?.id;
+    if (!taskId) return null;
+    const ref = this.taskMasterRefsByTaskId.get(taskId);
+    if (ref) return ref;
+    if (this.taskMasterProjectRoot && this.taskMasterTasksPath) {
+      return {
+        projectRoot: this.taskMasterProjectRoot,
+        file: this.taskMasterTasksPath,
+        tag: this.taskMasterTag ?? 'master',
+      };
+    }
+    return null;
+  }
+
+  private extractApprovalActionAndInput(approval: PendingApprovalFile): {
+    action: string | undefined;
+    input: Record<string, unknown> | undefined;
+    affectedFiles: string[];
+  } {
+    const meta = approval.details?.metadata as Record<string, unknown> | undefined;
+    const action = meta && typeof meta.action === 'string' ? String(meta.action) : undefined;
+    const inputRaw = (meta?.input ?? meta?.toolInput) as unknown;
+    const input = inputRaw && typeof inputRaw === 'object' ? (inputRaw as Record<string, unknown>) : undefined;
+
+    const filesRaw = approval.details?.affectedFiles;
+    const affectedFiles = Array.isArray(filesRaw)
+      ? filesRaw.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+      : [];
+
+    // fallback：从输入推导 path
+    if (affectedFiles.length === 0 && input && typeof input.path === 'string' && input.path.trim()) {
+      affectedFiles.push(input.path.trim());
+    }
+
+    return { action, input, affectedFiles };
+  }
+
+  private async approvePendingApproval(workerId: string, approval: PendingApprovalFile, approved: boolean, reason: string): Promise<void> {
+    if (!this.sessionManager) return;
+    const response: ApprovalResponseFile = {
+      requestId: approval.requestId,
+      respondedAt: Date.now(),
+      approved,
+      respondedBy: 'orchestrator',
+      reason,
+    };
+    await this.sessionManager.writeApprovalResponse(workerId, response);
+    this.emit('approval:complete', approval.subtaskId, {
+      requestId: approval.requestId,
+      workerId,
+      approved,
+      reason,
+    });
+  }
+
+  private async handleFileWriteArbitration(params: {
+    workerId: string;
+    approval: PendingApprovalFile;
+    action: 'apply_patch' | 'file_write';
+    affectedFiles: string[];
+  }): Promise<boolean> {
+    const { workerId, approval, action, affectedFiles } = params;
+    const subtaskId = approval.subtaskId;
+    const ref = this.getTaskMasterRefForCurrentTask();
+
+    // 只处理单文件场景（apply_patch/file_write 当前均为单文件工具）
+    const filePath = affectedFiles[0];
+    if (!filePath) {
+      await this.approvePendingApproval(workerId, approval, true, `Auto-approved ${action} (no affectedFiles provided)`);
+      return true;
+    }
+
+    // 文件被其他子任务占用：进入队列 + 写回 dependencies（方案 A）
+    const holder = this.fileLocks.get(filePath);
+    if (holder && holder !== subtaskId) {
+      const queue = this.fileWaitQueues.get(filePath) ?? [];
+      const predecessor = queue.length > 0 ? queue.at(-1) : holder;
+      if (predecessor && predecessor !== subtaskId && ref) {
+        await addTaskOrSubtaskDependency(subtaskId, predecessor, ref).catch(() => undefined);
+      }
+
+      if (!queue.includes(subtaskId)) {
+        queue.push(subtaskId);
+        this.fileWaitQueues.set(filePath, queue);
+      }
+      this.delayedApprovalsBySubtaskId.set(subtaskId, {
+        workerId,
+        approval,
+        reason: `Waiting for file lock: ${filePath} (held by ${holder})`,
+      });
+      return false;
+    }
+
+    // 获取锁（首次写入该文件时占用到子任务结束）
+    this.fileLocks.set(filePath, subtaskId);
+    const set = this.subtaskWriteFiles.get(subtaskId) ?? new Set<string>();
+    set.add(filePath);
+    this.subtaskWriteFiles.set(subtaskId, set);
+
+    await this.approvePendingApproval(workerId, approval, true, `Approved ${action} (acquired file lock: ${filePath})`);
+    return true;
+  }
+
+  private async releaseFileLocksForSubtask(subtaskId: string): Promise<void> {
+    const files = this.subtaskWriteFiles.get(subtaskId);
+    if (!files || files.size === 0) return;
+
+    for (const filePath of files) {
+      const holder = this.fileLocks.get(filePath);
+      if (holder !== subtaskId) continue;
+      this.fileLocks.delete(filePath);
+
+      const queue = this.fileWaitQueues.get(filePath);
+      if (!queue || queue.length === 0) continue;
+
+      const nextSubtaskId = queue.shift();
+      if (!nextSubtaskId) continue;
+      if (queue.length === 0) this.fileWaitQueues.delete(filePath);
+      else this.fileWaitQueues.set(filePath, queue);
+
+      // 把锁转交给下一个等待者，并批准其 pending_approval
+      this.fileLocks.set(filePath, nextSubtaskId);
+      const delayed = this.delayedApprovalsBySubtaskId.get(nextSubtaskId);
+      if (!delayed) continue;
+
+      this.delayedApprovalsBySubtaskId.delete(nextSubtaskId);
+
+      // 记录该子任务会写入的文件（用于后续释放）
+      const nextFiles = this.subtaskWriteFiles.get(nextSubtaskId) ?? new Set<string>();
+      nextFiles.add(filePath);
+      this.subtaskWriteFiles.set(nextSubtaskId, nextFiles);
+
+      await this.approvePendingApproval(
+        delayed.workerId,
+        delayed.approval,
+        true,
+        `Approved after waiting (acquired file lock: ${filePath})`
+      );
+    }
+
+    // 清理
+    this.subtaskWriteFiles.delete(subtaskId);
+  }
+
+  private async handleExpandCommitArbitration(params: {
+    workerId: string;
+    approval: PendingApprovalFile;
+    input: Record<string, unknown> | undefined;
+  }): Promise<void> {
+    const { workerId, approval } = params;
+    const ref = this.getTaskMasterRefForCurrentTask();
+    if (!ref) {
+      await this.approvePendingApproval(workerId, approval, false, 'No tasks.json reference available for expand_commit');
+      return;
+    }
+
+    const input = params.input ?? {};
+    const rawTargetId = typeof input.targetId === 'string' ? input.targetId.trim() : '';
+    const targetId = rawTargetId || approval.subtaskId;
+
+    const rawStrategy = typeof input.strategy === 'string' ? input.strategy : '';
+    const strategy: 'serial' | 'parallel' = rawStrategy === 'parallel' ? 'parallel' : 'serial';
+    const force = input.force === true;
+
+    const rawSubs = input.subtasks;
+    if (!Array.isArray(rawSubs) || rawSubs.length < 2) {
+      await this.approvePendingApproval(workerId, approval, false, 'expand_commit requires subtasks (array) with length >= 2');
+      return;
+    }
+
+    const generated = rawSubs.map((s) => {
+      const obj = (s && typeof s === 'object') ? (s as Record<string, unknown>) : {};
+      const title = typeof obj.title === 'string' ? obj.title.trim() : '';
+      const description = typeof obj.description === 'string' ? obj.description.trim() : '';
+      const details = typeof obj.details === 'string' ? obj.details : '';
+      const testStrategy = typeof obj.testStrategy === 'string' ? obj.testStrategy : '';
+      return { title, description, details, testStrategy };
+    });
+
+    if (generated.some((g) => !g.title || !g.description)) {
+      await this.approvePendingApproval(workerId, approval, false, 'expand_commit subtasks must include non-empty title and description');
+      return;
+    }
+
+    // 1) 写回 tasks.json（不生成 1.1.1；subtask-level 采用 A：改写 + 新增兄弟 + 依赖重写）
+    await expandTaskOrSubtask(targetId, generated, {
+      projectRoot: ref.projectRoot,
+      file: ref.file,
+      tag: ref.tag,
+      ...(force ? { force } : {}),
+      strategy,
+    });
+
+    // 2) role 继承：新生成的子任务必须继承父任务 role（写回 taskmeta，不污染 tasks.json）
+    const taskmetaRaw = await readTaskmeta(ref.projectRoot).catch(() => null);
+    const taskmetaV1 = ensureTaskmetaV1(taskmetaRaw);
+    let taskmetaDirty = taskmetaRaw === null;
+
+    const tag = ref.tag;
+    const fromPlan = this.currentPlanOutput?.subtasks.find((s) => s.id === targetId);
+    const fromMeta = getRoleAssignmentFromTaskmeta(taskmetaV1, tag, targetId);
+    const inheritedRoleId =
+      (typeof fromPlan?.roleId === 'string' && fromPlan.roleId.trim())
+        ? fromPlan.roleId.trim()
+        : (typeof fromMeta?.roleId === 'string' && fromMeta.roleId.trim())
+          ? fromMeta.roleId.trim()
+          : 'generalist';
+
+    const stableCap = `role:${inheritedRoleId}`;
+    const capsFromPlan = Array.isArray(fromPlan?.requiredCapabilities) ? fromPlan!.requiredCapabilities! : [];
+    const capsFromMeta = Array.isArray(fromMeta?.requiredCapabilities) ? fromMeta!.requiredCapabilities! : [];
+    const inheritedCaps = Array.from(new Set([stableCap, ...capsFromPlan, ...capsFromMeta]));
+
+    taskmetaV1.roles ??= {};
+    taskmetaV1.roles.byId ??= {};
+    if (!taskmetaV1.roles.byId[inheritedRoleId]) {
+      taskmetaV1.roles.byId[inheritedRoleId] = {
+        name: inheritedRoleId === 'generalist' ? '通用执行者' : inheritedRoleId,
+        capabilities: inheritedCaps,
+        responsibilities: inheritedRoleId === 'generalist' ? '根据 tasks.json 的任务描述执行实现与验证工作' : '',
+      };
+      taskmetaDirty = true;
+    }
+
+    taskmetaV1.roles.assignments ??= {};
+    const scoped = taskmetaV1.roles.assignments[tag] ?? (taskmetaV1.roles.assignments[tag] = {});
+
+    const rootTaskId = String(targetId).split('.').at(0) ?? targetId;
+    const after = await readTasksJson({
+      projectRoot: ref.projectRoot,
+      file: ref.file,
+      tag: ref.tag,
+    });
+    const parentTask = after.tasks.find((t) => String(t.id) === String(rootTaskId));
+    const subs = Array.isArray(parentTask?.subtasks) ? parentTask!.subtasks : [];
+
+    for (const st of subs) {
+      const fullId = `${rootTaskId}.${String(st.id)}`;
+      scoped[fullId] = { roleId: inheritedRoleId, requiredCapabilities: inheritedCaps };
+      taskmetaDirty = true;
+
+      // failures 不回写时需要 originalStatuses 支撑回滚：新子任务默认 pending
+      if (this.taskMasterOriginalStatuses[fullId] === undefined) {
+        this.taskMasterOriginalStatuses[fullId] = 'pending';
+      }
+    }
+
+    if (taskmetaDirty) {
+      await writeTaskmeta(ref.projectRoot, taskmetaV1);
+    }
+
+    // 3) 标记需要重规划：当前执行的父任务不应被写为 done
+    this.pendingReplan = true;
+    this.expandedSubtaskIds.add(approval.subtaskId);
+
+    await this.approvePendingApproval(
+      workerId,
+      approval,
+      true,
+      `expand_commit applied: ${targetId} -> ${subs.length} subtasks (strategy: ${strategy})`
+    );
+  }
+
   /**
    * 处理 Worker 审批请求
    *
@@ -1173,6 +1574,28 @@ export class Orchestrator extends BaseAgent {
       isTimedOut,
     });
 
+    // =========================================================================
+    // Orchestrator 仲裁点：文件写入串行化（apply_patch/file_write）
+    // =========================================================================
+    const extracted = this.extractApprovalActionAndInput(approval);
+    if (extracted.action === 'apply_patch' || extracted.action === 'file_write') {
+      await this.handleFileWriteArbitration({
+        workerId,
+        approval,
+        action: extracted.action,
+        affectedFiles: extracted.affectedFiles,
+      });
+      return;
+    }
+    if (extracted.action === 'expand_commit') {
+      await this.handleExpandCommitArbitration({
+        workerId,
+        approval,
+        input: extracted.input,
+      });
+      return;
+    }
+
     // 根据策略决定是否批准
     let approved: boolean;
     let reason: string;
@@ -1209,25 +1632,7 @@ export class Orchestrator extends BaseAgent {
       reason = `Default decision: ${policy.defaultDecision}`;
     }
 
-    // 构建审批响应
-    const response: ApprovalResponseFile = {
-      requestId: approval.requestId,
-      respondedAt: Date.now(),
-      approved,
-      respondedBy: 'orchestrator',
-      reason,
-    };
-
-    // 写入审批响应（SessionFileManager.writeApprovalResponse 会自动清理 pending_approval.json 并记录决策）
-    await this.sessionManager.writeApprovalResponse(workerId, response);
-
-    // 发送审批完成事件
-    this.emit('approval:complete', approval.subtaskId, {
-      requestId: approval.requestId,
-      workerId,
-      approved,
-      reason,
-    });
+    await this.approvePendingApproval(workerId, approval, approved, reason);
   }
 
   // ============================================================================
@@ -1585,20 +1990,87 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   /**
-   * 保存计划到会话文件
+   * 保存 Task Master tasks.json-only 脱敏运行时快照到会话文件（runtime.json）
+   *
+   * 约束：runtime.json 不允许落盘任务描述文本，因此只保存：
+   * - tasks.json 引用（path + tag）
+   * - executionPlan（仅 id 顺序）
+   * - roles 与 roleAssignments（角色化路由所需）
+   * - originalStatuses（failure keep-status 的回滚依据）
    */
-  private async savePlanToSession(
+  private async saveTaskMasterRuntimeToSession(
     taskId: string,
     planOutput: PlannerOutput
   ): Promise<void> {
     if (!this.sessionManager) return;
+    if (!this.taskMasterProjectRoot || !this.taskMasterTasksPath) return;
 
-    await this.sessionManager.writePlan({
+    const projectRoot = this.taskMasterProjectRoot;
+    const tasksPathAbs = this.taskMasterTasksPath;
+
+    // 尽量写相对路径（方便外部投喂/迁移）；若不在 projectRoot 下则写绝对路径
+    let tasksPathForPlan = tasksPathAbs;
+    try {
+      const rel = relative(projectRoot, tasksPathAbs);
+      const withinProject = rel && !rel.startsWith('..') && !isAbsolute(rel);
+      if (withinProject) {
+        tasksPathForPlan = rel;
+      }
+    } catch {
+      // ignore
+    }
+
+    const roleAssignments: Record<
+      string,
+      { roleId?: string; requiredCapabilities?: string[] }
+    > = {};
+    for (const st of planOutput.subtasks) {
+      if (st.roleId || (Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.length > 0)) {
+        roleAssignments[st.id] = {
+          ...(st.roleId ? { roleId: st.roleId } : {}),
+          ...(Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.length > 0
+            ? { requiredCapabilities: st.requiredCapabilities }
+            : {}),
+        };
+      }
+    }
+
+    await this.sessionManager.writeRuntime({
+      kind: 'taskmaster',
       taskId,
       createdAt: Date.now(),
-      plannerOutput: planOutput,
       version: 1,
+      tasksJson: {
+        path: tasksPathForPlan,
+        tag: this.taskMasterTag ?? 'master',
+      },
+      executionPlan: planOutput.executionPlan,
+      ...(Array.isArray(planOutput.roles) && planOutput.roles.length > 0 ? { roles: planOutput.roles } : {}),
+      ...(Object.keys(roleAssignments).length > 0 ? { roleAssignments } : {}),
+      ...(this.taskMasterOriginalStatuses && Object.keys(this.taskMasterOriginalStatuses).length > 0
+        ? { originalStatuses: this.taskMasterOriginalStatuses }
+        : {}),
     });
+  }
+
+  private getTaskMasterOriginalStatus(id: string): TaskMasterTaskStatus {
+    return (this.taskMasterOriginalStatuses[id] ?? 'pending') as TaskMasterTaskStatus;
+  }
+
+  private async writeTaskMasterStatus(id: string, status: TaskMasterTaskStatus): Promise<void> {
+    if (!this.taskMasterProjectRoot || !this.taskMasterTasksPath) return;
+
+    await updateTaskOrSubtaskStatus(id, status, {
+      projectRoot: this.taskMasterProjectRoot,
+      file: this.taskMasterTasksPath,
+      tag: this.taskMasterTag ?? 'master',
+      touchUpdatedAt: true,
+    });
+  }
+
+  private async restoreTaskMasterStatus(id: string): Promise<void> {
+    const original = this.getTaskMasterOriginalStatus(id);
+    await this.writeTaskMasterStatus(id, original);
   }
 
   /**
@@ -1622,7 +2094,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
   }
 
   private shouldCheckpoint(): boolean {
-    return this.orchestratorConfig.checkpoint.autoSave;
+    return this.orchestratorConfig.checkpoint.enabled;
   }
 
   private buildCheckpointData(
@@ -1645,7 +2117,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
       this.currentPlanOutput.subtasks.map((subtask) => ({
         id: subtask.id,
         status: subtask.status ?? 'pending',
-        assignedWorkerId: subtask.assignedWorkerId,
+        ...(subtask.assignedWorkerId ? { assignedWorkerId: subtask.assignedWorkerId } : {}),
       })),
       {
         completedSubtasks: this.executionState.completedSubtasks,
@@ -1706,13 +2178,18 @@ Is this a genuine deviation? Answer YES or NO only.`,
   // ============================================================================
 
   /**
-   * 执行规划阶段
+   * tasks.json-only 规划阶段：以 Task Master 的 tasks.json 作为唯一任务真相
+   *
+   * - 不调用 Tachikoma LLM Planner 生成 PlannerOutput（避免产生第二套“任务描述”落盘）
+   * - 读取 tasks.json 并在内存中转换为 PlannerOutput（仅用于执行）
+   * - 生成 runtime.json 脱敏快照时，仅保存引用/执行顺序/角色映射（见 saveTaskMasterRuntimeToSession）
    */
-  private async executePlanPhase(
+  private async executeTaskMasterPlanPhase(
     task: OrchestratorTask,
-    signal: AbortSignal
+    ref: { projectRoot: string; tag: string; file?: string },
+    signal: AbortSignal,
+    ensureRound = 0
   ): Promise<PlanResult> {
-    // 检查中断
     if (signal.aborted) {
       return {
         success: false,
@@ -1723,18 +2200,513 @@ Is this a genuine deviation? Answer YES or NO only.`,
       };
     }
 
-    const maxSubtasks = this.getPlannerMaxSubtasks() ?? this.orchestratorConfig.planner.defaultMaxSubtasks;
-    const input: PlannerInput = {
-      task,
-      maxSubtasks,
+    const taskmetaRaw = await readTaskmeta(ref.projectRoot).catch(() => null);
+    const taskmetaV1 = ensureTaskmetaV1(taskmetaRaw);
+    let taskmetaDirty = taskmetaRaw === null;
+    const roleDefsFromMeta = getRoleDefinitionsFromTaskmeta(taskmetaV1);
+
+    // 若 taskmeta 指定了 tag，则优先使用（但仍保持显式传入 tag 优先）
+    const effectiveTag = ref.tag || taskmetaV1.tasksJson?.tag || 'master';
+
+    const read = await readTasksJson({
+      projectRoot: ref.projectRoot,
+      tag: effectiveTag,
+      ...(ref.file ? { file: ref.file } : {}),
+    });
+
+    this.taskMasterTasksPath = read.tasksPath;
+    this.taskMasterTag = read.tag;
+
+    const maxEnsureRounds = 2;
+
+    const planAndAppendTasks = async (existing: TaskMasterTask[]): Promise<PlanResult | null> => {
+      const maxSubtasks =
+        this.getPlannerMaxSubtasks() ?? this.orchestratorConfig.planner.defaultMaxSubtasks;
+
+      const plan = await this.planner.plan({ task, maxSubtasks });
+      if (!plan.success || !plan.output) {
+        return plan;
+      }
+
+      // 信息不足：不写 tasks.json，交由上层触发 need_user_input
+      if (plan.output.intake?.ready === false) {
+        return plan;
+      }
+
+      // === 生成新的 Task Master Tasks（作为本轮对话的“可执行计划”）===
+      const nowIso = new Date().toISOString();
+
+      const existingNumericIds = existing
+        .map((t) => Number(String(t.id)))
+        .filter((n) => Number.isFinite(n));
+      const baseId =
+        existingNumericIds.length > 0
+          ? Math.max(...existingNumericIds)
+          : existing.length;
+
+      const priorityRaw = String(task.priority ?? 'medium') as TaskMasterTaskPriority;
+      const priority: TaskMasterTaskPriority =
+        priorityRaw === 'critical' || priorityRaw === 'high' || priorityRaw === 'medium' || priorityRaw === 'low'
+          ? priorityRaw
+          : 'medium';
+
+      const plannedSubtasks = Array.isArray(plan.output.subtasks) ? plan.output.subtasks : [];
+
+      // 将 Planner subtasks 映射为 Task Master 顶级 tasks（1-level：1,2,3...）
+      const idMap = new Map<string, string>();
+      plannedSubtasks.forEach((st, idx) => {
+        idMap.set(String(st.id), String(baseId + idx + 1));
+      });
+
+      const newTasks: TaskMasterTask[] = plannedSubtasks.map((st, idx) => {
+        const id = String(baseId + idx + 1);
+        const deps = Array.isArray(st.dependencies) ? st.dependencies : [];
+        const mappedDeps = deps
+          .map((d) => idMap.get(String(d)))
+          .filter((v): v is string => typeof v === 'string' && v.length > 0);
+
+        const obj = String(st.objective ?? '').trim();
+        const titleLine = obj.split('\n')[0] ?? '';
+        const title = titleLine.length > 80 ? `${titleLine.slice(0, 80)}...` : (titleLine || `Task ${id}`);
+
+        const details =
+          Array.isArray(st.constraints) && st.constraints.length > 0 ? st.constraints.join('\n') : '';
+
+        return {
+          id,
+          title,
+          description: obj || title,
+          status: 'pending' as TaskMasterTaskStatus,
+          priority,
+          dependencies: mappedDeps,
+          details,
+          testStrategy: '为关键逻辑补充必要的测试，并确保测试通过。',
+          subtasks: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+      });
+
+      await writeTasksJson({
+        projectRoot: ref.projectRoot,
+        file: read.tasksPath,
+        tag: effectiveTag,
+        rawData: read.rawData,
+        tasks: [...existing, ...newTasks],
+      });
+
+      return null;
     };
 
-    if (this.getPlannerMode() !== 'patch') {
-      return this.planner.plan(input);
+    if (!Array.isArray(read.tasks) || read.tasks.length === 0) {
+      if (ensureRound >= maxEnsureRounds) {
+        return {
+          success: false,
+          error: `tasks.json is empty or missing tasks (path: ${read.tasksPath})`,
+          tokensUsed: { input: 0, output: 0 },
+          retryCount: 0,
+          degraded: false,
+        };
+      }
+
+      const maybeEarly = await planAndAppendTasks([]);
+      if (maybeEarly) return maybeEarly;
+      return this.executeTaskMasterPlanPhase(task, ref, signal, ensureRound + 1);
     }
 
-    const previousContext = await this.buildPatchPreviousContext().catch(() => '');
-    return this.planner.planPatch(input, previousContext);
+    const terminalComplete = new Set<TaskMasterTaskStatus>(['done', 'completed', 'cancelled']);
+    const isSatisfied = (status: TaskMasterTaskStatus | undefined): boolean => {
+      if (!status) return false;
+      return terminalComplete.has(status);
+    };
+
+    // 任务完成映射：taskId -> completionId（用于把 task-level deps 映射到可执行节点）
+    const completionIdByTaskId = new Map<string, string>();
+    for (const t of read.tasks) {
+      const tid = String(t.id);
+      // 允许 subtasks 并行：使用“父 taskId 自身”作为 completion 节点（由 Orchestrator 内部 barrier 自动完成）
+      completionIdByTaskId.set(tid, tid);
+    }
+
+    // 已完成集合（用于删除已满足依赖）
+    const completedIds = new Set<string>();
+    for (const t of read.tasks) {
+      const tid = String(t.id);
+      if (isSatisfied(t.status as TaskMasterTaskStatus)) {
+        completedIds.add(tid);
+      }
+      if (Array.isArray(t.subtasks)) {
+        for (const st of t.subtasks) {
+          if (isSatisfied(st.status as TaskMasterTaskStatus)) {
+            completedIds.add(`${tid}.${String(st.id)}`);
+          }
+        }
+      }
+    }
+
+    const toFullSubId = (parentId: string, maybeDotId: string | number): string => {
+      const depId = String(maybeDotId);
+      return depId.includes('.') ? depId : `${parentId}.${depId}`;
+    };
+
+    // 生成可执行 SubTask（执行期使用；不落盘到 runtime.json）
+    const subtasks: SubTask[] = [];
+
+    const pushOriginalStatus = (id: string, status: TaskMasterTaskStatus | undefined): void => {
+      const s = (status ?? 'pending') as TaskMasterTaskStatus;
+      if (this.taskMasterOriginalStatuses[id] === undefined) {
+        this.taskMasterOriginalStatuses[id] = s;
+      }
+    };
+
+    for (const t of read.tasks) {
+      const tid = String(t.id);
+      const taskStatus = (t.status ?? 'pending') as TaskMasterTaskStatus;
+
+      const taskPriority = (t.priority ?? 'medium') as TaskMasterTaskPriority;
+      const priority =
+        (taskPriority === 'critical' || taskPriority === 'high' || taskPriority === 'medium' || taskPriority === 'low')
+          ? taskPriority
+          : 'medium';
+
+      const taskDepsRaw = Array.isArray(t.dependencies) ? t.dependencies : [];
+      const taskDeps = taskDepsRaw
+        .map((dep) => String(dep))
+        .map((dep) => (completionIdByTaskId.get(dep) ?? dep))
+        .filter((dep) => !completedIds.has(dep));
+
+      const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+      if (subs.length === 0) {
+        if (isSatisfied(taskStatus)) continue;
+        pushOriginalStatus(tid, taskStatus);
+        subtasks.push({
+          id: tid,
+          parentId: task.id,
+          parentObjective: task.objective,
+          objective: `${t.title}: ${t.description}`.trim(),
+          constraints: [
+            ...(t.details ? [`details: ${t.details}`] : []),
+            ...(t.testStrategy ? [`testStrategy: ${t.testStrategy}`] : []),
+          ],
+          dependencies: taskDeps,
+          status: 'pending',
+          priority,
+        });
+        continue;
+      }
+
+      // subtasks：按 id 排序（依赖由 tasks.json 决定；允许并行）
+      const sortedSubs = subs
+        .slice()
+        .sort((a, b) => Number(a.id) - Number(b.id));
+      const executableChildIds: string[] = [];
+      for (const st of sortedSubs) {
+        const fullId = `${tid}.${String(st.id)}`;
+        const stStatus = (st.status ?? 'pending') as TaskMasterTaskStatus;
+        if (isSatisfied(stStatus)) {
+          continue;
+        }
+
+        pushOriginalStatus(fullId, stStatus);
+
+        const stDepsRaw = Array.isArray(st.dependencies) ? st.dependencies : [];
+        const stDepsNorm = stDepsRaw.map((dep) => toFullSubId(tid, dep));
+
+        const deps = [
+          ...taskDeps,
+          ...stDepsNorm,
+        ]
+          .map((dep) => (completionIdByTaskId.get(dep) ?? dep))
+          .filter((dep) => !completedIds.has(dep));
+
+        subtasks.push({
+          id: fullId,
+          parentId: task.id,
+          parentObjective: task.objective,
+          objective: `${st.title || `Subtask ${st.id}`}: ${st.description || ''}`.trim(),
+          constraints: [
+            `parentTask: ${t.title}`,
+            ...(t.description ? [`parentDescription: ${t.description}`] : []),
+            ...(st.details ? [`details: ${st.details}`] : []),
+            ...(st.testStrategy ? [`testStrategy: ${st.testStrategy}`] : []),
+          ],
+          dependencies: deps,
+          status: 'pending',
+          priority,
+        });
+        executableChildIds.push(fullId);
+      }
+
+      // 内部 barrier：taskId 作为 completion 节点，依赖于本 task 的所有可执行子任务
+      // 说明：用于支持 subtasks 并行同时保持 task-level deps 的正确语义（其他 task 依赖 taskId 时会映射到该节点）
+      if (!isSatisfied(taskStatus)) {
+        pushOriginalStatus(tid, taskStatus);
+        subtasks.push({
+          id: tid,
+          parentId: task.id,
+          parentObjective: task.objective,
+          objective: `【内部】完成任务: ${t.title}`.trim(),
+          constraints: [`barrier: ${t.title}`],
+          dependencies: [...taskDeps, ...executableChildIds].filter((dep) => !completedIds.has(dep)),
+          status: 'pending',
+          priority,
+          requiredCapabilities: ['internal:barrier'],
+        });
+      }
+    }
+
+    // 若没有任何可执行节点（例如当前 tag 下所有 task 都已完成），则把本轮用户输入转成新 task 追加进去再重试
+    if (subtasks.length === 0 && ensureRound < maxEnsureRounds) {
+      const maybeEarly = await planAndAppendTasks(read.tasks);
+      if (maybeEarly) return maybeEarly;
+      return this.executeTaskMasterPlanPhase(task, ref, signal, ensureRound + 1);
+    }
+
+    // topo sort（分层并行 steps：满足依赖的任务可并行执行）
+    const byId = new Map(subtasks.map((st) => [st.id, st] as const));
+    const inDegree = new Map<string, number>();
+    const outgoing = new Map<string, Set<string>>();
+
+    for (const st of subtasks) {
+      inDegree.set(st.id, 0);
+      outgoing.set(st.id, new Set());
+    }
+
+    for (const st of subtasks) {
+      const deps = Array.isArray(st.dependencies) ? st.dependencies : [];
+      for (const dep of deps) {
+        if (!byId.has(dep)) continue; // dep 可能已满足或不在本次执行集合
+        outgoing.get(dep)!.add(st.id);
+        inDegree.set(st.id, (inDegree.get(st.id) ?? 0) + 1);
+      }
+    }
+
+    const visited = new Set<string>();
+    let available: string[] = [];
+    for (const [id, deg] of inDegree.entries()) {
+      if (deg === 0) available.push(id);
+    }
+    available.sort();
+
+    const steps: ExecutionStep[] = [];
+    while (available.length > 0) {
+      const layer = available.slice();
+      for (const id of layer) {
+        visited.add(id);
+      }
+
+      steps.push({
+        order: steps.length + 1,
+        subtaskIds: layer,
+        parallel: layer.length > 1,
+      });
+
+      const nextSet = new Set<string>();
+      for (const id of layer) {
+        for (const next of outgoing.get(id) ?? []) {
+          const nextDeg = (inDegree.get(next) ?? 0) - 1;
+          inDegree.set(next, nextDeg);
+          if (nextDeg === 0 && !visited.has(next)) {
+            nextSet.add(next);
+          }
+        }
+      }
+
+      available = Array.from(nextSet);
+      available.sort();
+    }
+
+    // 若存在环，回退到串行顺序（validatePlanDAG 会给出提示）
+    const hasCycle = visited.size !== subtasks.length;
+    const serialOrder = subtasks.map((st) => st.id);
+    const executionPlan: ExecutionPlan = hasCycle
+      ? {
+          steps: serialOrder.map((id, idx) => ({
+            order: idx + 1,
+            subtaskIds: [id],
+            parallel: false,
+          })),
+          isParallel: false,
+        }
+      : {
+          steps,
+          isParallel: steps.some((s) => s.parallel),
+        };
+
+    const delegation = task.delegation ?? {
+      mode: this.orchestratorConfig.delegation.mode,
+      workerCount: this.orchestratorConfig.delegation.workerCount,
+      timeout: this.orchestratorConfig.delegation.timeout,
+      retryPolicy: this.orchestratorConfig.delegation.retryPolicy,
+    };
+
+    // 角色推理（LLM）：产出 roles + roleAssignments（不写入 tasks.json）
+    const tagForRoleAssignments = this.taskMasterTag ?? 'master';
+    const defsById = new Map(roleDefsFromMeta.map((r) => [r.id, r] as const));
+    const isBarrier = (st: SubTask): boolean =>
+      Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.includes('internal:barrier');
+    const roleTargets = subtasks.filter((st) => !isBarrier(st));
+
+    // 1) 收集显式映射（作为固定分配，LLM 不应修改）
+    const fixedAssignments: Record<string, { roleId: string }> = {};
+    const explicitBySubtaskId = new Set<string>();
+    for (const st of roleTargets) {
+      const a = getRoleAssignmentFromTaskmeta(taskmetaV1, tagForRoleAssignments, st.id);
+      if (a?.roleId && typeof a.roleId === 'string' && a.roleId.trim()) {
+        fixedAssignments[st.id] = { roleId: a.roleId.trim() };
+        explicitBySubtaskId.add(st.id);
+      }
+    }
+
+    const needsRoleInference = roleTargets.some((st) => !explicitBySubtaskId.has(st.id));
+
+    // 2) LLM 推理（仅当存在未分配 role 的子任务）
+    let inferredRoles: PlannerRole[] = [];
+    let inferredAssignments: Record<string, { roleId: string; requiredCapabilities?: string[] }> = {};
+    let roleTokensUsed: { input: number; output: number } = { input: 0, output: 0 };
+    let roleRetryCount = 0;
+
+    if (needsRoleInference) {
+      const inferResult = await this.planner.inferRolesForSubtasks({
+        task,
+        subtasks: roleTargets.map((st) => ({
+          id: st.id,
+          objective: st.objective,
+          constraints: st.constraints,
+        })),
+        ...(Object.keys(fixedAssignments).length > 0 ? { fixedAssignments } : {}),
+        // 默认不限制（模型会尽量少角色）；可后续放到 taskmeta.execution 里做配置
+      });
+
+      roleTokensUsed = inferResult.tokensUsed;
+      roleRetryCount = inferResult.retryCount;
+
+      if (inferResult.success && inferResult.roles && inferResult.roleAssignments) {
+        inferredRoles = inferResult.roles;
+        inferredAssignments = inferResult.roleAssignments;
+
+        // 把 LLM 推理出的 role 定义写入 taskmeta.roles.byId（仅补齐，不覆盖用户已有定义）
+        taskmetaV1.roles ??= {};
+        taskmetaV1.roles.byId ??= {};
+        for (const r of inferredRoles) {
+          if (!r?.id) continue;
+          if (taskmetaV1.roles.byId[r.id]) continue;
+          taskmetaV1.roles.byId[r.id] = {
+            name: r.name,
+            capabilities: Array.isArray(r.capabilities) ? r.capabilities : [`role:${r.id}`],
+            ...(typeof r.responsibilities === 'string' && r.responsibilities
+              ? { responsibilities: r.responsibilities }
+              : {}),
+          };
+          taskmetaDirty = true;
+        }
+      } else {
+        // 推理失败：保底使用 generalist（不阻断执行）
+        inferredRoles = [
+          {
+            id: 'generalist',
+            name: '通用执行者',
+            responsibilities: '根据 tasks.json 的任务描述执行实现与验证工作',
+            capabilities: ['role:generalist'],
+          },
+        ];
+        for (const st of roleTargets) {
+          if (!explicitBySubtaskId.has(st.id)) {
+            inferredAssignments[st.id] = { roleId: 'generalist', requiredCapabilities: ['role:generalist'] };
+          }
+        }
+      }
+    }
+
+    // 3) 合并分配：显式映射优先，其次 LLM 推理，否则 generalist
+    const roleIdsUsed = new Set<string>();
+    for (const st of roleTargets) {
+      const a = getRoleAssignmentFromTaskmeta(taskmetaV1, tagForRoleAssignments, st.id);
+      const explicitRoleId = a?.roleId && typeof a.roleId === 'string' && a.roleId.trim() ? a.roleId.trim() : undefined;
+      const explicitCapsRaw = Array.isArray(a?.requiredCapabilities) ? a!.requiredCapabilities! : undefined;
+      const explicitCaps = Array.isArray(explicitCapsRaw)
+        ? explicitCapsRaw.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        : [];
+
+      const inferred = inferredAssignments[st.id];
+      const roleId = explicitRoleId ?? (typeof inferred?.roleId === 'string' && inferred.roleId ? inferred.roleId : 'generalist');
+      const stableCap = `role:${roleId}`;
+
+      const inferredCaps = Array.isArray(inferred?.requiredCapabilities)
+        ? inferred!.requiredCapabilities!.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        : [];
+
+      st.roleId = roleId;
+      st.requiredCapabilities = Array.from(new Set([stableCap, ...explicitCaps, ...inferredCaps]));
+      roleIdsUsed.add(roleId);
+
+      // 写回推理结果（仅对“没有显式分配”的子任务）
+      if (!explicitRoleId) {
+        const upserted = upsertRoleAssignment(taskmetaV1, tagForRoleAssignments, st.id, {
+          roleId,
+          requiredCapabilities: st.requiredCapabilities,
+        });
+        taskmetaDirty = taskmetaDirty || upserted.changed;
+      }
+    }
+
+    if (taskmetaDirty) {
+      await writeTaskmeta(ref.projectRoot, taskmetaV1);
+    }
+
+    // 4) 生成 roles 列表：优先 taskmeta.roles.byId，其次 LLM roles，最后最小兜底
+    const inferredById = new Map(inferredRoles.map((r) => [r.id, r] as const));
+    const allRoleIds = Array.from(roleIdsUsed).sort((a, b) => a.localeCompare(b));
+    if (allRoleIds.length === 0) allRoleIds.push('generalist');
+
+    const roles: PlannerRole[] = allRoleIds.map((roleId) => {
+      const fromMeta = defsById.get(roleId);
+      if (fromMeta) {
+        const caps = Array.isArray(fromMeta.capabilities) ? fromMeta.capabilities : [];
+        const stableCap = `role:${roleId}`;
+        return {
+          id: roleId,
+          name: fromMeta.name || roleId,
+          responsibilities: fromMeta.responsibilities ?? '',
+          capabilities: Array.from(new Set([stableCap, ...caps])),
+        };
+      }
+
+      const fromInfer = inferredById.get(roleId);
+      if (fromInfer) {
+        const caps = Array.isArray(fromInfer.capabilities) ? fromInfer.capabilities : [];
+        const stableCap = `role:${roleId}`;
+        return {
+          id: roleId,
+          name: fromInfer.name || roleId,
+          responsibilities: fromInfer.responsibilities ?? '',
+          capabilities: Array.from(new Set([stableCap, ...caps])),
+        };
+      }
+
+      return {
+        id: roleId,
+        name: roleId === 'generalist' ? '通用执行者' : roleId,
+        responsibilities: roleId === 'generalist' ? '根据 tasks.json 的任务描述执行实现与验证工作' : '',
+        capabilities: [`role:${roleId}`],
+      };
+    });
+
+    const output: PlannerOutput = {
+      taskId: task.id,
+      subtasks,
+      delegation,
+      executionPlan,
+      roles,
+    };
+
+    return {
+      success: true,
+      output,
+      tokensUsed: roleTokensUsed,
+      retryCount: roleRetryCount,
+      degraded: false,
+    };
   }
 
   private async buildPatchPreviousContext(): Promise<string> {
@@ -1764,11 +2736,10 @@ Is this a genuine deviation? Answer YES or NO only.`,
       }
     };
 
-    const previousError = this.getPlannerPreviousError();
-    const previousFiles = this.getPlannerPreviousFiles();
+    const { previousError, previousFiles } = this.getPlannerMetadata();
 
-    const [plan, progress, decisions, shared] = await Promise.all([
-      this.sessionManager.readOrchestratorPlan().catch(() => null),
+    const [runtime, progress, decisions, shared] = await Promise.all([
+      this.sessionManager.readOrchestratorRuntime().catch(() => null),
       this.sessionManager.readProgress().catch(() => null),
       this.sessionManager.readDecisions(10).catch(() => []),
       this.sessionManager.readSharedContext().catch(() => null),
@@ -1839,11 +2810,11 @@ Is this a genuine deviation? Answer YES or NO only.`,
       );
     }
 
-    if (plan?.plannerOutput) {
-      const p = plan.plannerOutput;
+    if (runtime?.kind === 'taskmaster') {
+      const steps = runtime.executionPlan?.steps ?? [];
       appendSection(
-        '### Previous plan',
-        p.subtasks.slice(0, 20).map((st) => `- ${st.id}: ${st.objective}`)
+        '### Previous runtime (taskmaster)',
+        steps.slice(0, 20).flatMap((s) => s.subtaskIds.map((id) => `- ${id}`))
       );
     }
 
@@ -1905,52 +2876,89 @@ Is this a genuine deviation? Answer YES or NO only.`,
     planOutput: PlannerOutput,
     signal: AbortSignal
   ): Promise<AggregatedResult> {
-    const { subtasks, delegation, executionPlan } = planOutput;
-
-    // 创建子任务映射
+    // 累积子任务映射（支持执行期 expand_commit 触发的重规划）
     const subtaskMap = new Map<string, SubTask>();
-    for (const subtask of subtasks) {
-      subtaskMap.set(subtask.id, subtask);
-    }
+    const mergeSubtasks = (subs: SubTask[]): void => {
+      for (const st of subs) subtaskMap.set(st.id, st);
+    };
 
-    // DAG 校验：执行前检查环依赖和步骤一致性
-    const dagError = this.validatePlanDAG(subtasks, executionPlan);
-    if (dagError) {
-      throw new Error(`Plan DAG validation failed: ${dagError}`);
-    }
+    let activePlan = planOutput;
+    mergeSubtasks(activePlan.subtasks);
 
-    // 按执行计划逐步执行
-    for (let i = 0; i < executionPlan.steps.length; i++) {
-      if (signal.aborted) {
-        break;
+    while (true) {
+      const { subtasks, delegation, executionPlan } = activePlan;
+
+      // DAG 校验：执行前检查环依赖和步骤一致性
+      const dagError = this.validatePlanDAG(subtasks, executionPlan);
+      if (dagError) {
+        throw new Error(`Plan DAG validation failed: ${dagError}`);
       }
 
-      const step = executionPlan.steps[i]!;
-      this.executionState!.currentStep = i + 1;
-
+      // 更新 progress.totalSteps（可随重规划变化）
+      this.executionState!.totalSteps = executionPlan.steps.length;
+      this.executionState!.currentStep = 0;
       await this.updateProgressToSession(taskId);
 
-      // 执行当前步骤的所有子任务
-      // 设计说明：retryPolicy 采用“配置优先 + 可选 guardrail”
-      // - config: 基础设施默认策略
-      // - planner: 允许 Planner 调整（缺省字段回退配置）
-      // - guardrail: Planner 调整，但受配置上限/下限保护
-      const effectiveRetryPolicy = resolveRetryPolicy(
-        delegation.retryPolicy,
-        this.orchestratorConfig.delegation.retryPolicy,
-        this.orchestratorConfig.delegation.retryPolicyMode ?? 'config'
-      );
-      await this.executeStep(
-        taskId,
-        step,
-        subtaskMap,
-        delegation.timeout,
-        effectiveRetryPolicy,
+      // 按执行计划逐步执行
+      for (let i = 0; i < executionPlan.steps.length; i++) {
+        if (signal.aborted) break;
+
+        const step = executionPlan.steps[i]!;
+        this.executionState!.currentStep = i + 1;
+        await this.updateProgressToSession(taskId);
+
+        const effectiveRetryPolicy = resolveRetryPolicy(
+          delegation.retryPolicy,
+          this.orchestratorConfig.delegation.retryPolicy,
+          this.orchestratorConfig.delegation.retryPolicyMode ?? 'config'
+        );
+        await this.executeStep(
+          taskId,
+          step,
+          subtaskMap,
+          delegation.timeout,
+          effectiveRetryPolicy,
+          signal
+        );
+
+        if (this.pendingReplan) break;
+      }
+
+      if (signal.aborted) break;
+      if (!this.pendingReplan) break;
+
+      // === expand_commit 触发：重规划（从 tasks.json 重新构建 DAG）===
+      this.pendingReplan = false;
+
+      const base = this.currentTask;
+      const ref = this.getTaskMasterRefForCurrentTask();
+      if (!base || !ref) {
+        throw new Error('Cannot replan: missing currentTask or tasks.json reference');
+      }
+
+      const replanned = await this.executeTaskMasterPlanPhase(
+        this.convertToOrchestratorTask(base),
+        { projectRoot: ref.projectRoot, tag: ref.tag, file: ref.file },
         signal
       );
+      if (!replanned.success || !replanned.output) {
+        throw new Error(`Replan failed: ${replanned.error ?? 'unknown error'}`);
+      }
+
+      const normalized = this.normalizePlanRoles(replanned.output);
+      this.currentPlanOutput = normalized;
+      await this.saveTaskMasterRuntimeToSession(taskId, normalized).catch(() => undefined);
+      await this.registerDefaultWorkers({
+        workerCount: normalized.delegation.workerCount,
+        ...(Array.isArray(normalized.roles) ? { roles: normalized.roles } : {}),
+        parallelRequirements: this.extractParallelRequirements(normalized),
+      });
+
+      activePlan = normalized;
+      mergeSubtasks(activePlan.subtasks);
     }
 
-    // 聚合结果
+    // 聚合结果（包含本轮执行过程中出现过的所有子任务 id）
     this.emit('aggregate:start', taskId, {});
     const aggregatedResult = this.aggregateResults(subtaskMap);
     this.emit('aggregate:complete', taskId, { result: aggregatedResult });
@@ -1972,7 +2980,6 @@ Is this a genuine deviation? Answer YES or NO only.`,
     const subtaskIds = step.subtaskIds;
 
     if (step.parallel) {
-      await this.ensureParallelWorkersForStep(step, subtaskMap);
       // 并行执行
       const promises = subtaskIds.map((id) =>
         this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal)
@@ -2032,18 +3039,51 @@ Is this a genuine deviation? Answer YES or NO only.`,
       };
     }
 
-    const refinementResult = await this.maybeRefineSubtask(
-      taskId,
-      subtask,
-      subtaskMap,
-      timeout,
-      retryPolicy,
-      signal,
-      refinementDepth
-    );
-    if (refinementResult) {
-      return refinementResult;
+    // 内部 barrier：不分配 worker，仅用于依赖收敛（task-level completion 节点）
+    if (Array.isArray(subtask.requiredCapabilities) && subtask.requiredCapabilities.includes('internal:barrier')) {
+      const startTime = Date.now();
+
+      // 直接标记为完成（依赖已在上方检查）
+      this.executionState!.completedSubtasks.set(subtaskId, {
+        taskId: subtaskId,
+        status: 'success',
+        output: { text: `Barrier completed: ${subtask.objective}` },
+        artifacts: [],
+        metrics: {
+          startTime,
+          endTime: startTime,
+          duration: 0,
+          tokensUsed: 0,
+          toolCallCount: 0,
+          retryCount: 0,
+        },
+        trace: {
+          traceId: generateTimestampId('trace'),
+          spanId: generateTimestampId('span'),
+          operation: `orchestrator.${this.id}.barrier`,
+          attributes: { subtaskId },
+          events: [],
+          duration: 0,
+        },
+      });
+
+      subtask.status = 'success';
+      await this.writeTaskMasterStatus(subtaskId, 'done').catch(() => undefined);
+
+      this.emit('subtask:complete', taskId, { result: this.executionState!.completedSubtasks.get(subtaskId) }, subtaskId);
+      await this.updateProgressToSession(taskId);
+      await this.saveCheckpointSnapshot(taskId, 'executing', 'barrier-complete');
+
+      return {
+        subtaskId,
+        success: true,
+        result: this.executionState!.completedSubtasks.get(subtaskId)!,
+        retryCount: 0,
+      };
     }
+
+    // 以 tasks.json 作为唯一任务真相时：refine/expand 必须写回 tasks.json，不能把“细分后的描述”写入 runtime.json。
+    // 这里先禁用旧 refine 链路（后续会实现 Task Master 风格的 expand 并落到 tasks.json）。
     // P2: 增强集成类子任务的上下文（注入 API 信息和文件清单）
     const activeSubtask = await this.enhanceSubtaskForIntegration(subtask);
     // 更新 subtaskMap 中的子任务（如果有增强）
@@ -2054,6 +3094,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
     // 标记为运行中
     this.executionState!.runningSubtasks.add(subtaskId);
     activeSubtask.status = 'running';
+    // 回写 tasks.json（failure 将在失败路径恢复原 status）
+    await this.writeTaskMasterStatus(subtaskId, 'in-progress').catch(() => undefined);
     await this.updateProgressToSession(taskId);
 
     let retryCount = 0;
@@ -2062,6 +3104,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
     while (true) {
       if (signal.aborted) {
         this.executionState!.runningSubtasks.delete(subtaskId);
+        await this.restoreTaskMasterStatus(subtaskId).catch(() => undefined);
+        await this.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
         return {
           subtaskId,
           success: false,
@@ -2094,6 +3138,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
           // 重试耗尽，标记为失败
           const failureError = lastError || 'Unknown error';
           this.markSubtaskFailed(activeSubtask, subtaskId, failureError);
+          await this.restoreTaskMasterStatus(subtaskId).catch(() => undefined);
+          await this.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
 
           this.emit('subtask:failed', taskId, { error: failureError, retryCount }, subtaskId);
           await this.updateProgressToSession(taskId);
@@ -2119,11 +3165,36 @@ Is this a genuine deviation? Answer YES or NO only.`,
         // selective sync：将关键决策/产物写入 shared context（best-effort）
         await this.syncSharedContextSelective(workerId, activeSubtask, result).catch(() => undefined);
 
+        // expand_commit：父任务仅负责“提交扩展”，不应在这里写为 done；交由重规划后的 barrier 节点完成
+        if (this.expandedSubtaskIds.has(subtaskId)) {
+          this.expandedSubtaskIds.delete(subtaskId);
+          this.executionState!.runningSubtasks.delete(subtaskId);
+
+          // 父任务释放：不写 completedSubtasks，不写 tasks.json done
+          activeSubtask.status = 'pending';
+          // exactOptionalPropertyTypes: optional 字段用 delete 清理
+          delete (activeSubtask as any).assignedWorkerId;
+          await this.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
+
+          this.emit('subtask:complete', taskId, { result }, subtaskId);
+          await this.updateProgressToSession(taskId);
+          await this.saveCheckpointSnapshot(taskId, 'executing', 'expanded');
+
+          return {
+            subtaskId,
+            success: true,
+            result,
+            retryCount,
+          };
+        }
+
         // 标记为完成
         this.executionState!.runningSubtasks.delete(subtaskId);
         this.executionState!.completedSubtasks.set(subtaskId, result);
         activeSubtask.status = 'success';
         activeSubtask.result = result;
+        await this.writeTaskMasterStatus(subtaskId, 'done').catch(() => undefined);
+        await this.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
 
         // 累加 Worker 执行的 token 用量
         if (result.metrics?.tokensUsed) {
@@ -2158,6 +3229,8 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
         // 重试耗尽
         this.markSubtaskFailed(activeSubtask, subtaskId, lastError);
+        await this.restoreTaskMasterStatus(subtaskId).catch(() => undefined);
+        await this.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
 
         this.emit('subtask:failed', taskId, { error: lastError, retryCount }, subtaskId);
         await this.saveCheckpointSnapshot(taskId, 'executing', 'subtask-failed');
@@ -2211,7 +3284,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
       constraints: subtask.constraints,
       maxSubtasks: DEFAULT_REFINEMENT_MAX_SUBTASKS,
       maxThinkingRounds: DEFAULT_REFINEMENT_MAX_TURNS,
-      estimatedMinutes,
+      ...(typeof estimatedMinutes === 'number' ? { estimatedMinutes } : {}),
     });
 
     if (this.executionState) {
@@ -2233,7 +3306,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
       return null;
     }
 
-    // Archive refined subtasks to plan.json
+    // Archive refined subtasks to runtime.json
     if (this.sessionManager) {
       await this.sessionManager.appendRefinedSubtasks({
         parentId: subtask.id,
@@ -2320,11 +3393,11 @@ Is this a genuine deviation? Answer YES or NO only.`,
 
   private createRefinedSubtasks(
     parent: SubTask,
-    refined: Array<{
+    refined: {
       objective: string;
       constraints: string[];
       estimatedMinutes?: number;
-    }>,
+    }[],
     subtaskMap: Map<string, SubTask>
   ): SubTask[] {
     const refinedList = refined.slice(0, DEFAULT_REFINEMENT_MAX_SUBTASKS);
@@ -2334,17 +3407,15 @@ Is this a genuine deviation? Answer YES or NO only.`,
       ? Array.from(new Set(parent.dependencies.filter((dep) => dep && dep !== parent.id)))
       : [];
 
-    for (let i = 0; i < refinedList.length; i++) {
-      const item = refinedList[i];
-      const id = this.generateRefinedSubtaskId(parent.id, i + 1, reservedIds);
+    for (const [idx, item] of refinedList.entries()) {
+      const id = this.generateRefinedSubtaskId(parent.id, idx + 1, reservedIds);
       const constraints = this.mergeConstraints(parent.constraints, item.constraints);
       const estimatedDuration =
         typeof item.estimatedMinutes === 'number' && Number.isFinite(item.estimatedMinutes)
           ? item.estimatedMinutes * 60 * 1000
           : undefined;
-      const dependencies = result.length > 0
-        ? [result[result.length - 1].id]
-        : [...parentDependencies];
+      const prev = result.at(-1);
+      const dependencies = prev ? [prev.id] : [...parentDependencies];
 
       result.push({
         id,
@@ -2453,38 +3524,6 @@ Is this a genuine deviation? Answer YES or NO only.`,
     };
   }
 
-  private async ensureParallelWorkersForStep(
-    step: ExecutionStep,
-    subtaskMap: Map<string, SubTask>
-  ): Promise<void> {
-    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
-    if (this.workerPool.workerCount >= maxWorkers) {
-      return;
-    }
-
-    const roleCounts = new Map<string, number>();
-    for (const subtaskId of step.subtaskIds) {
-      const roleId = subtaskMap.get(subtaskId)?.roleId;
-      if (!roleId) continue;
-      roleCounts.set(roleId, (roleCounts.get(roleId) ?? 0) + 1);
-    }
-
-    for (const [roleId, requiredCount] of roleCounts.entries()) {
-      if (this.workerPool.workerCount >= maxWorkers) break;
-      const existingCount = this.workerPool.getWorkersByRole(roleId).length;
-      const needed = requiredCount - existingCount;
-      if (needed <= 0) continue;
-
-      const toCreate = Math.min(needed, maxWorkers - this.workerPool.workerCount);
-      for (let i = 0; i < toCreate; i++) {
-        const newWorkerId = this.generateWorkerId(roleId);
-        const capabilities = this.getRoleCapabilities(roleId);
-        await this.createAndRegisterWorker(newWorkerId, roleId, capabilities);
-        console.debug(`[Orchestrator] Created new worker ${newWorkerId} for parallel role ${roleId}`);
-      }
-    }
-  }
-
   private getMemorySyncStrategy(): 'selective' | 'nightly_full' {
     const meta = this.currentRunMetadata;
     const raw = meta && typeof meta.memorySync === 'object' && meta.memorySync ? (meta.memorySync as Record<string, unknown>) : null;
@@ -2571,7 +3610,7 @@ Is this a genuine deviation? Answer YES or NO only.`,
     decisions: DecisionRecord[],
     workerId: string,
     subtaskId: string
-  ): Array<{ type: string; reason: string; approved?: boolean }> {
+  ): { type: string; reason: string; approved?: boolean }[] {
     return decisions
       .filter((d) => d.workerId === workerId && d.subtaskId === subtaskId)
       .slice(-20)

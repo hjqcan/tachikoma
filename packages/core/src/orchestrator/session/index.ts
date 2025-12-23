@@ -11,7 +11,7 @@ export type {
   // 配置类型
   SessionConfig,
   // Orchestrator 文件类型
-  PlanFile,
+  RuntimeFile,
   ProgressFile,
   DecisionType,
   DecisionRecord,

@@ -14,7 +14,7 @@ import {
   createSessionFileManager,
   createAndInitializeSessionFileManager,
   // 类型
-  type PlanFile,
+  type RuntimeFile,
   type ProgressFile,
   type DecisionRecord,
   type WorkerStatusFile,
@@ -255,7 +255,7 @@ describe('SessionPathBuilder', () => {
   });
 
   it('应正确构建文件路径', () => {
-    expect(builder.planFile).toContain('plan.json');
+    expect(builder.runtimeFile).toContain('runtime.json');
     expect(builder.progressFile).toContain('progress.json');
     expect(builder.decisionsFile).toContain('decisions.jsonl');
     expect(builder.sharedContextFile).toContain('context.json');
@@ -375,13 +375,14 @@ describe('SessionFileManager', () => {
     });
   });
 
-  describe('计划文件操作', () => {
+  describe('运行时文件操作', () => {
     beforeEach(async () => {
       await manager.initializeSession();
     });
 
-    it('应写入和读取计划文件', async () => {
-      const plan: Omit<PlanFile, 'sessionId' | 'updatedAt'> = {
+    it('应写入和读取运行时文件', async () => {
+      const runtime: Omit<RuntimeFile, 'sessionId' | 'updatedAt'> = {
+        kind: 'tachikoma',
         taskId: 'task-001',
         createdAt: Date.now(),
         version: 1,
@@ -401,12 +402,12 @@ describe('SessionFileManager', () => {
         },
       };
 
-      await manager.writePlan(plan);
-      const readPlan = await manager.readPlan();
+      await manager.writeRuntime(runtime);
+      const readRuntime = await manager.readRuntime();
 
-      expect(readPlan).not.toBeNull();
-      expect(readPlan?.taskId).toBe('task-001');
-      expect(readPlan?.sessionId).toBe(TEST_SESSION_ID);
+      expect(readRuntime).not.toBeNull();
+      expect(readRuntime?.taskId).toBe('task-001');
+      expect(readRuntime?.sessionId).toBe(TEST_SESSION_ID);
     });
   });
 
@@ -980,9 +981,10 @@ describe('SessionFileManager', () => {
       });
     });
 
-    describe('readOrchestratorPlan', () => {
-      it('应读取 Orchestrator 计划', async () => {
-        await manager.writePlan({
+    describe('readOrchestratorRuntime', () => {
+      it('应读取 Orchestrator 运行时快照', async () => {
+        await manager.writeRuntime({
+          kind: 'tachikoma',
           taskId: 'task-001',
           createdAt: Date.now(),
           version: 1,
@@ -999,20 +1001,20 @@ describe('SessionFileManager', () => {
           },
         });
 
-        const plan = await manager.readOrchestratorPlan();
-        expect(plan).not.toBeNull();
-        expect(plan?.taskId).toBe('task-001');
+        const runtime = await manager.readOrchestratorRuntime();
+        expect(runtime).not.toBeNull();
+        expect(runtime?.taskId).toBe('task-001');
       });
 
-      it('计划不存在时应返回 null', async () => {
+      it('运行时文件不存在时应返回 null', async () => {
         const emptyManager = createSessionFileManager('no-plan-session', {
           rootDir: TEST_ROOT_DIR,
           enableWatch: false,
         });
         await emptyManager.initializeSession();
 
-        const plan = await emptyManager.readOrchestratorPlan();
-        expect(plan).toBeNull();
+        const runtime = await emptyManager.readOrchestratorRuntime();
+        expect(runtime).toBeNull();
 
         await emptyManager.close();
       });

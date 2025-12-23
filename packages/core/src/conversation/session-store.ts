@@ -10,8 +10,10 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { SessionState, Checkpoint, ConversationMessage } from './types';
-import type { PlanFile, ProgressFile } from '../orchestrator/session/types';
+import type { RuntimeFile, ProgressFile } from '../orchestrator/session/types';
 import { atomicWriteJson } from '../orchestrator/session/utils';
+import type { SubTask as OrchestratorSubTask } from '../orchestrator/types';
+import { readTasksJson } from '../taskmaster-compat';
 
 // =============================================================================
 // 常量
@@ -24,7 +26,7 @@ const CHECKPOINTS_DIR = 'checkpoints';
 const WORKSPACE_SNAPSHOT_FILE = 'workspace.json';
 const WORKSPACE_FILES_DIR = 'workspace_files';
 const ORCHESTRATOR_SNAPSHOT_DIR = 'orchestrator';
-const ORCHESTRATOR_SNAPSHOT_FILES = ['plan.json', 'progress.json', 'decisions.jsonl'];
+const ORCHESTRATOR_SNAPSHOT_FILES = ['runtime.json', 'progress.json', 'decisions.jsonl'];
 
 const execFileAsync = promisify(execFile);
 
@@ -416,10 +418,10 @@ export class SessionStore {
 
   private async synthesizeFromOrchestrator(sessionId: string): Promise<SessionState | null> {
     const progressPath = join(this.getCanonicalSessionRoot(sessionId), 'orchestrator', 'progress.json');
-    const planPath = join(this.getCanonicalSessionRoot(sessionId), 'orchestrator', 'plan.json');
+    const runtimePath = join(this.getCanonicalSessionRoot(sessionId), 'orchestrator', 'runtime.json');
 
     let progress: ProgressFile | null = null;
-    let plan: PlanFile | null = null;
+    let runtime: RuntimeFile | null = null;
 
     try {
       progress = JSON.parse(await readFile(progressPath, 'utf-8')) as ProgressFile;
@@ -427,18 +429,18 @@ export class SessionStore {
       // ignore
     }
     try {
-      plan = JSON.parse(await readFile(planPath, 'utf-8')) as PlanFile;
+      runtime = JSON.parse(await readFile(runtimePath, 'utf-8')) as RuntimeFile;
     } catch {
       // ignore
     }
 
-    if (!progress && !plan) return null;
+    if (!progress && !runtime) return null;
 
-    const createdAt = progress?.startedAt ?? plan?.createdAt ?? Date.now();
+    const createdAt = progress?.startedAt ?? runtime?.createdAt ?? Date.now();
     const session: SessionState = {
       sessionId,
       createdAt,
-      lastActiveAt: progress?.updatedAt ?? plan?.updatedAt ?? Date.now(),
+      lastActiveAt: progress?.updatedAt ?? runtime?.updatedAt ?? Date.now(),
       workDir: '',
       messages: [],
       completedSubtasks: [],
@@ -455,10 +457,10 @@ export class SessionStore {
   private async hydrateSessionFromOrchestrator(session: SessionState): Promise<void> {
     const sessionRoot = this.getCanonicalSessionRoot(session.sessionId);
     const progressPath = join(sessionRoot, 'orchestrator', 'progress.json');
-    const planPath = join(sessionRoot, 'orchestrator', 'plan.json');
+    const runtimePath = join(sessionRoot, 'orchestrator', 'runtime.json');
 
     let progress: ProgressFile | null = null;
-    let plan: PlanFile | null = null;
+    let runtime: RuntimeFile | null = null;
 
     try {
       progress = JSON.parse(await readFile(progressPath, 'utf-8')) as ProgressFile;
@@ -466,17 +468,85 @@ export class SessionStore {
       // ignore
     }
     try {
-      plan = JSON.parse(await readFile(planPath, 'utf-8')) as PlanFile;
+      runtime = JSON.parse(await readFile(runtimePath, 'utf-8')) as RuntimeFile;
     } catch {
       // ignore
     }
 
-    if (plan?.plannerOutput) {
-      const subtasks = plan.plannerOutput.subtasks.map((st) => ({ ...st }));
+    if (runtime?.kind === 'taskmaster') {
       const completed = new Set(progress?.completedSubtasks ?? []);
       const failed = new Set(progress?.failedSubtasks ?? []);
       const running = new Set(progress?.runningSubtasks ?? []);
 
+      const executionOrder = runtime.executionPlan?.steps?.flatMap((s) => s.subtaskIds) ?? [];
+      const subtasksById = new Map<string, OrchestratorSubTask>();
+
+      // Best-effort：从 tasks.json 读取任务描述（runtime.json 只存引用）
+      if (session.workDir) {
+        try {
+          const read = await readTasksJson({
+            projectRoot: session.workDir,
+            tag: runtime.tasksJson.tag,
+            file: runtime.tasksJson.path,
+          });
+
+          for (const t of read.tasks) {
+            const parentObjective = t.description || t.title || '';
+            const constraints = typeof t.details === 'string' && t.details.trim() ? t.details.split('\n') : [];
+
+            // 顶层 task 作为可执行节点（当没有 subtasks 时）
+            if (!Array.isArray(t.subtasks) || t.subtasks.length === 0) {
+              const id = String(t.id);
+              subtasksById.set(id, {
+                id,
+                parentId: runtime.taskId,
+                objective: parentObjective || id,
+                constraints,
+                dependencies: Array.isArray(t.dependencies) ? t.dependencies.slice() : [],
+                status: 'pending',
+              });
+              continue;
+            }
+
+            // subtasks：使用 "taskId.subtaskId" 作为执行 id（与 Orchestrator 一致）
+            for (const st of t.subtasks) {
+              const id = `${t.id}.${st.id}`;
+              const stConstraints =
+                typeof st.details === 'string' && st.details.trim() ? st.details.split('\n') : [];
+              subtasksById.set(id, {
+                id,
+                parentId: runtime.taskId,
+                parentObjective,
+                objective: st.description || st.title || id,
+                constraints: stConstraints,
+                dependencies: Array.isArray(st.dependencies) ? st.dependencies.slice() : [],
+                status: 'pending',
+              });
+            }
+          }
+        } catch {
+          // ignore: tasks.json 读取失败时，仍然可以用 executionOrder 展示占位
+        }
+      }
+
+      // 兜底：如果 tasks.json 读取失败，则用 executionOrder 生成占位 subtasks
+      for (const id of executionOrder) {
+        if (!subtasksById.has(id)) {
+          subtasksById.set(id, {
+            id,
+            parentId: runtime.taskId,
+            objective: id,
+            constraints: [],
+            status: 'pending',
+          });
+        }
+      }
+
+      const subtasks = executionOrder
+        .map((id) => subtasksById.get(id))
+        .filter((v): v is OrchestratorSubTask => v !== undefined);
+
+      // 以 progress 为准覆盖状态
       for (const st of subtasks) {
         if (completed.has(st.id)) st.status = 'success';
         else if (failed.has(st.id)) st.status = 'failure';
@@ -485,7 +555,7 @@ export class SessionStore {
 
       session.currentPlan = {
         subtasks,
-        executionOrder: plan.plannerOutput.executionPlan.steps.flatMap((s) => s.subtaskIds),
+        executionOrder,
       };
     }
 

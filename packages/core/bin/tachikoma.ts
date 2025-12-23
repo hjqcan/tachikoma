@@ -13,6 +13,7 @@ import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { ConversationalRunner } from '../src/conversation/conversational-runner';
 import { createSpecKitFileManager } from '../src/speckit';
+import { readTasksJson, moveTasksJsonTag } from '../src/taskmaster-compat';
 
 // =============================================================================
 // 类型定义
@@ -136,6 +137,43 @@ ${colors.bold}${colors.cyan}╔════════════════�
     });
 
     const session = await runner.createSession();
+
+    // 归档：当本次会话结束（用户输入 exit 或非交互式结束）且 session tag 已完成时，把 tag 迁移到 archive
+    const tryArchiveSessionTasks = async (): Promise<void> => {
+      try {
+        const sessionTag = session.sessionId;
+        const now = new Date();
+        const yyyy = String(now.getFullYear());
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const archiveTag = `archive-${yyyy}${mm}-${sessionTag}`;
+
+        const res = await readTasksJson({ projectRoot: absoluteWorkDir, tag: sessionTag });
+        const terminal = new Set(['done', 'completed', 'cancelled']);
+        const isComplete = (status: any): boolean => terminal.has(String(status));
+
+        const allDone =
+          Array.isArray(res.tasks) &&
+          res.tasks.length > 0 &&
+          res.tasks.every((t) => {
+            const subs = Array.isArray((t as any).subtasks) ? (t as any).subtasks : [];
+            if (subs.length === 0) {
+              return isComplete((t as any).status);
+            }
+            return subs.every((st: any) => isComplete(st.status));
+          });
+
+        if (!allDone) return;
+
+        await moveTasksJsonTag({
+          projectRoot: absoluteWorkDir,
+          file: res.tasksPath,
+          fromTag: sessionTag,
+          toTag: archiveTag,
+        });
+      } catch {
+        // best-effort：归档失败不影响退出
+      }
+    };
 
     // =========================================================================
     // 审批流处理 (Side-channel)
@@ -389,6 +427,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
           if (!rl) {
             if (!finalComplete.success) process.exit(1);
             logSuccess('任务执行完成！');
+            await tryArchiveSessionTasks();
             return;
           }
 
@@ -397,6 +436,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
             (await rl.question(`${colors.bold}> ${colors.reset}`)).trim()
           );
           if (!next || /^(exit|quit|q)$/i.test(next)) {
+            await tryArchiveSessionTasks();
             if (lastExitCode !== 0) process.exit(lastExitCode);
             return;
           }

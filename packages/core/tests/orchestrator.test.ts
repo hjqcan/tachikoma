@@ -70,7 +70,7 @@ describe('Orchestrator 默认配置', () => {
   describe('DEFAULT_WORKER_POOL_CONFIG', () => {
     it('应包含正确的默认值', () => {
       expect(DEFAULT_WORKER_POOL_CONFIG.minWorkers).toBe(1);
-      expect(DEFAULT_WORKER_POOL_CONFIG.maxWorkers).toBe(5);
+      expect(DEFAULT_WORKER_POOL_CONFIG.maxWorkers).toBe(16);
       expect(DEFAULT_WORKER_POOL_CONFIG.idleTimeout).toBe(300000);
       expect(DEFAULT_WORKER_POOL_CONFIG.healthCheckInterval).toBe(30000);
       expect(DEFAULT_WORKER_POOL_CONFIG.selectionStrategy).toBe('least-loaded');
@@ -745,8 +745,9 @@ describe('Orchestrator 类', () => {
       getSessionPath: () => '.tachikoma-test/sessions/test-session',
       getWorkerPath: (workerId: string) =>
         `.tachikoma-test/sessions/test-session/workers/${workerId}`,
-      writePlan: async () => { /* mock: no-op */ },
-      readPlan: async () => null,
+      writeRuntime: async () => { /* mock: no-op */ },
+      readRuntime: async () => null,
+      readOrchestratorRuntime: async () => null,
       writeProgress: async () => { /* mock: no-op */ },
       readProgress: async () => null,
       appendDecision: async () => { /* mock: no-op */ },
@@ -790,8 +791,9 @@ describe('Orchestrator 类', () => {
       getSessionPath: () => '.tachikoma-test/sessions/test-session',
       getWorkerPath: (workerId: string) =>
         `.tachikoma-test/sessions/test-session/workers/${workerId}`,
-      writePlan: mock(async () => { /* mock: no-op */ }),
-      readPlan: mock(async () => null),
+      writeRuntime: mock(async () => { /* mock: no-op */ }),
+      readRuntime: mock(async () => null),
+      readOrchestratorRuntime: mock(async () => null),
       writeProgress: mock(async () => { /* mock: no-op */ }),
       readProgress: mock(async () => null),
       appendDecision: mock(async () => { /* mock: no-op */ }),
@@ -866,7 +868,13 @@ describe('Orchestrator 类', () => {
       });
 
       const fakeSessionManager = {
-        readOrchestratorPlan: async () => ({
+        readOrchestratorRuntime: async () => ({
+          kind: 'tachikoma',
+          sessionId: 'test-session',
+          taskId: 'task-001',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          version: 1,
           plannerOutput: {
             subtasks: [{ id: 'subtask-1', objective: 'Fix bug', constraints: [], estimatedDuration: 0, dependencies: [], status: 'pending' }],
             delegation: { mode: 'communication', workerCount: 1, timeout: 1000, retryPolicy: DEFAULT_RETRY_POLICY },
@@ -917,11 +925,11 @@ describe('Orchestrator 类', () => {
       const ctx = await (orchestrator as unknown as { buildPatchPreviousContext: () => Promise<string> }).buildPatchPreviousContext();
       expect(ctx).toContain('### Previous error');
       expect(ctx).toContain('boom');
-      expect(ctx).toContain('### Previously affected files');
+      expect(ctx).toContain('### Previously affected files (hint)');
       expect(ctx).toContain('b.ts');
       expect(ctx).toContain('### Previous execution status');
       expect(ctx).toContain('failed');
-      expect(ctx).toContain('### Recent syncLog');
+      expect(ctx).toContain('### Recent syncLog (selective)');
       expect(ctx).toContain('decisions:');
       expect(ctx).toContain('output:');
       expect(ctx).toContain('a.ts');
@@ -936,7 +944,13 @@ describe('Orchestrator 类', () => {
       const hugeObjective = 'x'.repeat(12_000);
 
       const fakeSessionManager = {
-        readOrchestratorPlan: async () => ({
+        readOrchestratorRuntime: async () => ({
+          kind: 'tachikoma',
+          sessionId: 'test-session',
+          taskId: 'task-001',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          version: 1,
           plannerOutput: {
             subtasks: Array.from({ length: 200 }, (_, i) => ({
               id: `subtask-${i + 1}`,

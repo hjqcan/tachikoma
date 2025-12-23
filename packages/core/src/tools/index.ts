@@ -33,6 +33,7 @@ import { webSearchTool } from './core/web-search';
 import { deepResearchTool } from './core/deep-research';
 import { spawnSubagentTool } from './core/spawn-subagent';
 import { submitResultTool } from './core/submit-result';
+import { expandCommitTool } from './core/expand-commit';
 import { createSkillTool } from './core/create-skill';
 
 // 类型导出
@@ -189,6 +190,7 @@ export const baseTools: Tool[] = [
 export const agentTools: Tool[] = [
   spawnSubagentTool,
   submitResultTool,
+  expandCommitTool,
   createSkillTool,
 ];
 

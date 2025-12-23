@@ -225,6 +225,263 @@ export class Planner {
   }
 
   /**
+   * 为“已有 subtasks（来自 tasks.json）”推理角色与分配（roles + roleAssignments）
+   *
+   * 约束：
+   * - 不改变 subtasks 的内容与依赖（仅做角色设计与分配）
+   * - 输出必须是严格 JSON
+   */
+  async inferRolesForSubtasks(input: {
+    task: OrchestratorTask;
+    subtasks: Array<{ id: string; objective: string; constraints?: string[] }>;
+    /**
+     * 已有的显式 role 分配（不会被覆盖；用于提示模型减少不必要的改动）
+     * key: subtaskId
+     */
+    fixedAssignments?: Record<string, { roleId: string }>;
+    /** 建议的最大角色数（模型可少于该值） */
+    maxRoles?: number;
+  }): Promise<{
+    success: boolean;
+    roles?: NonNullable<PlannerOutput['roles']>;
+    roleAssignments?: Record<string, { roleId: string; requiredCapabilities?: string[] }>;
+    tokensUsed: { input: number; output: number };
+    retryCount: number;
+    degraded: boolean;
+    error?: string;
+  }> {
+    const { task, subtasks, fixedAssignments, maxRoles } = input;
+
+    const totalTokens = { input: 0, output: 0 };
+    let totalRetries = 0;
+    const degraded = false;
+
+    const ROLE_INFERENCE_SYSTEM_PROMPT = `You are an orchestration lead. Your job is to design an optimal minimal set of roles (each role ≈ one worker) and assign each given subtask to exactly one role.
+
+## Constraints (Very Important)
+- You MUST NOT modify the subtasks themselves. Only assign roles.
+- Output MUST be valid JSON only. No extra text, no code fences.
+- Each role must have a stable id (lowercase, use letters/numbers with '-' or '_').
+- Each role.capabilities MUST include "role:<roleId>".
+- For every subtask assignment, requiredCapabilities MUST include at least "role:<roleId>".
+- You MUST return an assignment for every provided subtask id. Do not invent new ids.
+
+## Output JSON Schema
+{
+  "reasoning": "1-2 sentences",
+  "roles": [
+    { "id": "frontend", "name": "Frontend Engineer", "responsibilities": "...", "capabilities": ["role:frontend", "..."] }
+  ],
+  "assignments": {
+    "1.1": { "roleId": "frontend", "requiredCapabilities": ["role:frontend"] }
+  }
+}`;
+
+    const ROLE_INFERENCE_SCHEMA = z
+      .object({
+        reasoning: z.string().optional(),
+        roles: z
+          .array(
+            z.object({
+              id: z.string().min(1),
+              name: z.string().min(1),
+              responsibilities: z.string().optional().default(''),
+              capabilities: z.array(z.string().min(1)).optional().default([]),
+            })
+          )
+          .min(1),
+        assignments: z.record(
+          z.string(),
+          z.object({
+            roleId: z.string().min(1),
+            requiredCapabilities: z.array(z.string().min(1)).optional(),
+          })
+        ),
+      })
+      .passthrough();
+
+    const normalizeRoleId = (raw: string): string => {
+      const s = raw.trim().toLowerCase();
+      const normalized = s
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return normalized || 'generalist';
+    };
+
+    const subtaskIds = subtasks.map((s) => s.id).filter((s): s is string => typeof s === 'string' && s.length > 0);
+    const idSet = new Set(subtaskIds);
+
+    const clip = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max)}…` : text);
+    const summarizeSubtasks = (): string => {
+      const maxItems = 120;
+      const items = subtasks.slice(0, maxItems).map((st) => {
+        const constraints = Array.isArray(st.constraints) ? st.constraints : [];
+        const smallConstraints = constraints.slice(0, 4).map((c) => clip(String(c), 200));
+        return {
+          id: st.id,
+          objective: clip(String(st.objective ?? ''), 240),
+          ...(smallConstraints.length > 0 ? { constraints: smallConstraints } : {}),
+        };
+      });
+      return JSON.stringify(items, null, 2);
+    };
+
+    const fixed = (() => {
+      if (!fixedAssignments) return null;
+      const entries = Object.entries(fixedAssignments)
+        .filter(([id, v]) => idSet.has(id) && v && typeof v.roleId === 'string' && v.roleId.trim())
+        .map(([id, v]) => [id, { roleId: normalizeRoleId(v.roleId) }] as const);
+      if (entries.length === 0) return null;
+      return JSON.stringify(Object.fromEntries(entries), null, 2);
+    })();
+
+    const userPromptParts: string[] = [];
+    userPromptParts.push(`Project objective:\n${clip(String(task.objective ?? ''), 800)}`);
+    userPromptParts.push('');
+    userPromptParts.push(`Subtasks (do NOT modify):\n${summarizeSubtasks()}`);
+    if (fixed) {
+      userPromptParts.push('');
+      userPromptParts.push(
+        `Fixed role assignments (MUST NOT change these roleIds; still return assignments for all ids):\n${fixed}`
+      );
+    }
+    if (typeof maxRoles === 'number' && Number.isFinite(maxRoles) && maxRoles > 0) {
+      userPromptParts.push('');
+      userPromptParts.push(`Max roles (soft constraint): ${Math.max(1, Math.floor(maxRoles))}`);
+    }
+    const userPrompt = userPromptParts.join('\n');
+
+    const makeRequest = (content: string): LLMRequest => ({
+      systemPrompt: ROLE_INFERENCE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }],
+      // token 预算：避免过长输出
+      maxTokens: Math.min(2048, this.config.agent.maxTokens),
+      temperature: 0.2,
+    });
+
+    const parse = (raw: string): ParseResult<z.infer<typeof ROLE_INFERENCE_SCHEMA>> => {
+      try {
+        const extracted = extractJsonFromResponse(raw);
+        const obj = JSON.parse(extracted) as unknown;
+        const data = ROLE_INFERENCE_SCHEMA.parse(obj);
+        return { success: true, data, rawContent: raw };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { success: false, error: msg, rawContent: raw };
+      }
+    };
+
+    const validate = (data: z.infer<typeof ROLE_INFERENCE_SCHEMA>): string | null => {
+      const roleIds = new Set(data.roles.map((r) => normalizeRoleId(r.id)));
+      // 1) assignments 覆盖所有 id
+      for (const id of idSet) {
+        if (!(id in data.assignments)) return `Missing assignment for subtask id: ${id}`;
+      }
+      // 2) 不允许输出多余 id（避免 hallucination）
+      for (const id of Object.keys(data.assignments)) {
+        if (!idSet.has(id)) return `Assignment contains unknown subtask id: ${id}`;
+      }
+      // 3) roleId 必须存在于 roles
+      for (const [id, a] of Object.entries(data.assignments)) {
+        const rid = normalizeRoleId(a.roleId);
+        if (!roleIds.has(rid)) {
+          return `Assignment for ${id} references unknown roleId: ${a.roleId}`;
+        }
+      }
+      return null;
+    };
+
+    // 调用 + 解析重试
+    let lastError: string | undefined;
+    for (let attempt = 0; attempt <= this.parseRetryConfig.maxRetries; attempt++) {
+      const request = makeRequest(attempt === 0 ? userPrompt : `Fix your JSON output.\n\n${userPrompt}\n\nError: ${lastError ?? 'unknown'}`);
+      try {
+        const resp = await this.llmClient.complete(request);
+        totalTokens.input += resp.usage.inputTokens;
+        totalTokens.output += resp.usage.outputTokens;
+
+        const parsed = parse(resp.content);
+        if (!parsed.success || !parsed.data) {
+          lastError = parsed.error ?? 'parse failed';
+        } else {
+          const vErr = validate(parsed.data);
+          if (vErr) {
+            lastError = vErr;
+          } else {
+            // 规范化输出：roleId/capabilities/requiredCapabilities
+            const normalizedRoles = parsed.data.roles.map((r) => {
+              const id = normalizeRoleId(r.id);
+              const caps = Array.isArray(r.capabilities) ? r.capabilities.filter((c) => typeof c === 'string' && c.trim()) : [];
+              const stableCap = `role:${id}`;
+              const mergedCaps = Array.from(new Set([stableCap, ...caps]));
+              return {
+                id,
+                name: r.name,
+                responsibilities: r.responsibilities ?? '',
+                capabilities: mergedCaps,
+              };
+            });
+
+            const roleAssignments: Record<string, { roleId: string; requiredCapabilities?: string[] }> = {};
+            for (const id of idSet) {
+              const a = parsed.data.assignments[id];
+              if (!a) {
+                throw new Error(`Missing assignment for subtask id: ${id}`);
+              }
+              const rid = normalizeRoleId(a.roleId);
+              const capsRaw = Array.isArray(a.requiredCapabilities) ? a.requiredCapabilities : [];
+              const caps = capsRaw.filter((c) => typeof c === 'string' && c.trim());
+              const stableCap = `role:${rid}`;
+              roleAssignments[id] = {
+                roleId: rid,
+                requiredCapabilities: Array.from(new Set([stableCap, ...caps])),
+              };
+            }
+
+            // 固定分配：最终覆盖（不让模型改）
+            if (fixedAssignments) {
+              for (const [id, v] of Object.entries(fixedAssignments)) {
+                if (!idSet.has(id)) continue;
+                if (!v?.roleId) continue;
+                const rid = normalizeRoleId(v.roleId);
+                roleAssignments[id] = {
+                  roleId: rid,
+                  requiredCapabilities: Array.from(new Set([`role:${rid}`, ...(roleAssignments[id]?.requiredCapabilities ?? [])])),
+                };
+              }
+            }
+
+            return {
+              success: true,
+              roles: normalizedRoles,
+              roleAssignments,
+              tokensUsed: totalTokens,
+              retryCount: totalRetries,
+              degraded,
+            };
+          }
+        }
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
+      }
+
+      if (attempt < this.parseRetryConfig.maxRetries) {
+        totalRetries++;
+        continue;
+      }
+    }
+
+    return {
+      success: false,
+      error: lastError ?? 'role inference failed',
+      tokensUsed: totalTokens,
+      retryCount: totalRetries,
+      degraded,
+    };
+  }
+
+  /**
    * 执行任务规划
    *
    * @param input - 规划器输入
@@ -597,10 +854,18 @@ export class Planner {
       };
     }
 
+    const subtasks: SubtaskRefineOutputFormat['subtasks'] = Array.isArray(parsed.data.subtasks)
+      ? parsed.data.subtasks.map((st) => ({
+          objective: st.objective,
+          ...(Array.isArray(st.constraints) ? { constraints: st.constraints } : {}),
+          ...(typeof st.estimatedMinutes === 'number' ? { estimatedMinutes: st.estimatedMinutes } : {}),
+        }))
+      : [];
+
     const data: SubtaskRefineOutputFormat = {
       shouldSplit: parsed.data.shouldSplit,
       reason: parsed.data.reason ?? '',
-      subtasks: Array.isArray(parsed.data.subtasks) ? parsed.data.subtasks : [],
+      subtasks,
     };
 
     return {

@@ -404,7 +404,7 @@ main().catch(console.error);
 └── sessions/
     └── {session-id}/
         ├── orchestrator/                    # 统筹者目录
-        │   ├── plan.json                    # 任务计划
+        │   ├── runtime.json                 # 运行时快照（执行顺序/状态等）
         │   ├── progress.json                # 执行进度
         │   ├── decisions.jsonl              # 决策日志
         │   └── checkpoints/                 # 检查点目录
@@ -469,10 +469,11 @@ await watcher.start();
 
 ### 文件格式说明
 
-#### plan.json (任务计划)
+#### runtime.json (运行时快照)
 
 ```json
 {
+  "kind": "tachikoma",
   "sessionId": "session-001",
   "taskId": "task-001",
   "createdAt": 1701936000000,
@@ -579,8 +580,9 @@ const manager = await createAndInitializeSessionFileManager('session-001', {
 await manager.registerWorker('worker-001');
 const workerPath = manager.getWorkerPath('worker-001');
 
-// === 计划文件操作 ===
-await manager.writePlan({
+// === 运行时文件操作 ===
+await manager.writeRuntime({
+  kind: 'tachikoma',
   taskId: 'task-001',
   createdAt: Date.now(),
   version: 1,
@@ -588,7 +590,7 @@ await manager.writePlan({
     /* ... */
   },
 });
-const plan = await manager.readPlan();
+const runtime = await manager.readRuntime();
 
 // === 进度文件操作 ===
 await manager.writeProgress({
@@ -1034,7 +1036,7 @@ import type {
 // Session 类型
 import type {
   SessionConfig,
-  PlanFile,
+  RuntimeFile,
   ProgressFile,
   WorkerStatusFile,
   PendingApprovalFile,

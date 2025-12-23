@@ -20,7 +20,8 @@ import { DEFAULT_SPECKIT_ROOT, SPECKIT_DIRS, SPECKIT_FILES } from './index';
 const SPECKIT_JSON_FILES = {
   constitution: 'constitution.json',
   spec: 'spec.json',
-  plan: 'plan.json',
+  // 避免与 Orchestrator 的 runtime.json / Task Master 的 tasks.json 混淆
+  plan: 'implementation.json',
   tasks: 'tasks.json',
 } as const;
 
@@ -126,7 +127,7 @@ export class SpecKitFileManager {
     return join(this.getSpecDirPath(specId), SPECKIT_FILES.plan);
   }
 
-  /** 获取指定规范的 plan.json 路径 */
+  /** 获取指定规范的 implementation.json 路径 */
   getPlanJsonFilePath(specId: string): string {
     return join(this.getSpecDirPath(specId), SPECKIT_JSON_FILES.plan);
   }

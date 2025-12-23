@@ -492,9 +492,9 @@ export class SessionPathBuilder {
     return join(this.sessionRoot, 'shared');
   }
 
-  /** 获取计划文件路径 */
-  get planFile(): string {
-    return join(this.orchestratorDir, 'plan.json');
+  /** 获取运行时文件路径 */
+  get runtimeFile(): string {
+    return join(this.orchestratorDir, 'runtime.json');
   }
 
   /** 获取进度文件路径 */
