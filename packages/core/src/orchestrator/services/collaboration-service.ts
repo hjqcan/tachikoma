@@ -97,11 +97,18 @@ export interface CollaborationResponse {
 }
 
 /**
+ * 协作响应（不含自动填充字段）
+ */
+export type CollaborationResponsePayload = Omit<CollaborationResponse, 'requestId' | 'fromAgentId' | 'respondedAt'>;
+
+/**
  * 协作管理器接口
+ * 
+ * 使用泛型以兼容 `collaboration/CollaborationManager` 的实际签名（payload: unknown）
  */
 export interface ICollaborationManager {
   onRequest(
-    handler: (request: CollaborationRequest) => Promise<CollaborationResponse>
+    handler: (request: { id: string; fromAgentId: string; type: string; payload?: unknown }) => Promise<CollaborationResponsePayload>
   ): void;
 }
 
@@ -175,7 +182,9 @@ export class CollaborationService {
    */
   registerRequestHandler(collaborationManager: ICollaborationManager): void {
     collaborationManager.onRequest(async (request) => {
-      return this.handleCollaborationRequest(request);
+      // 适配外部 CollaborationRequest（payload: unknown）到本地 CollaborationRequest
+      // handleCollaborationRequest 内部会自行解析 payload，这里只需转发原始结构
+      return this.handleCollaborationRequest(request as CollaborationRequest);
     });
   }
 
@@ -184,7 +193,7 @@ export class CollaborationService {
    */
   async handleCollaborationRequest(
     request: CollaborationRequest
-  ): Promise<CollaborationResponse> {
+  ): Promise<CollaborationResponsePayload> {
     const taskId = this.currentTaskId ?? 'unknown';
 
     // 发出请求接收事件

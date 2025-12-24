@@ -76,6 +76,7 @@ export interface ICollaborationManagerForLifecycle {
  * ```
  */
 export class SessionLifecycleManager {
+  private readonly orchestratorId: string;
   private readonly config: SessionLifecycleConfig;
   private readonly eventService: IEventService;
   private readonly workerPool: IWorkerPool;
@@ -109,6 +110,7 @@ export class SessionLifecycleManager {
   private debugEnabled = false;
 
   constructor(options: {
+    orchestratorId: string;
     config: SessionLifecycleConfig;
     eventService: IEventService;
     workerPool: IWorkerPool;
@@ -116,6 +118,7 @@ export class SessionLifecycleManager {
     collaborationManager?: ICollaborationManagerForLifecycle;
     collaborationEnabled?: boolean;
   }) {
+    this.orchestratorId = options.orchestratorId;
     this.config = options.config;
     this.eventService = options.eventService;
     this.workerPool = options.workerPool;
@@ -219,16 +222,17 @@ export class SessionLifecycleManager {
       );
     }
 
-    // 创建 CheckpointManager
-    if (this.sessionManager && this.config.checkpoint) {
-      this.checkpointManager = new CheckpointManager(
-        this.currentSessionId,
-        this.sessionManager,
-        {
-          ...this.config.checkpoint,
-          rootDir: this.config.rootDir,
-        }
-      );
+    // 创建 CheckpointManager（对齐旧版：enabled=true 即创建；interval>0 才启用 autoSave）
+    const ckpt = this.config.checkpoint;
+    if (this.sessionManager && ckpt?.enabled) {
+      const autoSave = typeof ckpt.interval === 'number' && ckpt.interval > 0;
+      this.checkpointManager = new CheckpointManager(this.currentSessionId, this.sessionManager, {
+        rootDir: this.config.rootDir,
+        autoSave,
+        ...(autoSave ? { autoSaveInterval: ckpt.interval } : {}),
+        ...(typeof ckpt.maxCheckpoints === 'number' ? { maxCheckpoints: ckpt.maxCheckpoints } : {}),
+        ...(ckpt.gitIntegration ? { enableGitIntegration: true, validateGitOnRestore: true } : {}),
+      });
     }
 
     // 注册事件处理器
@@ -259,7 +263,7 @@ export class SessionLifecycleManager {
     // 启动协作管理器
     if (this.collaborationManager && this.collaborationEnabled) {
       try {
-        await this.collaborationManager.start(`orchestrator-lifecycle`, {
+        await this.collaborationManager.start(`orchestrator-${this.orchestratorId}`, {
           sessionId: this.currentSessionId,
           type: 'orchestrator',
           capabilities: ['planning', 'coordination'],
@@ -390,6 +394,7 @@ export class SessionLifecycleManager {
  * 创建会话生命周期管理器
  */
 export function createSessionLifecycleManager(options: {
+  orchestratorId: string;
   config: SessionLifecycleConfig;
   eventService: IEventService;
   workerPool: IWorkerPool;

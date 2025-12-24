@@ -11,7 +11,6 @@ import type {
   PlannerOutput,
   ExecutionPlan,
   OrchestratorTask,
-  PlannerRole,
   AggregatedResult,
 } from './types';
 import type { TaskResult, RetryPolicy } from '../types';
@@ -308,49 +307,4 @@ export interface IExecutionEngine {
     subtasks: SubTask[],
     executionPlan: ExecutionPlan
   ): string | null;
-}
-
-// ============================================================================
-// Worker 协调器接口
-// ============================================================================
-
-/**
- * Worker 分配结果
- */
-export interface WorkerAssignmentResult {
-  success: boolean;
-  workerId?: string;
-  error?: string;
-}
-
-/**
- * Worker 协调器接口
- */
-export interface IWorkerCoordinator {
-  /**
-   * 分配子任务给 Worker
-   */
-  assignToWorker(
-    subtask: SubTask,
-    timeout: number,
-    retryPolicy: RetryPolicy
-  ): Promise<WorkerAssignmentResult>;
-
-  /**
-   * 注册默认 Workers
-   */
-  registerDefaultWorkers(opts?: {
-    workerCount?: number;
-    roles?: PlannerRole[];
-  }): Promise<void>;
-
-  /**
-   * 等待 Worker 完成
-   */
-  waitForWorkerCompletion(
-    subtask: SubTask,
-    workerId: string,
-    timeout: number,
-    signal?: AbortSignal
-  ): Promise<TaskResult>;
 }

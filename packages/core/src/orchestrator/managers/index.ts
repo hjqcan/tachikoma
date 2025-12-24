@@ -10,12 +10,3 @@ export type {
   SessionLifecycleConfig,
   ICollaborationManagerForLifecycle,
 } from './session-lifecycle';
-
-export {
-  WorkerCoordinator,
-  createWorkerCoordinator,
-} from './worker-coordinator';
-export type {
-  ParallelRequirements,
-  WorkerCreationConfig,
-} from './worker-coordinator';

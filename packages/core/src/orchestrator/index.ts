@@ -210,17 +210,6 @@ export type {
 } from './state';
 
 // ============================================================================
-// SubtaskWatcher 导出
-// ============================================================================
-
-export {
-  SubtaskWatcher,
-  type SubtaskDefinition,
-  type SubtaskWatcherConfig,
-  type SubtaskWatcherEvents,
-} from './subtask-watcher';
-
-// ============================================================================
 // Modular Services 导出
 // ============================================================================
 
@@ -274,14 +263,10 @@ export type {
 export {
   SessionLifecycleManager,
   createSessionLifecycleManager,
-  WorkerCoordinator,
-  createWorkerCoordinator,
 } from './managers';
 
 export type {
   SessionLifecycleConfig,
-  ParallelRequirements,
-  WorkerCreationConfig,
 } from './managers';
 
 // ============================================================================
@@ -310,6 +295,5 @@ export type {
   IApprovalArbitration,
   ITaskMasterAdapter,
   IExecutionEngine,
-  IWorkerCoordinator,
   EventServiceContext,
 } from './interfaces';

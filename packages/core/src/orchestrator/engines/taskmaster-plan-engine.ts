@@ -14,7 +14,7 @@ import {
   readTaskmeta,
   writeTaskmeta,
   ensureTaskmetaV1,
-  upsertRoleAssignment,
+  ensureRoleDefinitions,
   getRoleDefinitionsFromTaskmeta,
   getRoleAssignmentFromTaskmeta,
   type Task as TaskMasterTask,
@@ -158,9 +158,12 @@ export class TaskMasterPlanEngine {
     // 拓扑排序生成执行计划
     const executionPlan = this.buildExecutionPlan(subtasks);
 
-    // 角色推理（简化版：使用 generalist）
+    // 角色推理（父任务级别 + 子任务继承）：
+    // - 每个父任务（root taskId）只允许一个 role
+    // - 所有子任务继承父任务 role（用户确认）
     const { roles, updatedSubtasks, tokensUsed, retryCount, dirty } = await this.inferRoles(
       task,
+      read.tasks,
       subtasks,
       taskmetaV1,
       roleDefsFromMeta.map(r => ({ ...r, responsibilities: r.responsibilities ?? '' })),
@@ -490,10 +493,20 @@ export class TaskMasterPlanEngine {
   }
 
   /**
-   * 简化的角色推理（默认使用 generalist）
+   * 角色推理（父任务级别）并应用继承规则：
+   *
+   * 规则（用户确认）：
+   * - 子任务的角色 = 父任务（root taskId）的角色
+   * - 父任务开始执行时可触发 expand_commit；expand 后原 worker 回到 idle，可复用
+   *
+   * 实现策略：
+   * - 优先读取 taskmeta 中对“父任务 id”的 role assignment
+   * - 若缺失，则对“父任务集合”调用 Planner.inferRolesForSubtasks() 推理一次（不会对每个子任务推理）
+   * - 将父任务 role 映射应用到所有子任务（1.x）并写回 taskmeta（保持跨 run 稳定）
    */
   private async inferRoles(
-    _task: OrchestratorTask,
+    task: OrchestratorTask,
+    tasks: TaskMasterTask[],
     subtasks: SubTask[],
     taskmetaV1: ReturnType<typeof ensureTaskmetaV1>,
     roleDefsFromMeta: PlannerRole[],
@@ -509,31 +522,171 @@ export class TaskMasterPlanEngine {
       Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.includes('internal:barrier');
     const roleTargets = subtasks.filter((st) => !isBarrier(st));
 
+    const normalizeRoleId = (raw: string): string => {
+      const s = raw.trim().toLowerCase();
+      const normalized = s
+        .replace(/[^a-z0-9_-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      return normalized || 'generalist';
+    };
+
+    const getRootTaskId = (id: string): string => {
+      const root = String(id).split('.')[0];
+      return root && root.length > 0 ? root : String(id);
+    };
+
     let dirty = false;
     const roleIdsUsed = new Set<string>();
 
+    // 收集本轮涉及的父任务集合（root taskId）
+    const activeRootIds = new Set<string>();
     for (const st of roleTargets) {
-      const a = getRoleAssignmentFromTaskmeta(taskmetaV1, effectiveTag, st.id);
-      const roleId = a?.roleId && typeof a.roleId === 'string' && a.roleId.trim() ? a.roleId.trim() : 'generalist';
-      const stableCap = `role:${roleId}`;
+      activeRootIds.add(getRootTaskId(st.id));
+    }
+    // barrier 节点也能带来 rootId（例如某些场景没有可执行子任务，但仍需要 role）
+    for (const st of subtasks) {
+      activeRootIds.add(getRootTaskId(st.id));
+    }
 
+    const tasksById = new Map<string, TaskMasterTask>();
+    for (const t of tasks) {
+      tasksById.set(String(t.id), t);
+    }
+
+    // 父任务 -> roleId（本轮确定）
+    const rootRoleId = new Map<string, string>();
+
+    // 先从 taskmeta 读取已存在的父任务 role 映射，作为 fixedAssignments
+    const fixedAssignments: Record<string, { roleId: string }> = {};
+    for (const rootId of activeRootIds) {
+      const existing = getRoleAssignmentFromTaskmeta(taskmetaV1, effectiveTag, rootId);
+      if (existing?.roleId && typeof existing.roleId === 'string' && existing.roleId.trim()) {
+        const roleId = normalizeRoleId(existing.roleId);
+        fixedAssignments[rootId] = { roleId };
+        rootRoleId.set(rootId, roleId);
+        roleIdsUsed.add(roleId);
+      }
+    }
+
+    const rootSubtasksForInference: Array<{ id: string; objective: string; constraints?: string[] }> = [];
+    for (const rootId of Array.from(activeRootIds).sort()) {
+      const t = tasksById.get(rootId);
+      // 仅对能从 tasks.json 找到的父任务做推理输入；找不到的（例如异常 id）后续走默认兜底
+      if (!t) continue;
+      const title = String(t.title ?? '').trim();
+      const description = String(t.description ?? '').trim();
+      const objective = `${title}${title && description ? ': ' : ''}${description}`.trim() || `Task ${rootId}`;
+      const constraints: string[] = [];
+      if (t.details) constraints.push(`details: ${String(t.details)}`);
+      if (t.testStrategy) constraints.push(`testStrategy: ${String(t.testStrategy)}`);
+      rootSubtasksForInference.push({ id: rootId, objective, ...(constraints.length > 0 ? { constraints } : {}) });
+    }
+
+    // 如果存在未分配 role 的父任务，则对父任务集合做一次 LLM 推理
+    const needsInference = rootSubtasksForInference.some((s) => !(s.id in fixedAssignments));
+
+    let inferredRoles: PlannerRole[] = [];
+    let inferredAssignments: Record<string, { roleId: string; requiredCapabilities?: string[] }> = {};
+    let tokensUsed = { input: 0, output: 0 };
+    let retryCount = 0;
+
+    if (needsInference && rootSubtasksForInference.length > 0) {
+      const infer = await this.deps.planner.inferRolesForSubtasks({
+        task,
+        subtasks: rootSubtasksForInference,
+        ...(Object.keys(fixedAssignments).length > 0 ? { fixedAssignments } : {}),
+      });
+
+      tokensUsed = infer.tokensUsed;
+      retryCount = infer.retryCount;
+
+      if (infer.success && infer.roles && infer.roleAssignments) {
+        inferredRoles = infer.roles;
+        inferredAssignments = infer.roleAssignments;
+      } else {
+        // 推理失败：保底 generalist（不阻断执行）
+        for (const s of rootSubtasksForInference) {
+          if (!(s.id in fixedAssignments)) {
+            inferredAssignments[s.id] = { roleId: 'generalist', requiredCapabilities: ['role:generalist'] };
+          }
+        }
+      }
+    }
+
+    // 确保 taskmeta.roles.byId 至少包含已用/推理出的角色定义（不会覆盖已有定义）
+    const defaults = [
+      { id: 'generalist', name: '通用执行者', responsibilities: '根据 tasks.json 的任务描述执行实现与验证工作', capabilities: ['role:generalist'] },
+      ...inferredRoles.map((r) => ({
+        id: normalizeRoleId(r.id),
+        name: r.name,
+        responsibilities: r.responsibilities ?? '',
+        capabilities: Array.from(new Set([...(Array.isArray(r.capabilities) ? r.capabilities : []), `role:${normalizeRoleId(r.id)}`])),
+      })),
+    ];
+    const ensured = ensureRoleDefinitions(taskmetaV1, defaults);
+    if (ensured.changed) dirty = true;
+
+    // 写入/修正父任务 roleAssignments，并构建 rootRoleId 映射
+    taskmetaV1.roles ??= {};
+    taskmetaV1.roles.assignments ??= {};
+    const scoped = taskmetaV1.roles.assignments[effectiveTag] ?? (taskmetaV1.roles.assignments[effectiveTag] = {});
+
+    const setAssignment = (id: string, roleId: string, caps: string[]): void => {
+      const next = { roleId, requiredCapabilities: caps };
+      const prev = scoped[id] as { roleId?: unknown; requiredCapabilities?: unknown } | undefined;
+      const prevRoleId = prev && typeof prev.roleId === 'string' ? prev.roleId : undefined;
+      const prevCapsRaw = prev?.requiredCapabilities;
+      const prevCaps = Array.isArray(prevCapsRaw) ? prevCapsRaw.map(String) : undefined;
+      const changed =
+        prevRoleId !== roleId ||
+        (Array.isArray(prevCaps) ? prevCaps.join('|') : '') !== caps.join('|');
+      if (changed) {
+        scoped[id] = next;
+        dirty = true;
+      }
+    };
+
+    for (const rootId of activeRootIds) {
+      if (rootRoleId.has(rootId)) continue;
+      const fromInfer = inferredAssignments[rootId];
+      const roleId = normalizeRoleId(
+        (fromInfer?.roleId && typeof fromInfer.roleId === 'string' && fromInfer.roleId.trim())
+          ? fromInfer.roleId
+          : 'generalist'
+      );
+      const stableCap = `role:${roleId}`;
+      const caps = Array.from(
+        new Set([
+          stableCap,
+          ...((Array.isArray(fromInfer?.requiredCapabilities) ? fromInfer!.requiredCapabilities! : []).filter(
+            (c): c is string => typeof c === 'string' && c.length > 0
+          )),
+        ])
+      );
+      rootRoleId.set(rootId, roleId);
+      roleIdsUsed.add(roleId);
+      setAssignment(rootId, roleId, caps);
+    }
+
+    // 子任务继承父任务 role，并写回 taskmeta（保持全量可查询）
+    for (const st of roleTargets) {
+      const rootId = getRootTaskId(st.id);
+      const roleId = rootRoleId.get(rootId) ?? 'generalist';
+      const stableCap = `role:${roleId}`;
       st.roleId = roleId;
       st.requiredCapabilities = Array.from(new Set([stableCap, ...(st.requiredCapabilities ?? [])]));
       roleIdsUsed.add(roleId);
 
-      if (!a?.roleId) {
-        const upserted = upsertRoleAssignment(taskmetaV1, effectiveTag, st.id, {
-          roleId,
-          requiredCapabilities: st.requiredCapabilities,
-        });
-        dirty = dirty || upserted.changed;
-      }
+      // 强制写回（保证子任务 role == 父任务 role 的不变量；避免旧数据残留导致分歧）
+      setAssignment(st.id, roleId, st.requiredCapabilities);
     }
 
     const allRoleIds = Array.from(roleIdsUsed).sort();
     if (allRoleIds.length === 0) allRoleIds.push('generalist');
 
     const defsById = new Map(roleDefsFromMeta.map((r) => [r.id, r] as const));
+    const inferredById = new Map(inferredRoles.map((r) => [normalizeRoleId(r.id), r] as const));
     const roles: PlannerRole[] = allRoleIds.map((roleId) => {
       const fromMeta = defsById.get(roleId);
       if (fromMeta) {
@@ -542,6 +695,17 @@ export class TaskMasterPlanEngine {
           id: roleId,
           name: fromMeta.name || roleId,
           responsibilities: fromMeta.responsibilities ?? '',
+          capabilities: Array.from(new Set([`role:${roleId}`, ...caps])),
+        };
+      }
+
+      const fromInfer = inferredById.get(roleId);
+      if (fromInfer) {
+        const caps = Array.isArray(fromInfer.capabilities) ? fromInfer.capabilities : [];
+        return {
+          id: roleId,
+          name: fromInfer.name || roleId,
+          responsibilities: fromInfer.responsibilities ?? '',
           capabilities: Array.from(new Set([`role:${roleId}`, ...caps])),
         };
       }
@@ -557,8 +721,8 @@ export class TaskMasterPlanEngine {
     return {
       roles,
       updatedSubtasks: subtasks,
-      tokensUsed: { input: 0, output: 0 },
-      retryCount: 0,
+      tokensUsed,
+      retryCount,
       dirty,
     };
   }

@@ -149,20 +149,8 @@ export const spawnSubagentTool: Tool = {
 - 需要独立上下文的任务
 
 ⚠️ 路径约定：
-- 默认模式：{workDir}/.tachikoma/subtasks/
-- Session 模式（context.env.SESSION_ID 存在）：
-  - 只有 SESSION_ID：.../sessions/{sessionId}/orchestrator/subtasks/
-  - 有 SESSION_ID + WORKER_ID：.../sessions/{sessionId}/workers/{workerId}/subtasks/
-
-⚠️ Orchestrator 集成：
-使用 SubtaskWatcher 监控子任务目录：
-\`\`\`typescript
-const watcher = new SubtaskWatcher(workDir, {
-  sessionId: context.env.SESSION_ID,
-  workerId: context.env.WORKER_ID,  // 可选
-});
-watcher.on('subtask', (subtask) => orchestrator.scheduleSubtask(subtask));
-\`\`\``,
+- 子任务定义写入 tasks.json（由 Orchestrator 管理）
+- Session 模式下通过 sessionId 隔离`,
 
   layer: ToolLayer.Atomic,
   category: ToolCategory.Agent,

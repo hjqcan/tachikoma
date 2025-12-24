@@ -34,4 +34,7 @@ export type {
   PlanEngineResult,
 } from './taskmaster-plan-engine';
 
+export { CheckpointResumeEngine } from './checkpoint-resume-engine';
+export type { ResumeFromCheckpointOptions, CheckpointResumePrepared } from './checkpoint-resume-engine';
+
 

@@ -129,29 +129,13 @@ describe('taskmaster: roles + auto-assignment', () => {
     await cleanup();
   });
 
-  it('应默认生成 frontend/backend/test 三角色，并为每个 subtask 分配 roleId，写回 tachikoma.taskmeta.json', async () => {
+  it('应推理生成 frontend/backend/test 三角色，并为每个 subtask 分配 roleId，写回 tachikoma.taskmeta.json', async () => {
     const tag = 'conv-abc';
     const tasksPath = join(TEST_ROOT, '.taskmaster', 'tasks', 'tasks.json');
     await mkdir(join(TEST_ROOT, '.taskmaster', 'tasks'), { recursive: true });
     await writeFile(tasksPath, JSON.stringify(makeTasksJsonLegacy(tag), null, 2), 'utf-8');
 
-    // P0 FIX: Pre-populate taskmeta because TaskMasterPlanEngine currently defaults to 'generalist'
-    // and does not use LLM for inference during the plan phase (it's simplified).
-    // To satisfy the test constraints (which expect roles), we inject the assignments manually.
-    const preMetaPath = join(TEST_ROOT, 'tachikoma.taskmeta.json');
-    const initialMeta = {
-      version: 1,
-      roles: {
-        assignments: {
-          [tag]: {
-            '1': { roleId: 'frontend', requiredCapabilities: ['role:frontend'] },
-            '2': { roleId: 'backend', requiredCapabilities: ['role:backend'] },
-            '3': { roleId: 'test', requiredCapabilities: ['role:test'] },
-          }
-        }
-      }
-    };
-    await writeFile(preMetaPath, JSON.stringify(initialMeta, null, 2), 'utf-8');
+    // 角色推理由 Planner.inferRolesForSubtasks() 完成，并写回 taskmeta（父任务级 role，子任务继承）
 
     const sessionManager = createNoopSessionManager();
     const roleInferenceResponse = JSON.stringify(
