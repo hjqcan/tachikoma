@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { rm, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { rm, mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import {
   // Orchestrator
   Orchestrator,
@@ -30,6 +30,7 @@ import type { Task } from '../src/types';
 
 const TEST_ROOT_DIR = '.tachikoma-integration-test';
 const TEST_SESSION_ID = 'integration-test-session';
+const TEST_TASKS_FILE = '.taskmaster/tasks/tasks.json';
 
 // 清理测试目录
 async function cleanupTestDir(): Promise<void> {
@@ -38,6 +39,30 @@ async function cleanupTestDir(): Promise<void> {
   } catch {
     // 忽略目录不存在的错误
   }
+}
+
+async function ensureTaskmasterTasksJson(): Promise<void> {
+  await mkdir(join(TEST_ROOT_DIR, '.taskmaster', 'tasks'), { recursive: true });
+  // Keep it minimal: Orchestrator will plan+append when tasks are empty.
+  await writeFile(join(TEST_ROOT_DIR, TEST_TASKS_FILE), JSON.stringify({}, null, 2), 'utf-8');
+}
+
+function withTaskmasterContext(task: Task, tag: string): Task {
+  return {
+    ...task,
+    context: {
+      sessionId: tag,
+      parentTaskId: tag,
+      metadata: {
+        workDir: resolve(TEST_ROOT_DIR),
+        planSource: 'taskmaster',
+        taskmaster: {
+          tag,
+          file: TEST_TASKS_FILE,
+        },
+      },
+    },
+  };
 }
 
 // ============================================================================
@@ -124,6 +149,7 @@ describe('端到端集成测试', () => {
   beforeEach(async () => {
     await cleanupTestDir();
     await mkdir(TEST_ROOT_DIR, { recursive: true });
+    await ensureTaskmasterTasksJson();
   });
 
   afterEach(async () => {
@@ -173,7 +199,7 @@ describe('端到端集成测试', () => {
         constraints: ['使用 JWT', '支持 OAuth2'],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task, TEST_SESSION_ID));
 
       // 验证结果
       expect(result.taskId).toBe('task-001');
@@ -218,7 +244,7 @@ describe('端到端集成测试', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-multi`));
 
       // 验证子任务被分配
       expect(subtaskOrder.length).toBeGreaterThan(0);
@@ -257,7 +283,7 @@ describe('端到端集成测试', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-session`));
 
       // 验证进度文件被更新
       const progress = await sessionManager.readProgress();
@@ -639,7 +665,7 @@ describe('端到端集成测试', () => {
         constraints: [],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-error`));
 
       // 验证失败结果
       expect(result.status).toBe('failure');
@@ -675,7 +701,7 @@ describe('端到端集成测试', () => {
         constraints: [],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-concurrent`));
       const duration = Date.now() - startTime;
 
       // 验证任务完成
@@ -700,6 +726,7 @@ describe('组件间协作测试', () => {
   beforeEach(async () => {
     await cleanupTestDir();
     await mkdir(TEST_ROOT_DIR, { recursive: true });
+    await ensureTaskmasterTasksJson();
   });
 
   afterEach(async () => {
@@ -733,7 +760,7 @@ describe('组件间协作测试', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-planner-orch`));
 
       // 验证规划输出
       expect(planOutput).not.toBeNull();
@@ -773,7 +800,7 @@ describe('组件间协作测试', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-pool-orch`));
 
       // 验证任务被分配
       expect(assignedTasks.length).toBeGreaterThan(0);
@@ -806,7 +833,7 @@ describe('组件间协作测试', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task, `${TEST_SESSION_ID}-session-orch`));
 
       // 验证会话路径有效
       expect(sessionManager.getSessionPath()).toContain(TEST_ROOT_DIR);

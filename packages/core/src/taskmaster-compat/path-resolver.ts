@@ -3,7 +3,6 @@
  *
  * 参考：`third_party/claude-task-master/packages/tm-core/src/common/constants/paths.ts`
  * - 标准：`.taskmaster/tasks/tasks.json`
- * - legacy：`tasks/tasks.json`
  *
  * 注意：这里不做任何 CLI 迁移/自动创建，仅做“探测 + 默认路径”。
  */
@@ -12,7 +11,6 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 export const TASKMASTER_TASKS_FILE = '.taskmaster/tasks/tasks.json';
-export const LEGACY_TASKS_FILE = 'tasks/tasks.json';
 
 export interface ResolveTasksJsonPathOptions {
   projectRoot: string;
@@ -37,9 +35,6 @@ export function resolveTasksJsonPath(opts: ResolveTasksJsonPathOptions): string 
 
   const standard = path.resolve(projectRoot, TASKMASTER_TASKS_FILE);
   if (existsSync(standard)) return standard;
-
-  const legacy = path.resolve(projectRoot, LEGACY_TASKS_FILE);
-  if (existsSync(legacy)) return legacy;
 
   // 默认写入位置：标准路径（与用户确认的优先级一致）
   return standard;

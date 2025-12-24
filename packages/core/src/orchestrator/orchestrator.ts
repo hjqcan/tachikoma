@@ -541,7 +541,20 @@ export class Orchestrator extends BaseAgent {
 
     if (runtimeData && runtimeData.kind === 'taskmaster') {
       // 从 checkpoint.contextData 恢复 workDir，作为 projectRoot
-      const workDir = this.extractWorkDirFromMetadata() ?? process.cwd();
+      const workDir = this.extractWorkDirFromMetadata();
+      if (!workDir) {
+        try {
+          await checkpointManager.close();
+        } finally {
+          await sessionManager.close();
+        }
+        return this.createFailureResult(
+          checkpoint.taskId,
+          'Task Master checkpoint restore requires metadata.workDir (projectRoot).',
+          startTime,
+          { input: 0, output: 0 }
+        );
+      }
       const tasksJsonPath = runtimeData.tasksJson?.path;
       const tasksJsonTag = runtimeData.tasksJson?.tag ?? 'master';
       if (typeof tasksJsonPath === 'string' && tasksJsonPath) {
@@ -908,6 +921,28 @@ export class Orchestrator extends BaseAgent {
 
     // 初始化会话
     this.currentRunMetadata = task.context?.metadata ?? null;
+    const taskMasterMeta = this.getTaskMasterMetadata();
+    const workDirFromMetadata = this.extractWorkDirFromMetadata();
+    const sessionIdFromTask = task.context?.sessionId;
+    // Safety guard: 必须显式提供 workDir 和 sessionId，避免 fallback 到 process.cwd() 导致污染仓库根 tasks.json
+    if (!workDirFromMetadata || typeof workDirFromMetadata !== 'string' || workDirFromMetadata.trim() === '') {
+      return this.createFailureResult(
+        task.id,
+        'task.context.metadata.workDir is required. ' +
+          'Without an explicit workDir, Orchestrator would fallback to process.cwd() and may write to an unintended tasks.json.',
+        startTime,
+        { input: 0, output: 0 }
+      );
+    }
+    if (!sessionIdFromTask || typeof sessionIdFromTask !== 'string' || sessionIdFromTask.trim() === '') {
+      return this.createFailureResult(
+        task.id,
+        'task.context.sessionId is required. ' +
+          'Without an explicit sessionId, a random timestamp-based tag would be generated, polluting tasks.json with orphan sessions.',
+        startTime,
+        { input: 0, output: 0 }
+      );
+    }
     this.refinedSubtaskIds.clear();
     // 执行期仲裁状态清理（每次 run 独立）
     this.fileLocks.clear();
@@ -916,7 +951,7 @@ export class Orchestrator extends BaseAgent {
     this.delayedApprovalsBySubtaskId.clear();
     this.pendingReplan = false;
     this.expandedSubtaskIds.clear();
-    await this.initializeSession(task.id, task.context?.sessionId);
+    await this.initializeSession(task.id, sessionIdFromTask);
     await this.initializeSharedContext(orchestratorTask);
 
     // 初始化执行状态
@@ -941,8 +976,7 @@ export class Orchestrator extends BaseAgent {
     try {
       // 阶段 1: 规划
       this.emit('plan:start', task.id, { task: orchestratorTask });
-      const taskMasterMeta = this.getTaskMasterMetadata();
-      this.taskMasterProjectRoot = this.extractWorkDirFromMetadata() ?? process.cwd();
+      this.taskMasterProjectRoot = workDirFromMetadata;
       // 默认按 sessionId 做 tag 隔离（避免所有对话都写入 master）
       this.taskMasterTag = taskMasterMeta.tag ?? this.currentSessionId ?? 'master';
       this.taskMasterTasksPath = null;

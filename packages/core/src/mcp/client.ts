@@ -104,7 +104,7 @@ export interface MCPCallOptions {
  * const tools = await manager.listTools('filesystem');
  *
  * // 调用工具
- * const result = await manager.callTool('filesystem', 'read_file', {
+ * const result = await manager.callTool('filesystem', 'file_read', {
  *   path: '/workspace/README.md',
  * });
  *

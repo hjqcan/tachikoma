@@ -61,7 +61,7 @@ export const DEFAULT_HIGH_RISK_TOOLS = [
   'exec',
   'spawn',
   'system',
-  'write_file',
+  'file_write',
   'create_file',
   'modify_file',
 ];

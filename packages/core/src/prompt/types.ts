@@ -568,8 +568,8 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   compactRatio: 0.5,
   minGainRatio: 0.2,
   toolResultRules: [
-    { toolPattern: 'read_file', handler: 'keep-path' },
-    { toolPattern: 'write_file', handler: 'keep-path' },
+    { toolPattern: 'file_read', handler: 'keep-path' },
+    { toolPattern: 'file_write', handler: 'keep-path' },
     { toolPattern: 'browser_*', handler: 'keep-url' },
     { toolPattern: 'search_*', handler: 'keep-query' },
     { toolPattern: 'shell_*', handler: 'keep-summary' },

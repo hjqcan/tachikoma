@@ -5,6 +5,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import {
   // 配置
   DEFAULT_ORCHESTRATOR_CONFIG,
@@ -669,6 +671,46 @@ describe('Orchestrator 类', () => {
     complexityScore: 5,
   });
 
+  const TASKMASTER_TEST_WORKDIR = resolve('.tachikoma-orchestrator-test-taskmaster');
+  const TASKMASTER_TEST_TASKS_FILE = '.taskmaster/tasks/tasks.json';
+  const TASKMASTER_TEST_SESSION_ID = 'test-session';
+
+  async function resetTaskmasterTestWorkDir(): Promise<void> {
+    await rm(TASKMASTER_TEST_WORKDIR, { recursive: true, force: true });
+    await mkdir(join(TASKMASTER_TEST_WORKDIR, '.taskmaster', 'tasks'), { recursive: true });
+    await writeFile(
+      join(TASKMASTER_TEST_WORKDIR, TASKMASTER_TEST_TASKS_FILE),
+      JSON.stringify({}, null, 2),
+      'utf-8'
+    );
+  }
+
+  function withTaskmasterContext(task: Task, tag: string = TASKMASTER_TEST_SESSION_ID): Task {
+    return {
+      ...task,
+      context: {
+        sessionId: tag,
+        parentTaskId: tag,
+        metadata: {
+          workDir: TASKMASTER_TEST_WORKDIR,
+          planSource: 'taskmaster',
+          taskmaster: {
+            tag,
+            file: TASKMASTER_TEST_TASKS_FILE,
+          },
+        },
+      },
+    };
+  }
+
+  beforeEach(async () => {
+    await resetTaskmasterTestWorkDir();
+  });
+
+  afterEach(async () => {
+    await rm(TASKMASTER_TEST_WORKDIR, { recursive: true, force: true });
+  });
+
   // 创建 Mock Planner
   function createMockPlanner(): Planner {
     const mockClient = new MockLLMClient({
@@ -1042,7 +1084,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       expect(events).toContain('plan:start');
       expect(events).toContain('plan:complete');
@@ -1085,7 +1127,7 @@ describe('Orchestrator 类', () => {
         constraints: ['使用 JWT'],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task));
 
       expect(result.taskId).toBe('task-001');
       expect(result.status).toBeDefined();
@@ -1130,7 +1172,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task));
 
       expect(result.status).toBe('failure');
       expect(result.output).toHaveProperty('error');
@@ -1159,7 +1201,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 执行后应清理状态
       expect(orchestrator.getExecutionState()).toBeNull();
@@ -1186,7 +1228,7 @@ describe('Orchestrator 类', () => {
       };
 
       // 启动任务
-      const runPromise = orchestrator.run(task);
+      const runPromise = orchestrator.run(withTaskmasterContext(task));
 
       // 立即停止
       setTimeout(() => orchestrator.stop(), 5);
@@ -1223,7 +1265,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      const result = await orchestrator.run(task);
+      const result = await orchestrator.run(withTaskmasterContext(task));
 
       // merge 策略应返回数组
       expect(result.output).toBeInstanceOf(Array);
@@ -1254,7 +1296,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 执行后会话已清理
       expect(orchestrator.getCurrentSessionId()).toBeNull();
@@ -1302,7 +1344,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 由于 WorkerPool 会自动注册 Worker，实际可能不会触发重试
       // 这个测试主要验证重试机制的存在
@@ -1389,7 +1431,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 注入的 SessionManager 不应由 Orchestrator 调用 startWatching/stopWatching
       expect(trackedSession.watchCalls.startWatching).toBe(0);
@@ -1435,7 +1477,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await orchestrator.stop();
 
       // 会话应已清理
@@ -1613,7 +1655,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 验证监听器已注册
       expect(mockSession.pendingApprovalHandler).not.toBeNull();
@@ -1643,7 +1685,7 @@ describe('Orchestrator 类', () => {
       const approval = createTestApproval();
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       // 等待异步处理完成
       await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -1678,7 +1720,7 @@ describe('Orchestrator 类', () => {
       });
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证被拒绝
@@ -1717,7 +1759,7 @@ describe('Orchestrator 类', () => {
       });
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证被批准
@@ -1755,7 +1797,7 @@ describe('Orchestrator 类', () => {
       });
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证被批准
@@ -1793,7 +1835,7 @@ describe('Orchestrator 类', () => {
       });
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证被批准
@@ -1839,7 +1881,7 @@ describe('Orchestrator 类', () => {
       });
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证使用默认决策（拒绝）
@@ -1870,7 +1912,7 @@ describe('Orchestrator 类', () => {
       const approval = createTestApproval();
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证 respondedBy 为 orchestrator
@@ -1908,7 +1950,7 @@ describe('Orchestrator 类', () => {
       const approval = createTestApproval();
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 验证事件被触发
@@ -1953,7 +1995,7 @@ describe('Orchestrator 类', () => {
       mockSession.queuePendingApproval(approval);
       mockSession.queuePendingApproval(approval);
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // 应该只处理一次
@@ -2014,7 +2056,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
 
       // 偏离检测禁用时不会产生相关调用
       // 验证 readThinkingLogs 未被调用（因为定时器未启动）
@@ -2059,7 +2101,7 @@ describe('Orchestrator 类', () => {
       };
 
       // 启动任务（不等待完成）
-      const runPromise = orchestrator.run(task);
+      const runPromise = orchestrator.run(withTaskmasterContext(task));
       
       // 等待足够时间让定时器触发（任务执行期间）
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -2124,7 +2166,7 @@ describe('Orchestrator 类', () => {
       };
 
       // 启动任务（不等待完成）
-      const runPromise = orchestrator.run(task);
+      const runPromise = orchestrator.run(withTaskmasterContext(task));
       
       // 等待足够时间让定时器触发
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -2181,7 +2223,7 @@ describe('Orchestrator 类', () => {
       };
 
       // 启动任务（不等待完成）
-      const runPromise = orchestrator.run(task);
+      const runPromise = orchestrator.run(withTaskmasterContext(task));
       
       // 等待足够时间让定时器触发
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -2239,7 +2281,7 @@ describe('Orchestrator 类', () => {
       };
 
       // 启动任务（不等待完成）
-      const runPromise = orchestrator.run(task);
+      const runPromise = orchestrator.run(withTaskmasterContext(task));
       
       // 等待多个检测周期
       await new Promise(resolve => setTimeout(resolve, 150));
@@ -2276,7 +2318,7 @@ describe('Orchestrator 类', () => {
         constraints: [],
       };
 
-      await orchestrator.run(task);
+      await orchestrator.run(withTaskmasterContext(task));
       await orchestrator.stop();
 
       // 等待一段时间，验证定时器已停止（不再有新的调用）

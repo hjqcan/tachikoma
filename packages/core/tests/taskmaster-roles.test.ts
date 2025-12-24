@@ -165,7 +165,7 @@ describe('taskmaster-mode: roles + auto-assignment', () => {
 
     let capturedPlan: PlannerOutput | null = null;
     orchestrator.on('plan:complete', (evt) => {
-      capturedPlan = evt.data.plan;
+      capturedPlan = (evt.data as { plan: PlannerOutput }).plan;
     });
 
     const task: Task = {
@@ -179,7 +179,7 @@ describe('taskmaster-mode: roles + auto-assignment', () => {
         metadata: {
           workDir: TEST_ROOT,
           planSource: 'taskmaster',
-          taskmaster: { enabled: true, tag },
+          taskmaster: { tag },
           planner: { mode: 'full' },
         },
       },
@@ -195,8 +195,8 @@ describe('taskmaster-mode: roles + auto-assignment', () => {
 
     for (const st of plan.subtasks) {
       expect(st.roleId).toBeDefined();
-      expect(['frontend', 'backend', 'test']).toContain(st.roleId);
-      expect(st.requiredCapabilities ?? []).toContain(`role:${st.roleId}`);
+      expect(['frontend', 'backend', 'test']).toContain(st.roleId!);
+      expect(st.requiredCapabilities ?? []).toContain(`role:${st.roleId!}`);
     }
 
     const metaPath = join(TEST_ROOT, 'tachikoma.taskmeta.json');

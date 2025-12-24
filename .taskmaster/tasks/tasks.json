@@ -490,7 +490,7 @@
         "id": "6",
         "title": "原子工具库与分层式行为空间",
         "description": "实现 Layer1 原子函数与 Layer2 沙盒工具，提供 Schema 约束的工具注册表。",
-        "details": "- 原子函数：read_file/write_file/glob_search/grep_search/execute_shell/browser_navigate/...，统一 Input/Output JSONSchema。\n- 工具注册表：基于名称解析并校验权限（network/fs/shell）。\n- Layer2 shell 工具：在 sandbox 中执行，捕获 stdout/stderr/exitCode。\n- Layer3 预授权包/APIs 入口预留。",
+        "details": "- 原子函数：file_read/file_write/glob_search/grep_search/execute_shell/browser_navigate/...，统一 Input/Output JSONSchema。\n- 工具注册表：基于名称解析并校验权限（network/fs/shell）。\n- Layer2 shell 工具：在 sandbox 中执行，捕获 stdout/stderr/exitCode。\n- Layer3 预授权包/APIs 入口预留。",
         "testStrategy": "- 单元：每个工具的入参校验与成功/失败路径覆盖。\n- 集成：通过 worker 执行工具链，验证串联数据传递。\n- 安全：非法路径/命令被拒绝。",
         "priority": "medium",
         "dependencies": [],
