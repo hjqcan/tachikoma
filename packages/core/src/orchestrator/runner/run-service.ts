@@ -1,12 +1,12 @@
 import type { Task, TaskResult } from '../../types';
 import type { OrchestratorConfig, OrchestratorTask } from '../types';
 import type { OrchestratorState } from '../state';
-import { TaskMasterPlanEngine } from '../engines/taskmaster-plan-engine';
-import { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
+import type { TaskMasterPlanEngine } from '../engines/taskmaster-plan-engine';
+import type { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
 import type { EmitFn } from './types';
-import { ProgressReporter } from './progress-reporter';
-import { CheckpointService } from './checkpoint-service';
-import { ExecutionLoop } from './execution-loop';
+import type { ProgressReporter } from './progress-reporter';
+import type { CheckpointService } from './checkpoint-service';
+import type { ExecutionLoop } from './execution-loop';
 import type { SessionController } from './session-controller';
 import type { AggregationEngine } from '../engines/aggregation-engine';
 import type { MemoryService } from '../../memory';
@@ -47,6 +47,9 @@ export class RunService {
       );
     }
 
+    // 每次 run 都重置 TaskMasterAdapter，避免跨 run 污染（refs/originalStatuses/tag/tasksPath 等）
+    this.taskMasterAdapter.reset();
+
     this.state.resetForNewRun();
     this.state.currentRunMetadata = task.context?.metadata ?? null;
     this.state.initExecutionState(startTime);
@@ -76,9 +79,8 @@ export class RunService {
       }
 
       if (planResult.tasksPath) {
-        this.state.taskMaster.tasksPath = planResult.tasksPath;
-        this.state.taskMaster.tag = planResult.effectiveTag ?? sessionId;
-        this.state.taskMaster.originalStatuses = planResult.originalStatuses ?? {};
+        // 合并原始状态快照（只补齐，不覆盖）：replan 不应覆盖首次快照
+        this.taskMasterAdapter.mergeOriginalStatuses(planResult.originalStatuses);
 
         this.taskMasterAdapter.initialize({
           projectRoot: workDir,

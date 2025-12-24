@@ -197,15 +197,11 @@ export {
   OrchestratorState,
   createOrchestratorState,
   createExecutionState,
-  createTaskMasterState,
   createApprovalState,
 } from './state';
 export type {
   ExecutionState,
-  TaskMasterState,
   ApprovalState,
-  // 使用别名避免冲突
-  TaskMasterRef as StateTaskMasterRef,
   DelayedApproval as StateDelayedApproval,
 } from './state';
 

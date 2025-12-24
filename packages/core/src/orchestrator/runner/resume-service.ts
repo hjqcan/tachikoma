@@ -46,6 +46,9 @@ export class ResumeService {
       const { sessionId, sessionManager, checkpoint, restoreResult, planResult, resumePlan, orchestratorTask, workDir, signal } =
         prepared;
 
+      // 每次 resume 都重置 TaskMasterAdapter，避免跨 run 污染（refs/originalStatuses/tag/tasksPath 等）
+      this.taskMasterAdapter.reset();
+
       this.state.resetForNewRun();
       this.state.sessionId = sessionId;
       this.state.sessionManager = sessionManager;
@@ -53,9 +56,6 @@ export class ResumeService {
       this.state.initExecutionState(startTime);
 
       if (planResult.tasksPath) {
-        this.state.taskMaster.tasksPath = planResult.tasksPath;
-        this.state.taskMaster.tag = planResult.effectiveTag ?? sessionId;
-        this.state.taskMaster.originalStatuses = planResult.originalStatuses ?? {};
         this.taskMasterAdapter.initialize({
           projectRoot: workDir,
           tasksPath: planResult.tasksPath,
@@ -63,9 +63,12 @@ export class ResumeService {
         });
       }
 
-      if (restoreResult.runtimeData?.kind === 'taskmaster' && restoreResult.runtimeData.originalStatuses) {
-        this.state.taskMaster.originalStatuses = restoreResult.runtimeData.originalStatuses;
+      // originalStatuses：以 checkpoint runtime.json 为优先来源（执行起始快照），再用 planResult 补齐新任务
+      if (restoreResult.runtimeData?.kind === 'taskmaster') {
+        this.taskMasterAdapter.mergeOriginalStatuses(restoreResult.runtimeData.originalStatuses);
       }
+      this.taskMasterAdapter.mergeOriginalStatuses(planResult.originalStatuses);
+      // 注意：originalStatuses 现在由 TaskMasterAdapter 持有（避免状态双写漂移）
 
       const execState = this.state.executionState;
       if (execState) {

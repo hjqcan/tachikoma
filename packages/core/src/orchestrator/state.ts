@@ -7,7 +7,6 @@
 import type { TaskResult } from '../types';
 import type { PlannerOutput, PlannerRole } from './types';
 import type { ISessionFileManager, PendingApprovalFile } from './session';
-import type { TaskStatus as TaskMasterTaskStatus } from '../taskmaster-compat';
 
 // ============================================================================
 // 执行状态
@@ -40,43 +39,6 @@ export function createExecutionState(startTime: number): ExecutionState {
     startTime,
     totalTokens: 0,
     totalRetries: 0,
-  };
-}
-
-// ============================================================================
-// TaskMaster 状态
-// ============================================================================
-
-/**
- * TaskMaster 引用
- */
-export interface TaskMasterRef {
-  projectRoot: string;
-  file: string;
-  tag: string;
-}
-
-/**
- * TaskMaster 运行时状态
- */
-export interface TaskMasterState {
-  projectRoot: string | null;
-  tasksPath: string | null;
-  tag: string;
-  originalStatuses: Record<string, TaskMasterTaskStatus>;
-  refsByTaskId: Map<string, TaskMasterRef>;
-}
-
-/**
- * 创建初始 TaskMaster 状态
- */
-export function createTaskMasterState(): TaskMasterState {
-  return {
-    projectRoot: null,
-    tasksPath: null,
-    tag: 'master',
-    originalStatuses: {},
-    refsByTaskId: new Map(),
   };
 }
 
@@ -138,9 +100,6 @@ export class OrchestratorState {
   currentPlanOutput: PlannerOutput | null = null;
   currentRunMetadata: Record<string, unknown> | null = null;
 
-  // TaskMaster
-  taskMaster: TaskMasterState = createTaskMasterState();
-
   // 审批
   approval: ApprovalState = createApprovalState();
 
@@ -164,7 +123,6 @@ export class OrchestratorState {
     this.pendingReplan = false;
     this.expandedSubtaskIds.clear();
     this.refinedSubtaskIds.clear();
-    this.taskMaster = createTaskMasterState();
     this.approval = createApprovalState();
   }
 
@@ -173,36 +131,6 @@ export class OrchestratorState {
    */
   initExecutionState(startTime: number): void {
     this.executionState = createExecutionState(startTime);
-  }
-
-  /**
-   * 获取 TaskMaster 引用
-   */
-  getTaskMasterRef(taskId: string): TaskMasterRef | null {
-    return this.taskMaster.refsByTaskId.get(taskId) ?? null;
-  }
-
-  /**
-   * 设置 TaskMaster 引用
-   */
-  setTaskMasterRef(taskId: string, ref: TaskMasterRef): void {
-    this.taskMaster.refsByTaskId.set(taskId, ref);
-  }
-
-  /**
-   * 记录原始状态
-   */
-  recordOriginalStatus(id: string, status: TaskMasterTaskStatus): void {
-    if (this.taskMaster.originalStatuses[id] === undefined) {
-      this.taskMaster.originalStatuses[id] = status;
-    }
-  }
-
-  /**
-   * 获取原始状态
-   */
-  getOriginalStatus(id: string): TaskMasterTaskStatus {
-    return this.taskMaster.originalStatuses[id] ?? 'pending';
   }
 
   /**

@@ -1,19 +1,35 @@
 import { WorkerAgent } from '../../agents/worker-agent';
 import type { MCPClientManager } from '../../mcp';
 import type { IWorkerPool } from '../worker-pool';
-import type { OrchestratorConfig, PlannerOutput } from '../types';
+import type { OrchestratorConfig, PlannerOutput, PlannerRole } from '../types';
 import type { OrchestratorState } from '../state';
 import type { CollaborationService } from '../services/collaboration-service';
 
 /**
- * WorkerManager
+ * LLM 配置（从 metadata 提取）
+ */
+interface LLMConfig {
+  provider: string;
+  model: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+/**
+ * WorkerManager（懒加载模式）
  *
- * 负责按“旧版并行模型”创建/扩容 workers：
- * - 每个 role 允许多个 worker
- * - 优先满足 executionPlan 同一步骤的同 role 并行需求
- * - 注入 WorkerPool 时不做自动创建（由调用方负责）
+ * 与旧版保持一致的懒加载模式：
+ * - storeRoleDefinitions() 只存储角色定义，不预创建 Workers
+ * - createWorkerForRole() 在 assignToWorker 时按需创建
+ * - 优先复用空闲 Worker，没有才创建新的
  */
 export class WorkerManager {
+  /** 存储角色定义（懒加载模式） */
+  private roleDefinitions: PlannerRole[] = [];
+
+  /** 当前工作目录 */
+  private workDir: string = process.cwd();
+
   constructor(
     private readonly orchestratorConfig: OrchestratorConfig,
     private readonly state: OrchestratorState,
@@ -22,120 +38,168 @@ export class WorkerManager {
     private readonly getCollaborationService: () => CollaborationService | null
   ) {}
 
-  async ensureWorkersForPlan(workDir: string, planOutput: PlannerOutput): Promise<void> {
-    const delegation = planOutput.delegation;
-    const desiredCount = Math.max(1, delegation.workerCount);
+  /**
+   * 从 currentRunMetadata 提取 LLM 配置
+   *
+   * 支持 metadata.llm 对象格式：{ provider, model, apiKey?, baseUrl? }
+   */
+  private extractLLMFromMetadata(): LLMConfig | null {
+    const meta = this.state.currentRunMetadata;
+    const llm = meta && typeof meta.llm === 'object' && meta.llm ? (meta.llm as Record<string, unknown>) : null;
+    if (!llm) return null;
+    const provider = typeof llm.provider === 'string' ? llm.provider : undefined;
+    const model = typeof llm.model === 'string' ? llm.model : undefined;
+    if (!provider || !model) return null;
+    return {
+      provider,
+      model,
+      ...(typeof llm.apiKey === 'string' && llm.apiKey ? { apiKey: llm.apiKey } : {}),
+      ...(typeof llm.baseUrl === 'string' && llm.baseUrl ? { baseUrl: llm.baseUrl } : {}),
+    };
+  }
+
+  /**
+   * 存储角色定义（懒加载模式）
+   *
+   * 只存储角色定义，不预创建 Workers。
+   * Workers 将在 createWorkerForRole 中按需创建。
+   */
+  storeRoleDefinitions(workDir: string, planOutput: PlannerOutput): void {
+    this.workDir = workDir;
     const roles = Array.isArray(planOutput.roles) && planOutput.roles.length > 0 ? planOutput.roles : [];
 
-    const rolePool =
-      roles.length > 0
-        ? roles
-        : [
-            {
-              id: 'generalist',
-              name: '通用执行者',
-              responsibilities: '通用执行者',
-              capabilities: ['role:generalist'],
-            },
-          ];
-
-    const isBarrier = (st: any): boolean =>
-      Array.isArray(st.requiredCapabilities) && st.requiredCapabilities.includes('internal:barrier');
-
-    const roleBySubtaskId = new Map<string, string>();
-    for (const st of planOutput.subtasks ?? []) {
-      if (isBarrier(st)) continue;
-      const roleId = typeof st.roleId === 'string' && st.roleId.length > 0 ? st.roleId : 'generalist';
-      roleBySubtaskId.set(st.id, roleId);
-    }
-
-    const requiredByRole = new Map<string, number>();
-    for (const roleId of roleBySubtaskId.values()) {
-      requiredByRole.set(roleId, Math.max(1, requiredByRole.get(roleId) ?? 0));
-    }
-
-    for (const step of planOutput.executionPlan.steps ?? []) {
-      if (!step.parallel) continue;
-      const counts = new Map<string, number>();
-      for (const id of step.subtaskIds ?? []) {
-        const roleId = roleBySubtaskId.get(id);
-        if (!roleId) continue;
-        counts.set(roleId, (counts.get(roleId) ?? 0) + 1);
-      }
-      for (const [roleId, count] of counts.entries()) {
-        requiredByRole.set(roleId, Math.max(requiredByRole.get(roleId) ?? 0, count));
-      }
-    }
-
-    if (requiredByRole.size === 0) {
-      const fallbackRoleId = rolePool[0]?.id ?? 'generalist';
-      requiredByRole.set(fallbackRoleId, 1);
-    }
-
-    const sumRequired = (): number => Array.from(requiredByRole.values()).reduce((a, b) => a + b, 0);
-    const targetTotal = Math.max(sumRequired(), desiredCount);
-    const roleIdsForDistribution = rolePool
-      .map((r) => r.id)
-      .filter((s): s is string => typeof s === 'string' && s.length > 0);
-    let rr = 0;
-    while (sumRequired() < targetTotal && roleIdsForDistribution.length > 0) {
-      const roleId = roleIdsForDistribution[rr % roleIdsForDistribution.length]!;
-      requiredByRole.set(roleId, (requiredByRole.get(roleId) ?? 0) + 1);
-      rr++;
-    }
-
-    const roleDefById = new Map(rolePool.map((r) => [r.id, r] as const));
-    const nextWorkerIdForRole = (roleId: string): string => {
-      let seq = 0;
-      while (this.workerPool.getWorker(`worker-${roleId}-${seq}`)) seq++;
-      return `worker-${roleId}-${seq}`;
-    };
-
-    for (const [roleId, needed] of requiredByRole.entries()) {
-      if (!Number.isFinite(needed) || needed <= 0) continue;
-      const existing = this.workerPool.getWorkersByRole(roleId).length;
-      const missing = Math.max(0, needed - existing);
-      if (missing === 0) continue;
-
-      const role = roleDefById.get(roleId) ?? {
-        id: roleId,
-        name: roleId,
-        responsibilities: '',
-        capabilities: [`role:${roleId}`],
-      };
-
-      for (let i = 0; i < missing; i++) {
-        const workerId = nextWorkerIdForRole(roleId);
-        const sessionManager = this.state.sessionManager ?? undefined;
-        const caps = Array.from(new Set([...(role.capabilities ?? []), `role:${role.id}`]));
-
-        const collaborationConfig = this.getCollaborationService()?.buildWorkerCollaborationConfig(
-          workerId,
-          this.state.sessionId ?? 'default',
-          caps
-        );
-
-        const agent = new WorkerAgent(workerId, this.orchestratorConfig.agent, {
-          workDir,
-          ...(sessionManager ? { sessionManager } : {}),
-          ...(this.mcpClient ? { mcpClient: this.mcpClient } : {}),
-          ...(collaborationConfig ? { collaborationConfig } : {}),
-        });
-
-        const ok = this.workerPool.register({
-          id: workerId,
-          status: 'idle',
-          agent,
-          capabilities: caps,
-        });
-        if (!ok) break;
-
-        if (sessionManager) {
-          await sessionManager.registerWorker(workerId).catch(() => undefined);
-        }
-      }
+    if (roles.length > 0) {
+      this.roleDefinitions = roles;
+      console.debug(`[WorkerManager] Lazy worker mode: stored ${roles.length} role definitions`);
+    } else {
+      // 非角色化模式：使用默认的 generalist 角色
+      this.roleDefinitions = [
+        {
+          id: 'generalist',
+          name: '通用执行者',
+          responsibilities: '通用执行者',
+          capabilities: ['role:generalist'],
+        },
+      ];
+      console.debug('[WorkerManager] Lazy worker mode: using default generalist role');
     }
   }
+
+  /**
+   * 生成 Worker ID
+   */
+  private generateWorkerId(roleId: string): string {
+    const existing = this.workerPool.getWorkersByRole(roleId);
+    if (existing.length === 0) return `worker-${roleId}`;
+    return `worker-${roleId}-${existing.length}`;
+  }
+
+  /**
+   * 获取角色对应的能力列表
+   */
+  private getRoleCapabilities(roleId: string): string[] {
+    const role = this.roleDefinitions.find((r) => r.id === roleId);
+    const stableRoleCap = `role:${roleId}`;
+    if (role) {
+      const caps = role.capabilities ?? [];
+      return ['general', ...caps, ...(caps.includes(stableRoleCap) ? [] : [stableRoleCap])];
+    }
+    // 如果没有找到角色定义，返回基本能力
+    return ['general', stableRoleCap];
+  }
+
+  /**
+   * 按需创建并注册 Worker（懒加载核心方法）
+   *
+   * @param roleId - 角色 ID
+   * @returns 创建的 Worker ID，如果创建失败返回 null
+   */
+  async createWorkerForRole(roleId: string): Promise<string | null> {
+    const maxWorkers = this.orchestratorConfig.workerPool.maxWorkers;
+
+    // 检查是否已达到最大 Worker 数
+    if (this.workerPool.workerCount >= maxWorkers) {
+      console.debug(`[WorkerManager] Worker pool is full (${maxWorkers}), cannot create new worker`);
+      return null;
+    }
+
+    const workerId = this.generateWorkerId(roleId);
+    const capabilities = this.getRoleCapabilities(roleId);
+    const sessionManager = this.state.sessionManager ?? undefined;
+
+    const collaborationConfig = this.getCollaborationService()?.buildWorkerCollaborationConfig(
+      workerId,
+      this.state.sessionId ?? 'default',
+      capabilities
+    );
+
+    // 提取 LLM 配置（API key 等）从 metadata
+    const llm = this.extractLLMFromMetadata();
+    const agentConfig = llm
+      ? {
+          ...this.orchestratorConfig.agent,
+          provider: llm.provider,
+          model: llm.model,
+        }
+      : this.orchestratorConfig.agent;
+
+    // 构建 backendConfig（传递 apiKey 和 baseUrl）
+    const backendConfig: Record<string, unknown> = {};
+    if (llm?.apiKey) backendConfig.apiKey = llm.apiKey;
+    if (llm?.baseUrl) backendConfig.baseUrl = llm.baseUrl;
+
+    const agent = new WorkerAgent(workerId, agentConfig, {
+      workDir: this.workDir,
+      ...(sessionManager ? { sessionManager } : {}),
+      ...(this.mcpClient ? { mcpClient: this.mcpClient } : {}),
+      ...(collaborationConfig ? { collaborationConfig } : {}),
+      ...(Object.keys(backendConfig).length > 0 ? { backendConfig } : {}),
+    });
+
+    const ok = this.workerPool.register({
+      id: workerId,
+      status: 'idle',
+      agent,
+      capabilities,
+    });
+
+    if (!ok) {
+      console.warn(`[WorkerManager] Failed to register worker ${workerId}`);
+      return null;
+    }
+
+    console.debug(`[WorkerManager] Created worker ${workerId} for role ${roleId}`);
+
+    if (sessionManager) {
+      await sessionManager.registerWorker(workerId).catch(() => undefined);
+    }
+
+    return workerId;
+  }
+
+  /**
+   * 查找或创建匹配角色的 Worker（懒加载分配）
+   *
+   * 工作流程：
+   * 1. 尝试找到具有匹配能力的空闲 Worker
+   * 2. 如果没有空闲 Worker 且池未满，按需创建新 Worker
+   * 3. 返回可用的 Worker ID
+   *
+   * @param roleId - 角色 ID
+   * @returns Worker ID，如果无法获取返回 null
+   */
+  async findOrCreateWorkerForRole(roleId: string): Promise<string | null> {
+    const roleCap = `role:${roleId}`;
+
+    // 1. 尝试找到匹配的空闲 Worker
+    const idleWorker = this.workerPool.findIdleByCapability(roleCap);
+    if (idleWorker) {
+      console.debug(`[WorkerManager] Reusing idle worker ${idleWorker.id} for role ${roleId}`);
+      return idleWorker.id;
+    }
+
+    // 2. 如果没有空闲 Worker，尝试按需创建
+    const newWorkerId = await this.createWorkerForRole(roleId);
+    return newWorkerId;
+  }
 }
-
-

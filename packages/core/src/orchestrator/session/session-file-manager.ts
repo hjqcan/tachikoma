@@ -5,7 +5,6 @@
  * 支持原子写入、文件监控、审批流程等功能
  */
 
-import { watch, type FSWatcher } from 'node:fs';
 import type {
   SessionConfig,
   ISessionFileManager,
@@ -26,8 +25,10 @@ import type {
   SessionFileEvent,
   PeerReadOptions,
 } from './types';
-import { DEFAULT_SESSION_CONFIG, DEFAULT_PEER_READ_OPTIONS } from './types';
+import { DEFAULT_SESSION_CONFIG } from './types';
 import type { SubTask } from '../types';
+import { SessionPeerReader } from './session-file-manager.peer';
+import { SessionWatcher } from './session-file-manager.watch';
 import {
   SessionPathBuilder,
   atomicWriteJson,
@@ -40,34 +41,12 @@ import {
   fileExists,
   safeDeleteFile,
   generateTimestampId,
-  getFileStats,
-  listDir,
-  safeReadJsonFileWithRetry,
-  safeReadJsonlTailWithRetry,
   now,
 } from './utils';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 
 // ============================================================================
 // SessionFileManager 实现
 // ============================================================================
-
-/**
- * 文件监控状态
- */
-interface WatchState {
-  /** 监控的 Worker ID 列表 */
-  watchedWorkers: Set<string>;
-  /** FSWatcher 实例映射 */
-  watchers: Map<string, FSWatcher>;
-  /** 是否正在监控 */
-  isWatching: boolean;
-  /** 轮询定时器 */
-  pollTimer?: ReturnType<typeof setInterval> | undefined;
-  /** 上次文件状态缓存（用于检测变化） */
-  lastFileStates: Map<string, number>;
-}
 
 // 注：旧实现曾在 runtime.json 内归档“细分后的 subtasks”并更新 executionPlan。
 // 现在 runtime.json 永远是脱敏引用格式（不包含 plannerOutput），细分/expand 必须写回 tasks.json。
@@ -108,21 +87,31 @@ export class SessionFileManager implements ISessionFileManager {
   /** 事件监听器 */
   private readonly listeners = new Map<SessionFileEventType, Set<SessionFileEventHandler>>();
 
-  /** 监控状态 */
-  private readonly watchState: WatchState = {
-    watchedWorkers: new Set(),
-    watchers: new Map(),
-    isWatching: false,
-    lastFileStates: new Map(),
-  };
-
   /** 已注册的 Worker ID 集合 */
   private readonly registeredWorkers = new Set<string>();
+
+  /** Peer 读取器（拆分实现） */
+  private readonly peerReader: SessionPeerReader;
+
+  /** 文件监控器（拆分实现） */
+  private readonly watcher: SessionWatcher;
 
   constructor(sessionId: string, config?: Partial<SessionConfig>) {
     this.sessionId = sessionId;
     this.config = { ...DEFAULT_SESSION_CONFIG, ...config };
     this.paths = new SessionPathBuilder(this.config.rootDir, sessionId);
+
+    this.peerReader = new SessionPeerReader(this.paths);
+    this.watcher = new SessionWatcher({
+      config: this.config,
+      paths: this.paths,
+      registeredWorkers: this.registeredWorkers,
+      emit: (type, data, workerId, filePath) => this.emit(type, data, workerId, filePath),
+      readPendingApproval: (workerId) => this.readPendingApproval(workerId),
+      readWorkerStatus: (workerId) => this.readWorkerStatus(workerId),
+      readIntervention: (workerId) => this.readIntervention(workerId),
+      readApprovalResponse: (workerId) => this.readApprovalResponse(workerId),
+    });
   }
 
   // ============================================================================
@@ -207,8 +196,8 @@ export class SessionFileManager implements ISessionFileManager {
     this.registeredWorkers.add(workerId);
 
     // 如果正在监控，添加对新 Worker 的监控
-    if (this.watchState.isWatching) {
-      await this.watchWorker(workerId);
+    if (this.watcher.isWatching) {
+      await this.watcher.watchWorker(workerId);
     }
   }
 
@@ -584,17 +573,7 @@ export class SessionFileManager implements ISessionFileManager {
    * 基于 sessions/{sessionId}/workers 目录
    */
   async listPeerWorkers(): Promise<string[]> {
-    const workersDir = this.paths.workersDir;
-    const entries = await listDir(workersDir);
-    // 过滤出目录（排除文件）
-    const workers: string[] = [];
-    for (const entry of entries) {
-      const stats = await getFileStats(join(workersDir, entry));
-      if (stats?.isDirectory) {
-        workers.push(entry);
-      }
-    }
-    return workers;
+    return this.peerReader.listPeerWorkers();
   }
 
   /**
@@ -607,11 +586,7 @@ export class SessionFileManager implements ISessionFileManager {
     workerId: string,
     opts?: PeerReadOptions
   ): Promise<WorkerStatusFile | null> {
-    const options = { ...DEFAULT_PEER_READ_OPTIONS, ...opts };
-    return safeReadJsonFileWithRetry<WorkerStatusFile>(
-      this.paths.workerStatusFile(workerId),
-      { retries: options.retries, delay: options.backoffDelay }
-    );
+    return this.peerReader.readPeerStatus(workerId, opts);
   }
 
   /**
@@ -626,12 +601,7 @@ export class SessionFileManager implements ISessionFileManager {
     limit = 20,
     opts?: PeerReadOptions
   ): Promise<ThinkingRecord[]> {
-    const options = { ...DEFAULT_PEER_READ_OPTIONS, ...opts };
-    return safeReadJsonlTailWithRetry<ThinkingRecord>(
-      this.paths.workerThinkingFile(workerId),
-      limit,
-      { retries: options.retries, delay: options.backoffDelay }
-    );
+    return this.peerReader.readPeerThinking(workerId, limit, opts);
   }
 
   /**
@@ -646,12 +616,7 @@ export class SessionFileManager implements ISessionFileManager {
     limit = 20,
     opts?: PeerReadOptions
   ): Promise<ActionRecord[]> {
-    const options = { ...DEFAULT_PEER_READ_OPTIONS, ...opts };
-    return safeReadJsonlTailWithRetry<ActionRecord>(
-      this.paths.workerActionsFile(workerId),
-      limit,
-      { retries: options.retries, delay: options.backoffDelay }
-    );
+    return this.peerReader.readPeerActions(workerId, limit, opts);
   }
 
   /**
@@ -660,17 +625,7 @@ export class SessionFileManager implements ISessionFileManager {
    * @param workerId - Worker ID
    */
   async listPeerArtifacts(workerId: string): Promise<string[]> {
-    const artifactsDir = this.paths.workerArtifactsDir(workerId);
-    const entries = await listDir(artifactsDir);
-    // 返回文件名列表（排除目录）
-    const files: string[] = [];
-    for (const entry of entries) {
-      const stats = await getFileStats(join(artifactsDir, entry));
-      if (stats?.isFile) {
-        files.push(entry);
-      }
-    }
-    return files;
+    return this.peerReader.listPeerArtifacts(workerId);
   }
 
   /**
@@ -683,15 +638,7 @@ export class SessionFileManager implements ISessionFileManager {
     workerId: string,
     filename: string
   ): Promise<string | null> {
-    const filePath = join(this.paths.workerArtifactsDir(workerId), filename);
-    try {
-      return await readFile(filePath, 'utf-8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null;
-      }
-      throw error;
-    }
+    return this.peerReader.readPeerArtifact(workerId, filename);
   }
 
   /**
@@ -702,11 +649,7 @@ export class SessionFileManager implements ISessionFileManager {
    * @param opts - 重试选项
    */
   async readOrchestratorRuntime(opts?: PeerReadOptions): Promise<RuntimeFile | null> {
-    const options = { ...DEFAULT_PEER_READ_OPTIONS, ...opts };
-    return safeReadJsonFileWithRetry<RuntimeFile>(
-      this.paths.runtimeFile,
-      { retries: options.retries, delay: options.backoffDelay }
-    );
+    return this.peerReader.readOrchestratorRuntime(opts);
   }
 
   // ============================================================================
@@ -774,299 +717,14 @@ export class SessionFileManager implements ISessionFileManager {
    * 启动文件监控
    */
   async startWatching(): Promise<void> {
-    if (!this.config.enableWatch) {
-      return;
-    }
-
-    if (this.watchState.isWatching) {
-      return; // 已经在监控
-    }
-
-    this.watchState.isWatching = true;
-
-    // 监控所有已注册的 Worker
-    for (const workerId of this.registeredWorkers) {
-      await this.watchWorker(workerId);
-    }
-
-    // 启动轮询检查（作为 fs.watch 的补充）
-    this.startPolling();
+    await this.watcher.start();
   }
 
   /**
    * 停止文件监控
    */
   stopWatching(): void {
-    this.watchState.isWatching = false;
-
-    // 停止所有 FSWatcher
-    for (const watcher of this.watchState.watchers.values()) {
-      watcher.close();
-    }
-    this.watchState.watchers.clear();
-    this.watchState.watchedWorkers.clear();
-
-    // 停止轮询
-    if (this.watchState.pollTimer) {
-      clearInterval(this.watchState.pollTimer);
-      this.watchState.pollTimer = undefined;
-    }
-  }
-
-  /**
-   * 监控单个 Worker 目录
-   */
-  private async watchWorker(workerId: string): Promise<void> {
-    if (this.watchState.watchedWorkers.has(workerId)) {
-      return;
-    }
-
-    const workerDir = this.paths.workerDir(workerId);
-
-    try {
-      // 使用 fs.watch 监控目录
-      const watcher = watch(workerDir, { persistent: false }, (eventType, filename) => {
-        if (filename) {
-          this.handleFileChange(workerId, filename, eventType);
-        }
-      });
-
-      watcher.on('error', (error) => {
-        console.error(`Watch error for worker ${workerId}:`, error);
-      });
-
-      this.watchState.watchers.set(workerId, watcher);
-      this.watchState.watchedWorkers.add(workerId);
-
-      // 初始化文件状态缓存
-      await this.updateFileStateCache(workerId);
-    } catch (error) {
-      console.error(`Failed to watch worker ${workerId}:`, error);
-    }
-  }
-
-  /**
-   * 处理文件变化
-   *
-   * 注意：所有读取操作都用 try/catch 包装，防止 JSON 解析错误导致 watcher 崩溃
-   */
-  private async handleFileChange(
-    workerId: string,
-    filename: string,
-    _eventType: string
-  ): Promise<void> {
-    try {
-      // 处理 pending_approval.json
-      if (filename === 'pending_approval.json') {
-        const filePath = this.paths.workerPendingApprovalFile(workerId);
-        const approval = await this.readPendingApproval(workerId);
-        if (approval) {
-          this.emit('pending_approval_created', approval, workerId, filePath);
-        }
-      }
-
-      // 处理 status.json
-      if (filename === 'status.json') {
-        const filePath = this.paths.workerStatusFile(workerId);
-        const status = await this.readWorkerStatus(workerId);
-        if (status) {
-          this.emit('worker_status_changed', status, workerId, filePath);
-        }
-      }
-
-      // 处理 intervention.json
-      if (filename === 'intervention.json') {
-        const filePath = this.paths.workerInterventionFile(workerId);
-        const intervention = await this.readIntervention(workerId);
-        if (intervention) {
-          if (intervention.acknowledged) {
-            this.emit('intervention_acknowledged', intervention, workerId, filePath);
-          }
-        }
-      }
-    } catch (error) {
-      // 捕获 JSON 解析错误或其他读取错误，记录警告但不终止监听
-      console.warn(`[SessionFileManager] Error handling file change for worker ${workerId}, file ${filename}:`, error);
-    }
-  }
-
-  /**
-   * 启动轮询检查
-   *
-   * 作为 fs.watch 的补充，定期检查文件变化
-   * 某些文件系统（如网络文件系统）可能不支持 fs.watch
-   */
-  private startPolling(): void {
-    if (this.watchState.pollTimer) {
-      return;
-    }
-
-    this.watchState.pollTimer = setInterval(async () => {
-      await this.pollForChanges();
-    }, this.config.watchPollInterval);
-  }
-
-  /**
-   * 轮询检查文件变化
-   */
-  private async pollForChanges(): Promise<void> {
-    for (const workerId of this.registeredWorkers) {
-      await this.checkWorkerFileChanges(workerId);
-    }
-  }
-
-  /**
-   * 检查单个 Worker 的文件变化
-   *
-   * 使用时间戳对比检测所有监控文件的变化，防止 fs.watch 漏事件
-   */
-  private async checkWorkerFileChanges(workerId: string): Promise<void> {
-    try {
-      // 检查 pending_approval.json
-      await this.checkFileByTimestamp(
-        workerId,
-        'pending_approval',
-        this.paths.workerPendingApprovalFile(workerId),
-        async (filePath) => {
-          const approval = await this.readPendingApproval(workerId);
-          if (approval) {
-            this.emit('pending_approval_created', approval, workerId, filePath);
-          }
-        }
-      );
-
-      // 检查 status.json
-      await this.checkFileByTimestamp(
-        workerId,
-        'status',
-        this.paths.workerStatusFile(workerId),
-        async (filePath) => {
-          const status = await this.readWorkerStatus(workerId);
-          if (status) {
-            this.emit('worker_status_changed', status, workerId, filePath);
-          }
-        }
-      );
-
-      // 检查 intervention.json
-      await this.checkFileByTimestamp(
-        workerId,
-        'intervention',
-        this.paths.workerInterventionFile(workerId),
-        async (filePath) => {
-          const intervention = await this.readIntervention(workerId);
-          if (intervention?.acknowledged) {
-            this.emit('intervention_acknowledged', intervention, workerId, filePath);
-          }
-        }
-      );
-
-      // 检查 approval_response.json
-      await this.checkFileByTimestamp(
-        workerId,
-        'approval_response',
-        this.paths.workerApprovalResponseFile(workerId),
-        async (filePath) => {
-          const response = await this.readApprovalResponse(workerId);
-          if (response) {
-            this.emit('pending_approval_removed', response, workerId, filePath);
-          }
-        }
-      );
-
-      // Stale detection: if a worker stops updating heartbeat, mark it as error to avoid a permanently stuck status.
-      await this.maybeMarkStaleWorker(workerId);
-    } catch (error) {
-      console.warn(`[SessionFileManager] Error polling worker ${workerId}:`, error);
-    }
-  }
-
-  private async maybeMarkStaleWorker(workerId: string): Promise<void> {
-    const statusPath = this.paths.workerStatusFile(workerId);
-    const status = await safeReadJsonFileWithRetry<WorkerStatusFile>(statusPath, {
-      retries: 1,
-      delay: 20,
-    });
-    if (!status) return;
-
-    if (status.status === 'idle' || status.status === 'error' || status.status === 'waiting_approval') {
-      return;
-    }
-
-    const currentTime = now();
-    const heartbeatAge = currentTime - status.lastHeartbeat;
-    if (heartbeatAge <= this.config.staleWorkerTimeoutMs) return;
-
-    // If actions are still being appended, treat the worker as active even if heartbeat isn't updated.
-    const actionsPath = this.paths.workerActionsFile(workerId);
-    const tail = await safeReadJsonlTailWithRetry<ActionRecord>(actionsPath, 1, {
-      retries: 1,
-      delay: 20,
-    });
-    const lastAction = tail.at(-1);
-    const lastActionAge = lastAction ? currentTime - lastAction.timestamp : Number.POSITIVE_INFINITY;
-    if (lastAction && lastActionAge <= this.config.staleWorkerActionGraceMs) return;
-
-    // CAS check: re-read status to avoid race condition where worker resumed heartbeat
-    // between our first read and this write. Abort if heartbeat was updated.
-    const recheck = await safeReadJsonFileWithRetry<WorkerStatusFile>(statusPath, {
-      retries: 1,
-      delay: 20,
-    });
-    if (!recheck || recheck.lastHeartbeat !== status.lastHeartbeat) {
-      // Heartbeat was updated, worker is alive - abort marking as stale
-      return;
-    }
-
-    const next: WorkerStatusFile = {
-      workerId,
-      status: 'error',
-      progress: typeof status.progress === 'number' ? status.progress : 0,
-      lastHeartbeat: currentTime,
-      ...(status.currentSubtask && { currentSubtask: status.currentSubtask }),
-      error: {
-        code: 'stale_worker',
-        message: `Worker heartbeat timed out (${Math.round(heartbeatAge / 1000)}s)`,
-        timestamp: currentTime,
-      },
-    };
-
-    await atomicWriteJson(statusPath, next);
-  }
-
-  /**
-   * 基于时间戳检查文件变化
-   */
-  private async checkFileByTimestamp(
-    workerId: string,
-    fileType: string,
-    filePath: string,
-    onChanged: (filePath: string) => Promise<void>
-  ): Promise<void> {
-    const cacheKey = `${workerId}:${fileType}`;
-    const stats = await getFileStats(filePath);
-    const currentMtime = stats?.mtime.getTime() || 0;
-    const lastMtime = this.watchState.lastFileStates.get(cacheKey) || 0;
-
-    if (currentMtime > 0 && currentMtime !== lastMtime) {
-      // 文件已更新，触发回调
-      await onChanged(filePath);
-    }
-
-    this.watchState.lastFileStates.set(cacheKey, currentMtime);
-  }
-
-  /**
-   * 更新文件状态缓存
-   */
-  private async updateFileStateCache(workerId: string): Promise<void> {
-    const pendingApprovalPath = this.paths.workerPendingApprovalFile(workerId);
-    const cacheKey = `${workerId}:pending_approval`;
-
-    this.watchState.lastFileStates.set(
-      cacheKey,
-      fileExists(pendingApprovalPath) ? 1 : 0
-    );
+    this.watcher.stop();
   }
 
   // ============================================================================

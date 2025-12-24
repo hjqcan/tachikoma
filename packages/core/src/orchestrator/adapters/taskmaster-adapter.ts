@@ -21,7 +21,7 @@ import {
   addTaskOrSubtaskDependency,
   expandTaskOrSubtask,
 } from '../../taskmaster-compat';
-import { relative, isAbsolute } from 'path';
+import { relative, isAbsolute } from 'node:path';
 
 // ============================================================================
 // 类型定义
@@ -91,7 +91,7 @@ export interface TaskMasterRuntimeData {
 export class TaskMasterAdapter {
   private projectRoot: string | null = null;
   private tasksPath: string | null = null;
-  private tag: string = 'master';
+  private tag = 'master';
 
   // 原始状态跟踪（用于失败回滚）
   private readonly originalStatuses: Record<string, TaskMasterTaskStatus> = {};
@@ -149,9 +149,7 @@ export class TaskMasterAdapter {
    * 记录原始状态
    */
   recordOriginalStatus(id: string, status: TaskMasterTaskStatus): void {
-    if (this.originalStatuses[id] === undefined) {
-      this.originalStatuses[id] = status;
-    }
+    this.originalStatuses[id] ??= status;
   }
 
   /**
@@ -166,6 +164,22 @@ export class TaskMasterAdapter {
    */
   getAllOriginalStatuses(): Record<string, TaskMasterTaskStatus> {
     return { ...this.originalStatuses };
+  }
+
+  /**
+   * 合并“执行起始时的原始状态快照”
+   *
+   * 规则：只补齐缺失项，不覆盖已有值。
+   * 这样可以确保：
+   * - 首次 run() 记录的快照在后续 replan 时不会被覆盖
+   * - expand_commit 新增的任务/子任务可在后续 plan 中补齐快照
+   */
+  mergeOriginalStatuses(statuses?: Record<string, TaskMasterTaskStatus>): void {
+    if (!statuses) return;
+    for (const [id, status] of Object.entries(statuses)) {
+      if (!id) continue;
+      this.originalStatuses[id] ??= status;
+    }
   }
 
   /**
@@ -205,12 +219,12 @@ export class TaskMasterAdapter {
    */
   async expandSubtask(
     targetId: string,
-    subtasks: Array<{
+    subtasks: {
       title: string;
       description: string;
       details: string;
       testStrategy: string;
-    }>,
+    }[],
     options: {
       force?: boolean;
       strategy: 'serial' | 'parallel';

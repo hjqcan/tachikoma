@@ -93,7 +93,7 @@ export class ExecutionLoop {
       await this.progress.write(taskId, 'executing').catch(() => undefined);
 
       if (!this.workerPoolInjected) {
-        await this.workers.ensureWorkersForPlan(workDir, activePlan);
+        this.workers.storeRoleDefinitions(workDir, activePlan);
       }
 
       for (const step of activePlan.executionPlan.steps) {
@@ -123,8 +123,9 @@ export class ExecutionLoop {
 
       this.state.pendingReplan = false;
 
-      const sessionTag = this.state.taskMaster.tag || this.state.sessionId || 'master';
-      const file = this.state.taskMaster.tasksPath ?? undefined;
+      const ref = this.taskMasterAdapter.getRef();
+      const sessionTag = ref?.tag ?? this.state.sessionId ?? 'master';
+      const file = ref?.file;
 
       const replanned = await this.planEngine.executePlanPhase(
         orchestratorTask,
@@ -136,9 +137,8 @@ export class ExecutionLoop {
       }
 
       if (replanned.tasksPath) {
-        this.state.taskMaster.tasksPath = replanned.tasksPath;
-        this.state.taskMaster.tag = replanned.effectiveTag ?? sessionTag;
-        this.state.taskMaster.originalStatuses = replanned.originalStatuses ?? {};
+        // 只补齐新增项，避免覆盖 run 开始时记录的 originalStatuses
+        this.taskMasterAdapter.mergeOriginalStatuses(replanned.originalStatuses);
         this.taskMasterAdapter.initialize({
           projectRoot: workDir,
           tasksPath: replanned.tasksPath,
@@ -263,17 +263,29 @@ export class ExecutionLoop {
       }
 
       try {
+        const roleId =
+          typeof activeSubtask.roleId === 'string' && activeSubtask.roleId.length > 0
+            ? activeSubtask.roleId
+            : 'generalist';
+
         const requiredCapabilities =
           Array.isArray(activeSubtask.requiredCapabilities) && activeSubtask.requiredCapabilities.length > 0
             ? activeSubtask.requiredCapabilities
-            : typeof activeSubtask.roleId === 'string' && activeSubtask.roleId.length > 0
-              ? [`role:${activeSubtask.roleId}`]
-              : undefined;
+            : [`role:${roleId}`];
 
-        const preferredWorkerId =
+        // 懒加载模式：先确保有匹配角色的 Worker（优先复用空闲的，没有才创建）
+        let preferredWorkerId =
           typeof activeSubtask.assignedWorkerId === 'string' && activeSubtask.assignedWorkerId.length > 0
             ? activeSubtask.assignedWorkerId
             : undefined;
+
+        if (!preferredWorkerId && !this.workerPoolInjected) {
+          // 尝试找到或创建匹配角色的 Worker
+          const foundOrCreated = await this.workers.findOrCreateWorkerForRole(roleId);
+          if (foundOrCreated) {
+            preferredWorkerId = foundOrCreated;
+          }
+        }
 
         const context: Record<string, unknown> = {};
         if (preferredWorkerId) context.preferredWorkerId = preferredWorkerId;
@@ -303,7 +315,8 @@ export class ExecutionLoop {
         const { workerId, agent } = assignment;
         activeSubtask.assignedWorkerId = workerId;
         activeSubtask.status = 'assigned';
-        this.emit('subtask:assigned', taskId, { subtask: activeSubtask, workerId }, subtaskId);
+        // 与旧实现保持一致：data 对象包含 subtaskId，第四个参数也传 subtaskId
+        this.emit('subtask:assigned', taskId, { subtaskId, subtask: activeSubtask, workerId }, subtaskId);
 
         if (!agent) {
           throw new Error(`Worker ${workerId} has no attached Agent instance`);
