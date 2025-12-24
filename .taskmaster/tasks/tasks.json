@@ -1710,9 +1710,10 @@
             "description": "在现有 types.ts 基础上扩展，增加 category/tags/skillType 字段",
             "dependencies": [],
             "details": "1. 在 packages/core/src/skills/types.ts 扩展 SkillMetadata：\\n   - skillType: 'executable' | 'knowledge'（区分脚本型和知识型）\\n   - category?: string（可选分类）\\n   - tags?: string[]（可选标签）\\n2. 更新 loader.ts 的 parseYamlFrontmatter 支持新字段\\n3. 更新 renderer.ts 渲染逻辑\\n4. 保持向后兼容：无 skillType 时默认 'executable'",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：现有 SKILL.md 解析不受影响；新字段正确提取",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-24T15:18:32.000Z"
           },
           {
             "id": 2,
@@ -1720,9 +1721,10 @@
             "description": "扩展现有 create_skill tool，增加动态加载/卸载能力",
             "dependencies": [1],
             "details": "1. 在 packages/core/src/tools/core/skill-tool.ts 新增 skill tool（区别于 create_skill）\\n2. 复用现有模块：\\n   - refresh: 调用 loadSkills() + 写入 skills Memory Block\\n   - load: 调用 loadSkillContent() + 写入 loaded_skills Memory Block\\n   - unload: 从 loaded_skills 块移除指定技能\\n3. 与 SkillsManager 集成：复用其 reload() 机制\\n4. 输入 schema: { command: 'load' | 'unload' | 'refresh', skills?: string[] }",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：各命令正确调用现有模块；Memory Block 更新正确",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-24T23:50:00.000Z"
           },
           {
             "id": 3,
@@ -1730,9 +1732,10 @@
             "description": "创建专用内存块，与 ContextManager 和 MemoryService 集成",
             "dependencies": [1, 2],
             "details": "1. 在 packages/core/src/skills/blocks.ts 定义：\\n   - SKILL_MEMORY_BLOCKS = ['skills', 'loaded_skills']\\n   - 标记为 readOnly（由 Skill Tool 管理）\\n2. skills 块：调用 renderSkillsSection() 生成内容\\n3. loaded_skills 块：存储完整 SKILL.md body（格式: # Skill: {name}\\n{body}\\n---）\\n4. 与 ContextManager 集成：loaded_skills 自动注入到 system prompt\\n5. 复用 SkillsManager.renderSystemPromptSection() 现有逻辑",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：Memory Block 正确创建；ContextManager 注入正确",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-24T23:55:00.000Z"
           },
           {
             "id": 4,
@@ -1740,9 +1743,10 @@
             "description": "分析任务执行轨迹，提取可学习模式",
             "dependencies": [],
             "details": "1. 在 packages/core/src/skills/learning/reflection.ts 实现 TrajectoryReflector\\n2. 输入：ThinkingRecord[]（执行轨迹）+ 可选 feedback（测试结果）\\n3. 使用 LLM 分析：任务成功/推理链合理性/边缘情况/可抽象模式\\n4. 输出 ReflectionResult（success/reasoning/patterns/failureModes）\\n5. 参考 Letta 实验：带反馈的学习效果更佳（+15.7%）",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：mock LLM 验证 prompt 构造；ReflectionResult 解析正确",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-25T00:05:00.000Z"
           },
           {
             "id": 5,
