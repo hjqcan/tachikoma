@@ -51,6 +51,7 @@ export type {
   SkillDiscoveryConfig,
   SkillExecutionOptions,
   SkillExecutionResult,
+  SkillType,
 } from './types';
 
 export {
@@ -64,6 +65,7 @@ export {
   DEFAULT_MAX_ACTIVATED_TOKENS,
   DEFAULT_AUTO_ACTIVATE_THRESHOLD,
   DEFAULT_MAX_AUTO_ACTIVATED,
+  DEFAULT_SKILL_TYPE,
 } from './types';
 
 export type {
@@ -137,3 +139,43 @@ export {
   renderActivatedSkill,
   renderActivatedSkills,
 } from './activator';
+
+// ============================================================================
+// Memory Block 导出
+// ============================================================================
+
+export {
+  SKILL_MEMORY_BLOCK_LABELS,
+  SKILL_READ_ONLY_BLOCKS,
+  EMPTY_LOADED_SKILLS_PLACEHOLDER,
+  SKILL_CONTENT_SEPARATOR,
+  SkillBlockManager,
+  getGlobalSkillBlockManager,
+  resetGlobalSkillBlockManager,
+} from './blocks';
+
+export type {
+  SkillMemoryBlockLabel,
+  MemoryBlock,
+  SkillBlockState,
+} from './blocks';
+
+// ============================================================================
+// Learning 模块导出
+// ============================================================================
+
+export {
+  TrajectoryReflector,
+  createTrajectoryReflector,
+  thinkingRecordToTrajectory,
+  actionRecordToTrajectory,
+} from './learning';
+
+export type {
+  TrajectoryRecord,
+  ExecutionFeedback,
+  IdentifiedPattern,
+  FailureMode,
+  ReflectionResult,
+  ReflectionConfig,
+} from './learning';

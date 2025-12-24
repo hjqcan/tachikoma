@@ -7,6 +7,21 @@
  */
 
 // ============================================================================
+// Skill 类型
+// ============================================================================
+
+/**
+ * Skill 类型
+ * 
+ * - 'executable': 可执行脚本型技能，自动转换为 Tool（现有行为）
+ * - 'knowledge': 知识型技能，仅注入到 Context（Letta-Code 启发）
+ */
+export type SkillType = 'executable' | 'knowledge';
+
+/** 默认技能类型（保持向后兼容） */
+export const DEFAULT_SKILL_TYPE: SkillType = 'executable';
+
+// ============================================================================
 // Skill 元数据（Level 1）
 // ============================================================================
 
@@ -28,6 +43,26 @@ export interface SkillMetadata {
 
   /** 许可证信息（可选） */
   license?: string;
+
+  /**
+   * 技能类型
+   * - 'executable': 可执行脚本型（有 scripts/ 目录）
+   * - 'knowledge': 知识型（仅 SKILL.md 正文）
+   * @default 'executable'
+   */
+  skillType?: SkillType;
+
+  /**
+   * 技能分类（可选）
+   * 用于组织和过滤技能，如 'data-processing', 'code-generation', 'debugging'
+   */
+  category?: string;
+
+  /**
+   * 技能标签列表（可选）
+   * 用于更细粒度的检索和匹配，如 ['python', 'pandas', 'csv']
+   */
+  tags?: string[];
 }
 
 // ============================================================================

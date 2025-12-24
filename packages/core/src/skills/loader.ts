@@ -16,6 +16,7 @@ import type {
   SkillError,
   SkillLoadOutcome,
   SkillDiscoveryConfig,
+  SkillType,
 } from './types';
 
 import {
@@ -25,6 +26,7 @@ import {
   MAX_DESCRIPTION_LENGTH,
   NAME_PATTERN,
   DEFAULT_IGNORE_DIRS,
+  DEFAULT_SKILL_TYPE,
 } from './types';
 
 // ============================================================================
@@ -244,10 +246,22 @@ export function parseSkillFile(filePath: string): SkillMetadata | SkillError {
       name: sanitizeSingleLine(metadata.name!),
       description: sanitizeSingleLine(metadata.description!),
       path: normalizedPath,
+      // 新增字段：向后兼容，无 skillType 时默认为 'executable'
+      skillType: metadata.skillType ?? DEFAULT_SKILL_TYPE,
     };
 
     if (metadata.license) {
       result.license = metadata.license;
+    }
+
+    // 可选字段：category
+    if (metadata.category) {
+      result.category = sanitizeSingleLine(metadata.category);
+    }
+
+    // 可选字段：tags（解析逗号分隔或 YAML 数组）
+    if (metadata.tags && metadata.tags.length > 0) {
+      result.tags = metadata.tags.map(t => sanitizeSingleLine(t));
     }
 
     return result;
@@ -301,18 +315,31 @@ export function extractFrontmatter(
 }
 
 /**
+ * YAML frontmatter 解析结果类型
+ */
+interface ParsedFrontmatter {
+  name?: string;
+  description?: string;
+  license?: string;
+  skillType?: SkillType;
+  category?: string;
+  tags?: string[];
+}
+
+/**
  * 简单的 YAML frontmatter 解析器
  *
- * 只支持简单的 key: value 格式
+ * 支持简单的 key: value 格式，以及 tags 列表
  */
 function parseYamlFrontmatter(
   yaml: string
-): { name?: string; description?: string; license?: string } | { message: string } {
-  const result: { name?: string; description?: string; license?: string } = {};
+): ParsedFrontmatter | { message: string } {
+  const result: ParsedFrontmatter = {};
 
   const lines = yaml.split('\n');
   let currentKey: string | null = null;
   let currentValue: string[] = [];
+  let isParsingList = false;
 
   const flushKey = () => {
     if (currentKey && currentValue.length > 0) {
@@ -323,19 +350,72 @@ function parseYamlFrontmatter(
         result.description = value;
       } else if (currentKey === 'license') {
         result.license = value;
+      } else if (currentKey === 'skillType') {
+        // 验证 skillType 值
+        if (value === 'executable' || value === 'knowledge') {
+          result.skillType = value;
+        }
+        // 无效值时保持 undefined，使用默认值
+      } else if (currentKey === 'category') {
+        result.category = value;
       }
+      // tags 由列表解析逻辑处理
     }
     currentKey = null;
     currentValue = [];
+    isParsingList = false;
   };
 
   for (const line of lines) {
+    // 检查是否是 YAML 列表项 (- value)
+    if (isParsingList && line.match(/^\s+-\s+(.*)$/)) {
+      const listMatch = line.match(/^\s+-\s+(.*)$/);
+      if (listMatch && listMatch[1]) {
+        const listValue = listMatch[1].trim();
+        // 移除引号
+        if ((listValue.startsWith('"') && listValue.endsWith('"')) ||
+            (listValue.startsWith("'") && listValue.endsWith("'"))) {
+          result.tags = result.tags || [];
+          result.tags.push(listValue.slice(1, -1));
+        } else {
+          result.tags = result.tags || [];
+          result.tags.push(listValue);
+        }
+        continue;
+      }
+    }
+
     // 检查是否是新键
     const keyMatch = line.match(/^(\w+):\s*(.*)$/);
     if (keyMatch && keyMatch[1] && keyMatch[2] !== undefined) {
       flushKey();
       currentKey = keyMatch[1];
       const inlineValue = keyMatch[2].trim();
+
+      // 检查是否是列表开始 (tags:)
+      if (currentKey === 'tags' && !inlineValue) {
+        isParsingList = true;
+        continue;
+      }
+
+      // 处理 tags 的内联数组格式 [tag1, tag2, tag3]
+      if (currentKey === 'tags' && inlineValue.startsWith('[') && inlineValue.endsWith(']')) {
+        const arrayContent = inlineValue.slice(1, -1);
+        result.tags = arrayContent
+          .split(',')
+          .map(t => t.trim())
+          .filter(t => t.length > 0)
+          .map(t => {
+            // 移除引号
+            if ((t.startsWith('"') && t.endsWith('"')) ||
+                (t.startsWith("'") && t.endsWith("'"))) {
+              return t.slice(1, -1);
+            }
+            return t;
+          });
+        currentKey = null;
+        continue;
+      }
 
       // 处理 YAML 多行字符串 (|-  或 |)
       if (inlineValue === '|-' || inlineValue === '|' || inlineValue === '>-' || inlineValue === '>') {
@@ -348,7 +428,7 @@ function parseYamlFrontmatter(
       } else if (inlineValue) {
         currentValue.push(inlineValue);
       }
-    } else if (currentKey && line.startsWith('  ')) {
+    } else if (currentKey && line.startsWith('  ') && !isParsingList) {
       // 多行值的延续
       currentValue.push(line.trim());
     }

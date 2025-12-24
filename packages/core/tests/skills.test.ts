@@ -20,6 +20,7 @@ import {
   SKILL_FILENAME,
   MAX_NAME_LENGTH,
   MAX_DESCRIPTION_LENGTH,
+  DEFAULT_SKILL_TYPE,
 } from '../src/skills';
 
 // ============================================================================
@@ -239,6 +240,137 @@ description: |-
     expect('message' in result).toBe(false);
     const skill = result as { description: string };
     expect(skill.description).toBe('Line one Line two Line three');
+  });
+
+  // ============================================================================
+  // Task 17.1: 新增字段测试 (skillType, category, tags)
+  // ============================================================================
+
+  test('parses skillType field correctly', () => {
+    const content = `---
+name: knowledge-skill
+description: A knowledge-type skill
+skillType: knowledge
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'knowledge-skill', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { name: string; skillType: string };
+    expect(skill.name).toBe('knowledge-skill');
+    expect(skill.skillType).toBe('knowledge');
+  });
+
+  test('defaults skillType to executable when not specified', () => {
+    const content = `---
+name: default-type
+description: A skill without skillType
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'default-type', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { skillType: string };
+    expect(skill.skillType).toBe(DEFAULT_SKILL_TYPE);
+    expect(skill.skillType).toBe('executable');
+  });
+
+  test('ignores invalid skillType values and uses default', () => {
+    const content = `---
+name: invalid-type
+description: A skill with invalid skillType
+skillType: invalid-value
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'invalid-type', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { skillType: string };
+    // 无效值应该回退到默认值
+    expect(skill.skillType).toBe('executable');
+  });
+
+  test('parses category field correctly', () => {
+    const content = `---
+name: categorized-skill
+description: A skill with category
+category: data-processing
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'categorized-skill', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { category: string };
+    expect(skill.category).toBe('data-processing');
+  });
+
+  test('parses tags as YAML list', () => {
+    const content = `---
+name: tagged-skill
+description: A skill with tags
+tags:
+  - python
+  - pandas
+  - data-analysis
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'tagged-skill', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { tags: string[] };
+    expect(skill.tags).toEqual(['python', 'pandas', 'data-analysis']);
+  });
+
+  test('parses tags as inline array', () => {
+    const content = `---
+name: inline-tags
+description: A skill with inline tags
+tags: [python, pandas, csv]
+---
+
+# Body`;
+    const skillPath = createSkillFile(tempDir, 'inline-tags', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { tags: string[] };
+    expect(skill.tags).toEqual(['python', 'pandas', 'csv']);
+  });
+
+  test('parses all new fields together', () => {
+    const content = `---
+name: full-metadata
+description: A skill with all new fields
+skillType: knowledge
+category: debugging
+tags: [typescript, testing, bun]
+---
+
+# Full Body`;
+    const skillPath = createSkillFile(tempDir, 'full-metadata', content);
+    const result = parseSkillFile(skillPath);
+
+    expect('message' in result).toBe(false);
+    const skill = result as { 
+      name: string; 
+      skillType: string; 
+      category: string; 
+      tags: string[] 
+    };
+    expect(skill.name).toBe('full-metadata');
+    expect(skill.skillType).toBe('knowledge');
+    expect(skill.category).toBe('debugging');
+    expect(skill.tags).toEqual(['typescript', 'testing', 'bun']);
   });
 });
 

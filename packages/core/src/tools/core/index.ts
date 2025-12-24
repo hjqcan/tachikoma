@@ -31,6 +31,7 @@ export { dockerizeTool } from './dockerize';
 
 // 技能工具
 export { createSkillTool } from './create-skill';
+export { skillTool } from './skill-tool';
 
 // 开发服务器工具
 export { devServerTool, cleanupAllServers, cleanupServersForTask } from './dev-server';

@@ -35,6 +35,7 @@ import { spawnSubagentTool } from './core/spawn-subagent';
 import { submitResultTool } from './core/submit-result';
 import { expandCommitTool } from './core/expand-commit';
 import { createSkillTool } from './core/create-skill';
+import { skillTool } from './core/skill-tool';
 
 // 类型导出
 export type {
@@ -136,6 +137,7 @@ export {
   spawnSubagentTool,
   submitResultTool,
   createSkillTool,
+  skillTool,
 };
 
 // 6.8 MCP Layer 3
@@ -192,6 +194,7 @@ export const agentTools: Tool[] = [
   submitResultTool,
   expandCommitTool,
   createSkillTool,
+  skillTool,  // Skill 生命周期管理
 ];
 
 /**
