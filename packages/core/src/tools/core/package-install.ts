@@ -396,7 +396,7 @@ export const packageInstallTool: Tool = {
           durationMs,
           timedOut: false,
           processId,
-          warnings: warnings.length > 0 ? warnings : undefined,
+          ...(warnings.length > 0 ? { warnings } : {}),
         },
         ...(exitCode === 0 ? {} : { error: `Package install failed with exit code ${exitCode}` }),
       };

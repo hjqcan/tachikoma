@@ -275,10 +275,6 @@ export interface UpdateStatusOptions {
   touchUpdatedAt?: boolean;
 }
 
-function isDotted(id: string): boolean {
-  return id.includes('.');
-}
-
 function normalizeStatusForWrite(status: TaskStatus): TaskStatus {
   // 保持原枚举；上游允许 'completed' 但很多逻辑只处理 done/in-progress/pending。
   return status;

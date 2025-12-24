@@ -24,12 +24,14 @@ function coerceEvalCases(rawCases: unknown): EvalCase[] {
     if (!objective) {
       throw new Error(`Eval case ${id} is missing objective`);
     }
-    return {
-      id,
-      objective,
-      expected: record.expected as EvalCase['expected'],
-      metadata: record.metadata as EvalCase['metadata'],
-    };
+    const evalCase: EvalCase = { id, objective };
+    if (record.expected != null) {
+      evalCase.expected = record.expected as NonNullable<EvalCase['expected']>;
+    }
+    if (record.metadata != null) {
+      evalCase.metadata = record.metadata as NonNullable<EvalCase['metadata']>;
+    }
+    return evalCase;
   });
 }
 
@@ -46,9 +48,9 @@ export async function loadEvalSet(filePath: string): Promise<EvalSet> {
 
   return {
     id,
-    name: typeof parsed.name === 'string' ? parsed.name : undefined,
-    description: typeof parsed.description === 'string' ? parsed.description : undefined,
-    version: typeof parsed.version === 'string' ? parsed.version : undefined,
+    ...(typeof parsed.name === 'string' ? { name: parsed.name } : {}),
+    ...(typeof parsed.description === 'string' ? { description: parsed.description } : {}),
+    ...(typeof parsed.version === 'string' ? { version: parsed.version } : {}),
     cases,
   };
 }
@@ -62,8 +64,10 @@ export async function runEvalSet(
     sessionDir: options.sessionDir,
     workDir: options.workDir,
     llm: options.llm,
-    verbose: options.verbose,
-    maxHistoryMessages: options.maxHistoryMessages,
+    ...(options.verbose !== undefined ? { verbose: options.verbose } : {}),
+    ...(options.maxHistoryMessages !== undefined
+      ? { maxHistoryMessages: options.maxHistoryMessages }
+      : {}),
     enableCheckpoints: options.enableCheckpoints ?? false,
     noApproval: options.noApproval ?? true,
   });
@@ -77,7 +81,7 @@ export async function runEvalSet(
     throw new Error('No eval cases matched the filter');
   }
 
-  const results = [];
+  const results: EvalReport['results'] = [];
 
   for (const evalCase of cases) {
     const session = await runner.createSession();
@@ -133,7 +137,7 @@ export async function runEvalSet(
       summary: summary ?? '',
       errors,
       durationMs: Date.now() - caseStart,
-      expected: evalCase.expected,
+      ...(evalCase.expected !== undefined ? { expected: evalCase.expected } : {}),
       checks: scored.checks,
     });
   }
@@ -147,8 +151,8 @@ export async function runEvalSet(
 
   return {
     evalId: evalSet.id,
-    name: evalSet.name,
-    description: evalSet.description,
+    ...(typeof evalSet.name === 'string' ? { name: evalSet.name } : {}),
+    ...(typeof evalSet.description === 'string' ? { description: evalSet.description } : {}),
     startedAt,
     durationMs: Date.now() - startedAt,
     total: results.length,

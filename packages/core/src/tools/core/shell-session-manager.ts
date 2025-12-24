@@ -80,9 +80,11 @@ export class ShellSessionManager extends EventEmitter {
     // Create new session
     const shell = new PersistentShell({
       cwd: options.cwd,
-      env: options.env,
-      shell: options.shell,
-      defaultTimeout: options.defaultTimeout,
+      ...(options.env !== undefined ? { env: options.env } : {}),
+      ...(options.shell !== undefined ? { shell: options.shell } : {}),
+      ...(options.defaultTimeout !== undefined
+        ? { defaultTimeout: options.defaultTimeout }
+        : {}),
     });
 
     const info: SessionInfo = {

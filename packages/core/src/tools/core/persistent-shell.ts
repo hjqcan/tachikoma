@@ -107,10 +107,10 @@ export class PersistentShell extends EventEmitter {
     super();
     this.options = {
       cwd: options.cwd,
-      env: options.env || {},
-      shell: options.shell || this.getDefaultShell(),
-      defaultTimeout: options.defaultTimeout || DEFAULT_TIMEOUT,
-      context: options.context,
+      env: options.env ?? {},
+      shell: options.shell ?? this.getDefaultShell(),
+      defaultTimeout: options.defaultTimeout ?? DEFAULT_TIMEOUT,
+      ...(options.context !== undefined ? { context: options.context } : {}),
     };
   }
 
@@ -233,7 +233,8 @@ export class PersistentShell extends EventEmitter {
       // Check if command completed
       const match = END_MARKER_REGEX.exec(this.outputBuffer);
       if (match && match[1] === this.currentCommand.id) {
-        const exitCode = parseInt(match[2], 10);
+        const rawExitCode = match[2];
+        const exitCode = rawExitCode ? parseInt(rawExitCode, 10) : 0;
         this.completeCurrentCommand(exitCode);
       }
     }

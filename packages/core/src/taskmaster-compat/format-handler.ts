@@ -41,6 +41,7 @@ export class FormatHandler {
     const availableKeys = Object.keys(data).filter((key) => key !== 'tasks' && key !== 'metadata');
     if (tag === 'master' && availableKeys.length > 0) {
       const firstTag = availableKeys[0];
+      if (!firstTag) return [];
       const tagData = data[firstTag];
       return tagData?.tasks || [];
     }
@@ -72,6 +73,7 @@ export class FormatHandler {
     const availableKeys = Object.keys(data).filter((key) => key !== 'tasks' && key !== 'metadata');
     if (tag === 'master' && availableKeys.length > 0) {
       const firstTag = availableKeys[0];
+      if (!firstTag) return null;
       const tagData = data[firstTag];
       if (!tagData?.metadata && tagData?.tasks) {
         return this.generateMetadataFromTasks(tagData.tasks, firstTag);

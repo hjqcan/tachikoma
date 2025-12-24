@@ -5,7 +5,7 @@
  * 支持 Anthropic、OpenAI 和 Mock 客户端实现
  */
 
-import { generateText, jsonSchema, tool } from 'ai';
+import { generateText, jsonSchema, tool, type ToolSet } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import type {
@@ -17,7 +17,6 @@ import type {
   LLMToolCall,
   LLMToolChoice,
   LLMToolDefinition,
-  LLMToolSet,
 } from './types';
 
 // ============================================================================
@@ -72,7 +71,7 @@ function isRetryableError(statusCode: number, code: string, message: string): bo
 
 const DEFAULT_TOOL_OUTPUT_SCHEMA = jsonSchema({});
 
-type AIToolSet = LLMToolSet;
+type AIToolSet = ToolSet;
 type NormalizedToolChoice = Exclude<LLMToolChoice, { name: string }>;
 
 function normalizeToolChoice(toolChoice?: LLMToolChoice): NormalizedToolChoice | undefined {

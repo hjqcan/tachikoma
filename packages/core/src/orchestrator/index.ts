@@ -187,13 +187,27 @@ export {
 // ============================================================================
 
 export {
-  // Orchestrator 类
   Orchestrator,
-  // 工厂函数
   createOrchestrator,
-  // 类型
   type OrchestratorOptions,
 } from './orchestrator';
+
+// 状态管理
+export {
+  OrchestratorState,
+  createOrchestratorState,
+  createExecutionState,
+  createTaskMasterState,
+  createApprovalState,
+} from './state';
+export type {
+  ExecutionState,
+  TaskMasterState,
+  ApprovalState,
+  // 使用别名避免冲突
+  TaskMasterRef as StateTaskMasterRef,
+  DelayedApproval as StateDelayedApproval,
+} from './state';
 
 // ============================================================================
 // SubtaskWatcher 导出
@@ -205,3 +219,97 @@ export {
   type SubtaskWatcherConfig,
   type SubtaskWatcherEvents,
 } from './subtask-watcher';
+
+// ============================================================================
+// Modular Services 导出
+// ============================================================================
+
+export {
+  EventService,
+  createEventService,
+  ApprovalArbitrationService,
+  createApprovalArbitrationService,
+  IntegrationContextService,
+  createIntegrationContextService,
+  CollaborationService,
+  createCollaborationService,
+} from './services';
+
+export type {
+  FileWriteArbitrationParams,
+  ExpandCommitArbitrationParams,
+  DelayedApproval,
+  TaskMasterCallbacks,
+  SharedKnowledgeData,
+  IntegrationContextConfig,
+  CollaborationConfig,
+  WorkerCollaborationConfig,
+} from './services';
+
+// ============================================================================
+// Modular Engines 导出
+// ============================================================================
+
+export {
+  AggregationEngine,
+  createAggregationEngine,
+  DeviationDetector,
+  createDeviationDetector,
+  DEFAULT_DEVIATION_DETECTOR_CONFIG,
+  ExecutionEngine,
+  createExecutionEngine,
+} from './engines';
+
+export type {
+  DeviationResult,
+  DeviationDetectorConfig,
+  DAGValidationResult,
+  SubTaskExecutionResult,
+} from './engines';
+
+// ============================================================================
+// Modular Managers 导出
+// ============================================================================
+
+export {
+  SessionLifecycleManager,
+  createSessionLifecycleManager,
+  WorkerCoordinator,
+  createWorkerCoordinator,
+} from './managers';
+
+export type {
+  SessionLifecycleConfig,
+  ParallelRequirements,
+  WorkerCreationConfig,
+} from './managers';
+
+// ============================================================================
+// Modular Adapters 导出
+// ============================================================================
+
+export {
+  TaskMasterAdapter,
+  createTaskMasterAdapter,
+} from './adapters';
+
+export type {
+  TaskMasterTaskStatus,
+  TaskMasterRef,
+  TaskMasterRuntimeData,
+} from './adapters';
+
+// ============================================================================
+// Interfaces 导出
+// ============================================================================
+
+export type {
+  IEventService,
+  IDeviationDetector,
+  IAggregationEngine,
+  IApprovalArbitration,
+  ITaskMasterAdapter,
+  IExecutionEngine,
+  IWorkerCoordinator,
+  EventServiceContext,
+} from './interfaces';

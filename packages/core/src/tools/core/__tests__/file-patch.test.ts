@@ -5,11 +5,12 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from 'bun:test';
-import { applyPatchTool, parseFreeformPatch, applyHunk } from '../file-patch';
+import { applyPatchTool, parseFreeformPatch } from '../file-patch';
 import { mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ExecutionContext } from '../../../types';
+import type { ToolResult } from '../../types';
 
 describe('apply_patch tool', () => {
   let testDir: string;
@@ -40,10 +41,10 @@ describe('apply_patch tool', () => {
       const filePath = 'test1.ts';
       await writeFile(join(testDir, filePath), 'const old = 1;');
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         patches: [{ search: 'const old = 1;', replace: 'const newVar = 2;' }],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       
@@ -55,13 +56,13 @@ describe('apply_patch tool', () => {
       const filePath = 'test2.ts';
       await writeFile(join(testDir, filePath), 'const a = 1;\nconst b = 2;');
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         patches: [
           { search: 'const a = 1;', replace: 'const x = 10;' },
           { search: 'const b = 2;', replace: 'const y = 20;' },
         ],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       expect((result as { data: { patchesApplied: number } }).data.patchesApplied).toBe(2);
@@ -74,10 +75,10 @@ describe('apply_patch tool', () => {
       const filePath = 'test3.ts';
       await writeFile(join(testDir, filePath), 'const a = 1;');
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         patches: [{ search: 'nonexistent', replace: 'replacement' }],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('not found');
@@ -87,10 +88,10 @@ describe('apply_patch tool', () => {
       const filePath = 'test4.ts';
       await writeFile(join(testDir, filePath), 'foo bar foo baz foo');
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         patches: [{ search: 'foo', replace: 'XXX', occurrence: 2 }],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       
@@ -102,10 +103,10 @@ describe('apply_patch tool', () => {
       const filePath = 'test5.ts';
       await writeFile(join(testDir, filePath), 'foo bar foo baz foo');
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         patches: [{ search: 'foo', replace: 'XXX', occurrence: 0 }],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       
@@ -129,10 +130,10 @@ describe('apply_patch tool', () => {
 -  const old = 1;
 +  const newVar = 2;`;
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         freeform: patch,
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       
@@ -158,10 +159,10 @@ function bar() {
 -  const b = 2;
 +  const y = 20;`;
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         freeform: patch,
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       expect((result as { data: { patchesApplied: number } }).data.patchesApplied).toBe(2);
@@ -175,10 +176,10 @@ function bar() {
 -  const a = 1;
 +  const b = 2;`;
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         freeform: patch,
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Context line not found');
@@ -198,10 +199,10 @@ function bar() {
 +  const newVal = 99;
 *** End Patch`;
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         freeform: patch,
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(true);
       
@@ -217,10 +218,10 @@ function bar() {
 -const value = 1;
 +const value = 2;`;
 
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: filePath,
         freeform: patch,
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Ambiguous context');
@@ -291,19 +292,19 @@ function bar() {
   // ==========================================================================
   describe('edge cases', () => {
     it('should error when neither patches nor freeform provided', async () => {
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: 'test.ts',
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('Must provide either');
     });
 
     it('should error when file not found', async () => {
-      const result = await applyPatchTool.execute({
+      const result = (await applyPatchTool.execute({
         path: 'nonexistent.ts',
         patches: [{ search: 'a', replace: 'b' }],
-      }, context);
+      }, context)) as ToolResult<any>;
 
       expect(result.success).toBe(false);
       expect(result.error).toContain('File not found');

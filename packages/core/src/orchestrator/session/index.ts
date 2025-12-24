@@ -30,6 +30,8 @@ export type {
   MessageDirection,
   MessageRecord,
   // P1-B: API 接口定义类型
+  SharedKnowledgeData,
+  SyncLogEntry,
   ApiSpec,
   ApiEndpoint,
   // 事件类型

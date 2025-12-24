@@ -984,7 +984,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
   private buildSystemPrompt(memoryContext: string, extraSystemPrompt?: string | null): string {
     return buildWorkerSystemPrompt({
       memoryContext,
-      extraSystemPrompt: extraSystemPrompt ?? undefined,
+      ...(typeof extraSystemPrompt === 'string' ? { extraSystemPrompt } : {}),
     });
   }
 

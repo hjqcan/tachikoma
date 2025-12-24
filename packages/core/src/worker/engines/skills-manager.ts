@@ -46,7 +46,7 @@ export interface ProjectContextConfig extends ProjectContextLoaderConfig {
 export class SkillsManager {
   private skills: SkillMetadata[] = [];
   private loadErrors: SkillError[] = [];
-  private projectContextInjector?: ProjectContextInjector;
+  private projectContextInjector: ProjectContextInjector | undefined;
   
   /** 最近一次渲染时激活的 Skills */
   private lastActivatedSkills: ActivatedSkill[] = [];

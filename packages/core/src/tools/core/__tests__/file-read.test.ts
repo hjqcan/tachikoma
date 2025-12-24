@@ -10,6 +10,7 @@ import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ExecutionContext } from '../../../types';
+import type { ToolResult } from '../../types';
 
 describe('file_read tool', () => {
   let testDir: string;
@@ -23,6 +24,8 @@ describe('file_read tool', () => {
       workDir: testDir,
       taskId: 'test-task',
       agentId: 'test-agent',
+      traceId: 'test-trace',
+      env: {},
     };
   });
 
@@ -35,7 +38,10 @@ describe('file_read tool', () => {
       const content = 'line1\nline2\nline3';
       await writeFile(join(testDir, 'simple.txt'), content);
 
-      const result = await fileReadTool.execute({ path: 'simple.txt' }, context);
+      const result = (await fileReadTool.execute(
+        { path: 'simple.txt' },
+        context
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.content).toContain('line1');
@@ -49,10 +55,10 @@ describe('file_read tool', () => {
       await writeFile(join(testDir, 'long.txt'), lines);
 
       // full mode should read ALL lines, not limit to 10
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'long.txt', mode: 'full', limit: 10 },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       // Full mode ignores limit, should have all 100 lines
@@ -64,7 +70,10 @@ describe('file_read tool', () => {
       const content = 'line1\nline2\nline3';
       await writeFile(join(testDir, 'nolinenums.txt'), content);
 
-      const result = await fileReadTool.execute({ path: 'nolinenums.txt' }, context);
+      const result = (await fileReadTool.execute(
+        { path: 'nolinenums.txt' },
+        context
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       // Full mode should NOT have L1: prefix
@@ -77,10 +86,10 @@ describe('file_read tool', () => {
       await writeFile(join(testDir, 'fullmode_raw.txt'), content);
 
       // full mode returns raw content, ignores showLineNumbers
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'fullmode_raw.txt', showLineNumbers: true },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       // Full mode returns raw content without line processing
@@ -93,10 +102,10 @@ describe('file_read tool', () => {
       const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n');
       await writeFile(join(testDir, 'numbered.txt'), lines);
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'numbered.txt', mode: 'slice', offset: 5, limit: 3 },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.content).toContain('L5:');
@@ -109,10 +118,10 @@ describe('file_read tool', () => {
       const content = 'line1\nline2';
       await writeFile(join(testDir, 'short.txt'), content);
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'short.txt', mode: 'slice', offset: 100 },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(false);
       expect(result.error).toContain('exceeds file length');
@@ -121,10 +130,10 @@ describe('file_read tool', () => {
     it('should validate offset >= 1', async () => {
       await writeFile(join(testDir, 'test.txt'), 'content');
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'test.txt', mode: 'slice', offset: 0 },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(false);
       expect(result.error).toContain('offset must be >= 1');
@@ -134,10 +143,10 @@ describe('file_read tool', () => {
       const lines = Array.from({ length: 5 }, (_, i) => `line${i + 1}`).join('\n');
       await writeFile(join(testDir, 'slice_nolines.txt'), lines);
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'slice_nolines.txt', mode: 'slice', offset: 1, limit: 3, showLineNumbers: false },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.content).not.toContain('L1:');
@@ -174,7 +183,7 @@ def helper():
 
     it('should read entire function when anchor is inside', async () => {
       // Line 9 is "self.value += x" inside the add method
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'calculator.py', 
           mode: 'indentation', 
@@ -186,7 +195,7 @@ def helper():
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       const content = result.data?.content || '';
@@ -199,7 +208,7 @@ def helper():
 
     it('should expand to parent class when maxLevels is high', async () => {
       // Anchor at method body, expand to include class
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'calculator.py', 
           mode: 'indentation', 
@@ -211,7 +220,7 @@ def helper():
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       const content = result.data?.content || '';
@@ -220,7 +229,7 @@ def helper():
     });
 
     it('should respect maxLines limit', async () => {
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'calculator.py', 
           mode: 'indentation', 
@@ -231,7 +240,7 @@ def helper():
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       const lines = (result.data?.content || '').split('\n').filter((l: string) => l.trim());
@@ -239,7 +248,7 @@ def helper():
     });
 
     it('should error when anchorLine exceeds file length', async () => {
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'calculator.py', 
           mode: 'indentation', 
@@ -250,7 +259,7 @@ def helper():
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(false);
       expect(result.error).toContain('anchorLine');
@@ -258,7 +267,7 @@ def helper():
     });
 
     it('should error when anchorLine is less than 1', async () => {
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'calculator.py', 
           mode: 'indentation', 
@@ -269,7 +278,7 @@ def helper():
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(false);
       expect(result.error).toContain('anchorLine');
@@ -281,10 +290,10 @@ def helper():
       const binaryData = Buffer.from([0x00, 0x01, 0xFF, 0xFE]);
       await writeFile(join(testDir, 'binary.bin'), binaryData);
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'binary.bin' },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.isBinary).toBe(true);
@@ -293,10 +302,10 @@ def helper():
     });
 
     it('should handle file not found', async () => {
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'nonexistent.txt' },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(false);
       expect(result.error).toContain('File not found');
@@ -305,10 +314,10 @@ def helper():
     it('should handle empty files', async () => {
       await writeFile(join(testDir, 'empty.txt'), '');
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'empty.txt' },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.totalLines).toBe(1); // Empty file has one empty line
@@ -318,10 +327,10 @@ def helper():
       const content = '\t\tindented content';
       await writeFile(join(testDir, 'tabs.txt'), content);
 
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { path: 'tabs.txt', mode: 'slice', offset: 1, limit: 1 },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       expect(result.data?.content).toContain('indented content');
@@ -351,7 +360,7 @@ function other() {
 
     it('should handle blank lines with effective indent', async () => {
       // Anchor at blank line between outer start and inner
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'nested.js', 
           mode: 'indentation', 
@@ -359,7 +368,7 @@ function other() {
           limit: 10,
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       // Blank lines should inherit indent from previous non-blank line
@@ -367,7 +376,7 @@ function other() {
 
     it('should not include sibling functions by default', async () => {
       // Anchor inside inner function
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'nested.js', 
           mode: 'indentation', 
@@ -379,7 +388,7 @@ function other() {
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       const content = result.data?.content || '';
@@ -390,7 +399,7 @@ function other() {
 
     it('should include sibling functions when enabled', async () => {
       // Anchor at outer function, include siblings
-      const result = await fileReadTool.execute(
+      const result = (await fileReadTool.execute(
         { 
           path: 'nested.js', 
           mode: 'indentation', 
@@ -402,7 +411,7 @@ function other() {
           }
         },
         context
-      );
+      )) as ToolResult<any>;
       
       expect(result.success).toBe(true);
       const content = result.data?.content || '';

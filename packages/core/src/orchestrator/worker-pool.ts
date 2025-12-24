@@ -7,6 +7,7 @@
  */
 
 import type { RetryPolicy } from '../types';
+import type { BaseAgent } from '../abstracts/base-agent';
 import type {
   SubTask,
   WorkerInfo,
@@ -69,6 +70,8 @@ export interface AssignmentResult {
   error?: string;
   /** 取消函数（用于超时取消） */
   cancel?: () => void;
+  /** Worker 实例（用于直接执行） */
+  agent?: BaseAgent;
 }
 
 /**
@@ -691,11 +694,13 @@ export class DefaultWorkerPool implements IWorkerPool {
       subtask.id
     );
 
-    // 返回取消函数
+    // 返回取消函数和 Agent 实例
+    const workerInfo = this.workers.get(workerId);
     return {
       success: true,
       workerId,
       cancel: () => this.cancelTask(subtask.id),
+      ...(workerInfo?.agent ? { agent: workerInfo.agent } : {}),
     };
   }
 
@@ -1038,6 +1043,7 @@ export class MockWorkerPool extends DefaultWorkerPool {
   private readonly taskDelay: number;
   private readonly executor?: MockTaskExecutor | undefined;
   private readonly assignedTasks = new Map<string, SubTask>();
+  private readonly runLog: Array<{ workerId: string; taskId: string }> = [];
 
   constructor(options: MockWorkerPoolOptions) {
     super(options.config);
@@ -1053,32 +1059,35 @@ export class MockWorkerPool extends DefaultWorkerPool {
         status: 'idle',
         capabilities: ['general'],
         // 提供一个最小可用的 Agent，便于 Orchestrator 走通 “WorkerAgent 驱动” 路径的单测/演示
-        agent: {
+        agent: <any>{
           id: workerId,
           type: 'worker',
           config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-          run: async (task) => ({
-            taskId: task.id,
-            status: 'success',
-            output: { objective: task.objective },
-            artifacts: [],
-            metrics: {
-              startTime: Date.now(),
-              endTime: Date.now(),
-              duration: 0,
-              tokensUsed: 0,
-              toolCallCount: 0,
-              retryCount: 0,
-            },
-            trace: {
-              traceId: `trace-${Date.now()}`,
-              spanId: `span-${Date.now()}`,
-              operation: 'mock-worker.run',
-              attributes: {},
-              events: [],
-              duration: 0,
-            },
-          }),
+          run: async (task: any) => {
+            this.runLog.push({ workerId, taskId: String(task?.id ?? '') });
+            return {
+              taskId: task.id,
+              status: 'success',
+              output: { objective: task.objective },
+              artifacts: [],
+              metrics: {
+                startTime: Date.now(),
+                endTime: Date.now(),
+                duration: 0,
+                tokensUsed: 0,
+                toolCallCount: 0,
+                retryCount: 0,
+              },
+              trace: {
+                traceId: `trace-${Date.now()}`,
+                spanId: `span-${Date.now()}`,
+                operation: 'mock-worker.run',
+                attributes: {},
+                events: [],
+                duration: 0,
+              },
+            };
+          },
           stop: async () => undefined,
         },
       });
@@ -1155,6 +1164,13 @@ export class MockWorkerPool extends DefaultWorkerPool {
    */
   getAssignedTask(taskId: string): SubTask | undefined {
     return this.assignedTasks.get(taskId);
+  }
+
+  /**
+   * 获取 run 调用记录（用于验证是否真实触发执行）
+   */
+  getRunLog(): Array<{ workerId: string; taskId: string }> {
+    return [...this.runLog];
   }
 
   /**

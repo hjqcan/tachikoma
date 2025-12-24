@@ -4,6 +4,8 @@
  * 基于 PRD 3.3 Layer 2: 统筹与规划层 (System 2 / Slow Thinking)
  */
 
+import type { BaseAgent } from '../abstracts/base-agent';
+
 import type {
   Task,
   TaskResult,
@@ -14,7 +16,6 @@ import type {
   RetryPolicy,
   JSONSchema,
   AgentConfig,
-  Agent,
 } from '../types';
 import type { MemoryConfig } from '../memory';
 
@@ -243,6 +244,8 @@ export interface ExecutionStep {
 export interface WorkerInfo {
   /** Worker ID */
   id: string;
+  /** Worker 实例 */
+  agent: BaseAgent;
   /** Worker 状态 */
   status: WorkerStatus;
   /** 当前执行的子任务 ID */
@@ -255,12 +258,7 @@ export interface WorkerInfo {
    * Worker 优先级（用于协作路由，数值越大优先级越高，默认 5）
    */
   priority?: number;
-  /**
-   * 绑定的 WorkerAgent（或兼容 Agent）
-   *
-   * 说明：WorkerPool “管理 + 调度”，执行由绑定的 Agent 负责。
-   */
-  agent?: Agent;
+
   /** 上次心跳时间 */
   lastHeartbeat?: number;
 }
