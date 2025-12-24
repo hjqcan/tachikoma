@@ -22,11 +22,11 @@ export interface SkillCreationConfig {
   /** 技能存储目录 */
   skillsDir: string;
   /** 是否覆盖已存在的技能 */
-  overwrite?: boolean;
+  overwrite?: boolean | undefined;
   /** 用户指导（可选，追加到技能内容） */
-  userGuidance?: string;
+  userGuidance?: string | undefined;
   /** 生成后刷新技能列表的回调 */
-  onCreated?: (skillPath: string) => Promise<void>;
+  onCreated?: ((skillPath: string) => Promise<void>) | undefined;
 }
 
 /**
@@ -207,9 +207,12 @@ export class SkillCreator {
       .replace(/^-|-$/g, '')
       .substring(0, 64);
     
-    // 如果清洗后为空，使用带时间戳的默认名称
+    // 如果清洗后为空，使用带时间戳+随机后缀的默认名称
+    // 随机后缀防止极端并发下的碰撞
     if (!sanitized || sanitized.length === 0) {
-      return `learned-skill-${Date.now().toString(36)}`;
+      const timestamp = Date.now().toString(36);
+      const random = Math.random().toString(36).substring(2, 6);
+      return `learned-skill-${timestamp}-${random}`;
     }
     return sanitized;
   }

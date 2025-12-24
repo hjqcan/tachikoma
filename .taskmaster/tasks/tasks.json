@@ -1765,9 +1765,10 @@
             "description": "组合 Reflection + Creation 的完整学习流程",
             "dependencies": [4, 5],
             "details": "1. 在 packages/core/src/skills/learning/index.ts 实现 learnSkillFromTrajectory()\\n2. 流程：reflect() → create() → reload() → 更新 Memory Block\\n3. 支持 feedback 输入（测试结果/类型检查）\\n4. 返回 LearnedSkill（name/path/summary）\\n5. 导出到 skills/index.ts",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "端到端测试：从轨迹到技能生成完整流程",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-25T00:55:00.000Z"
           },
           {
             "id": 7,

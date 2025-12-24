@@ -183,4 +183,9 @@ export type {
   SkillCreationConfig,
   SkillCreationInput,
   SkillCreationResult,
+  LearnedSkill,
+  LearnSkillConfig,
+  LearnSkillResult,
 } from './learning';
+
+export { learnSkillFromTrajectory } from './learning';

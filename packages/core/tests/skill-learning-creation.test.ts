@@ -181,8 +181,8 @@ describe('SkillCreator', () => {
       });
 
       expect(result.success).toBe(true);
-      // 应该生成带时间戳的默认名
-      expect(result.name).toMatch(/^learned-skill-[a-z0-9]+$/);
+      // 应该生成带时间戳+随机后缀的默认名
+      expect(result.name).toMatch(/^learned-skill-[a-z0-9]+-[a-z0-9]+$/);
     });
 
     test('escapes special YAML characters in tags', async () => {
