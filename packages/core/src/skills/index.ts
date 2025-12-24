@@ -169,6 +169,8 @@ export {
   createTrajectoryReflector,
   thinkingRecordToTrajectory,
   actionRecordToTrajectory,
+  SkillCreator,
+  createSkillCreator,
 } from './learning';
 
 export type {
@@ -178,4 +180,7 @@ export type {
   FailureMode,
   ReflectionResult,
   ReflectionConfig,
+  SkillCreationConfig,
+  SkillCreationInput,
+  SkillCreationResult,
 } from './learning';

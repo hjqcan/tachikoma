@@ -1754,9 +1754,10 @@
             "description": "基于反思结果生成 SKILL.md，复用现有 SkillManager.createSkill 逻辑",
             "dependencies": [4],
             "details": "1. 在 packages/core/src/skills/learning/creation.ts 实现 SkillCreator\\n2. 输入：ReflectionResult + 用户指导（可选）\\n3. 生成 SKILL.md：YAML frontmatter + 推荐方法/常见陷阱/验证策略\\n4. skillType: 'knowledge'（知识型，不包含 scripts/）\\n5. 复用 SkillManager 的目录创建逻辑，但不生成脚本\\n6. 调用 loadSkills() 刷新技能列表",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：生成的 SKILL.md 可被现有 loader 解析",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-25T00:45:00.000Z"
           },
           {
             "id": 6,

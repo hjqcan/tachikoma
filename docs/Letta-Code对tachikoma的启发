@@ -1,0 +1,555 @@
+# Letta-Code 调研报告：对 Tachikoma 的启发
+
+> **调研日期**: 2025-12-18  
+> **调研对象**: [letta-ai/letta-code](https://github.com/letta-ai/letta-code)  
+> **核心定位**: Memory-First Coding Agent
+
+---
+
+## 一、Letta-Code 项目概述
+
+### 1.1 核心理念
+
+Letta-Code 是一个 **Memory-First（记忆优先）** 的编码智能体框架，与 Claude Code/Codex/Gemini CLI 有本质区别：
+
+| 维度              | Session-Based (传统)     | Agent-Based (Letta)        |
+| ----------------- | ------------------------ | -------------------------- |
+| **会话模型**      | 独立会话，无跨会话学习   | 同一 Agent 跨会话持久化    |
+| **记忆机制**      | 仅当前消息 + [AGENTS.md](file:///Users/hjqcan/Documents/tachikoma/AGENTS.md) | 持久化记忆 + 技能学习      |
+| **用户关系**      | 每次对话像遇到新承包商   | 像与同事协作，逐渐了解彼此 |
+| **`/clear` 语义** | 结束会话                 | 清空当前消息，但记忆保留   |
+
+### 1.2 核心功能
+
+1. **Memory Blocks（记忆块）**
+
+   - 核心记忆（Core Memory）：进化的 System Prompt，跨任务通用
+   - 技能记忆（Skills）：任务特定的可复用模块
+
+2. **Skill Learning（技能学习）**
+
+   - 两阶段学习：**Reflection（反思）** → **Creation（创建）**
+   - 反思阶段：评估任务是否完成、推理是否合理、边缘情况处理、识别可抽象模式
+   - 创建阶段：生成包含方法、常见陷阱、验证策略的技能文件
+
+3. **模型无关（Model-Agnostic）**
+   - 支持 Claude Sonnet/Opus, GPT-5, Gemini 3 Pro, GLM-4.6 等
+   - 技能可跨模型复用（Claude 创建的技能可被 GPT-5 使用）
+
+---
+
+## 二、关键技术亮点
+
+### 2.1 Skill Learning 实验结果
+
+在 Terminal Bench 2.0 上的评估显示：
+
+| 设置               | 相对提升   | 绝对提升   | 成本降低 | 工具调用减少 |
+| ------------------ | ---------- | ---------- | -------- | ------------ |
+| Skills (仅轨迹)    | +21.1%     | +9%        | -15.7%   | -10.4%       |
+| Skills (轨迹+反馈) | **+36.8%** | **+15.7%** | -        | -            |
+
+> **关键洞察**：带反馈的技能学习效果显著优于仅基于轨迹的学习，因为反馈能编码失败模式和无效方法。
+
+### 2.2 技能目录结构
+
+```
+.skills/
+├── testing/
+│   └── SKILL.md
+├── api-client/
+│   ├── SKILL.md
+│   └── references/
+│       └── endpoints.md
+└── deployment/
+    ├── SKILL.md
+    └── scripts/
+        └── deploy.sh
+```
+
+技能文件格式：
+
+```markdown
+---
+name: My Skill
+description: When and why to use this skill
+---
+
+# My Skill
+
+Instructions here...
+```
+
+### 2.3 记忆层次结构
+
+```
+┌─────────────────────────────────────────────────────┐
+│           Core Memory / System Prompt               │
+│   (进化的 System Prompt, 跨任务通用, Agent 特有)    │
+├─────────────────────────────────────────────────────┤
+│           Skills / Filesystem                       │
+│   (任务特定的 .md 文件, 可跨 Agent 共享, Git 管理)  │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 三、对 Tachikoma 的启发
+
+### 3.1 🔥 核心启发：Skill Learning 机制
+
+**现状对比**：
+
+| 能力         | Tachikoma                 | Letta-Code               |
+| ------------ | ------------------------- | ------------------------ |
+| Skills 加载  | ✅ 有 `.tachikoma/skills` | ✅ 有 `.skills`          |
+| 渐进披露     | ✅ 有                     | ✅ 有                    |
+| **技能学习** | ❌ 无                     | ✅ `/skill` 命令自动生成 |
+| **反思机制** | ❌ 无                     | ✅ Reflection 阶段       |
+
+**建议实现**：
+
+```typescript
+// 新增 skill-learning.ts
+interface SkillLearningInput {
+  trajectory: ThinkingRecord[]; // 执行轨迹
+  feedback?: string; // 验证器反馈（可选）
+  instructions?: string; // 用户指导（可选）
+}
+
+interface LearnedSkill {
+  name: string;
+  description: string;
+  approaches: string[]; // 推荐方法
+  pitfalls: string[]; // 常见陷阱
+  verification: string[]; // 验证策略
+}
+
+async function learnSkill(input: SkillLearningInput): Promise<LearnedSkill> {
+  // 1. Reflection 阶段
+  const reflection = await generateReflection(input.trajectory, input.feedback);
+
+  // 2. Creation 阶段
+  const skill = await createSkillFromReflection(reflection, input.instructions);
+
+  // 3. 写入 .skills 目录
+  await saveSkill(skill);
+
+  return skill;
+}
+```
+
+### 3.2 🔥 持久化 Agent 身份
+
+**现状对比**：
+
+| 能力       | Tachikoma                  | Letta-Code                |
+| ---------- | -------------------------- | ------------------------- |
+| 会话管理   | ✅ `SessionStore`          | ✅ Agent identity         |
+| 跨会话记忆 | ⚠️ 仅 `MemoryService` 存储 | ✅ Core Memory 持久化     |
+| Agent 进化 | ❌ 无                      | ✅ System Prompt 自动进化 |
+
+**建议实现**：
+
+```typescript
+// 新增 agent-identity.ts
+interface AgentIdentity {
+  id: string;
+  createdAt: number;
+
+  // 进化的核心记忆
+  coreMemory: {
+    systemPrompt: string; // 逐渐进化的 System Prompt
+    preferences: string[]; // 学习到的用户偏好
+    workPatterns: string[]; // 识别的工作模式
+  };
+
+  // 统计
+  sessionsCount: number;
+  tasksCompleted: number;
+  skillsLearned: string[];
+}
+
+// 在 ConversationalRunner 中维护
+class ConversationalRunner {
+  private agentIdentity: AgentIdentity;
+
+  async evolveSystemPrompt(learnings: string[]): Promise<void> {
+    // 基于会话学习进化 System Prompt
+  }
+}
+```
+
+### 3.3 🔥 `/remember` 命令
+
+Letta-Code 的 `/remember` 命令允许用户主动引导 Agent 记住特定内容。
+
+**建议实现**：
+
+```typescript
+// 新增 CLI 命令
+// tachikoma.ts
+.option('/remember <content>', '主动记忆指定内容')
+
+// 调用 MemoryService 存储
+async function handleRemember(content: string): Promise<void> {
+  await memoryService.store({
+    scope: MemoryScope.User,
+    type: 'explicit',
+    content,
+    source: 'user-command',
+  });
+}
+```
+
+### 3.4 🔥 反馈驱动学习
+
+Letta 的实验显示 **带反馈的学习效果提升 15.7%**。
+
+**建议实现**：
+
+```typescript
+// 在 Worker 完成任务后，收集验证反馈
+interface ExecutionFeedback {
+  testsPassed: boolean;
+  testOutput: string;
+  typeCheckPassed: boolean;
+  userRating?: 1 | 2 | 3 | 4 | 5;
+}
+
+// 将反馈用于技能学习
+async function learnFromExecution(
+  trajectory: ThinkingRecord[],
+  feedback: ExecutionFeedback
+): Promise<void> {
+  if (shouldLearnSkill(trajectory, feedback)) {
+    await skillLearner.learn({
+      trajectory,
+      feedback: JSON.stringify(feedback),
+    });
+  }
+}
+```
+
+---
+
+## 四、实施优先级建议
+
+| 优先级 | 功能                           | 预估工作量 | 价值                |
+| ------ | ------------------------------ | ---------- | ------------------- |
+| P0     | Skill Learning (`/skill` 命令) | 3-5 天     | 🔥🔥🔥 持续自我改进 |
+| P1     | Agent Identity 持久化          | 2-3 天     | 🔥🔥 跨会话学习     |
+| P1     | `/remember` 命令               | 1 天       | 🔥🔥 用户主动引导   |
+| P2     | Reflection 机制                | 2-3 天     | 🔥🔥 轨迹分析       |
+| P2     | 反馈驱动学习                   | 2-3 天     | 🔥🔥 更高质量技能   |
+
+---
+
+## 五、关键差异化
+
+Tachikoma 已有的优势：
+
+- ✅ **多智能体协作**：Letta-Code 是单 Agent，Tachikoma 有 Orchestrator-Workers
+- ✅ **更成熟的上下文工程**：五大策略完整实现
+- ✅ **沙盒隔离**：Docker/Local 驱动
+- ✅ **MCP 集成**：完整的 Client/Router/Discovery
+
+Letta-Code 值得学习的：
+
+- 🔥 **Memory-First 哲学**：Agent 身份持久化
+- 🔥 **Skill Learning**：两阶段反思+创建
+- 🔥 **反馈驱动**：验证器反馈提升技能质量
+- 🔥 **简洁的用户命令**：`/init`, `/remember`, `/skill`, `/clear`
+
+---
+
+## 六、总结
+
+Letta-Code 的核心创新是将 **Continual Learning（持续学习）** 引入 CLI Agent。通过 Skill Learning 机制，Agent 可以从执行轨迹中学习并生成可复用的技能，实验显示这能带来 36.8% 的性能提升。
+
+对于 Tachikoma 而言，最有价值的启发是：
+
+1. **实现 `/skill` 命令**：让 Worker 从成功任务中学习技能
+2. **增强 Agent 身份持久化**：Core Memory 跨会话进化
+3. **引入反馈循环**：利用测试结果/类型检查反馈改进技能
+
+这些改进将使 Tachikoma 从"执行工具"进化为"学习伙伴"，与 Letta-Code 的"mentee that learns and remembers"理念一致。
+
+---
+
+## 七、源码实现详解
+
+通过深入阅读 Letta-Code 源码，以下是关键模块的实现细节：
+
+### 7.1 Memory Block 架构
+
+**文件**: `src/agent/memory.ts`
+
+```typescript
+// 全局块（跨项目共享）
+export const GLOBAL_BLOCK_LABELS = ["persona", "human"] as const;
+
+// 项目块（当前目录特有）
+export const PROJECT_BLOCK_LABELS = [
+  "project",
+  "skills",
+  "loaded_skills",
+] as const;
+
+// 只读块（由工具管理，不允许 Agent 直接修改）
+export const READ_ONLY_BLOCK_LABELS = ["skills", "loaded_skills"] as const;
+```
+
+**关键设计**：
+- `persona` / `human`：全局的 Agent 人设和用户信息
+- `project`：项目特定上下文
+- `skills`：可用技能列表（只读，由 `Skill` 工具刷新）
+- `loaded_skills`：当前加载的技能内容（只读，由 `Skill` 工具管理）
+
+### 7.2 Skill 发现与管理
+
+**文件**: `src/agent/skills.ts`
+
+```typescript
+// 技能数据结构
+export interface Skill {
+  id: string;           // 从目录结构派生，如 "data-analysis"
+  name: string;         // 人类可读名称
+  description: string;  // 描述（来自 frontmatter 或首段）
+  category?: string;    // 可选分类
+  tags?: string[];      // 可选标签
+  path: string;         // SKILL.md 文件路径
+}
+
+// 发现流程
+export async function discoverSkills(skillsPath): Promise<SkillDiscoveryResult> {
+  // 1. 递归搜索 .skills 目录下的所有 SKILL.md 文件
+  // 2. 解析 YAML frontmatter 提取元数据
+  // 3. 从目录结构派生 ID（如 .skills/web/scraper → "web/scraper"）
+  // 4. 返回技能列表和错误
+}
+```
+
+### 7.3 Skill 工具实现
+
+**文件**: `src/tools/impl/Skill.ts`
+
+```typescript
+interface SkillArgs {
+  command: "load" | "unload" | "refresh";
+  skills?: string[];
+}
+
+// 三个命令：
+// 1. refresh - 重新扫描 .skills 目录，更新 skills 内存块
+// 2. load - 读取 SKILL.md 内容，追加到 loaded_skills 块
+// 3. unload - 从 loaded_skills 块移除指定技能
+```
+
+**loaded_skills 块格式**：
+```markdown
+# Skill: data-analysis
+[SKILL.md 内容...]
+
+---
+
+# Skill: api-client
+[SKILL.md 内容...]
+```
+
+### 7.4 /skill 命令工作流
+
+**文件**: `src/agent/prompts/skill_creator_mode.md`
+
+6 步技能创建流程：
+
+1. **加载 skill-creator**：如果可用，先加载 skill-creator 技能
+2. **理解需求**：分析用户描述 + 对话上下文
+3. **澄清问题**：使用 `AskUserQuestion` 工具问 3-6 个关键问题
+4. **提议设计**：确定 ID、名称、描述、结构
+5. **创建文件**：使用文件工具写入 .skills 目录
+6. **迭代改进**：基于实际使用反馈
+
+### 7.5 /remember 命令实现
+
+**文件**: `src/agent/prompts/remember.md`
+
+```markdown
+## Your Task
+
+1. **识别要记住什么**：分析对话上下文，确定用户想记住的内容
+2. **选择正确的内存块**：使用内存工具存储到适当的块
+3. **确认更新**：简要确认记住了什么，存到了哪里
+
+## Guidelines
+
+- 简洁提炼信息本质
+- 避免重复，检查是否已有类似信息
+- 匹配现有块的格式（项目符号、章节等）
+```
+
+### 7.6 技能结构最佳实践
+
+**文件**: `.skills/skill-creator/SKILL.md`
+
+```
+skill-name/
+├── SKILL.md          # 必需：YAML frontmatter + Markdown 指令
+├── scripts/          # 可选：可执行脚本
+├── references/       # 可选：详细文档（按需加载）
+└── assets/           # 可选：模板/图片/字体（不加载到上下文）
+```
+
+**核心原则**：
+
+1. **简洁为王**：上下文窗口是公共资源，挑战每段信息的必要性
+2. **自由度分级**：
+   - 高自由度：文字指令（多种方法皆可）
+   - 中自由度：伪代码/参数化脚本
+   - 低自由度：特定脚本（操作脆弱/需一致性）
+3. **渐进披露**：description 始终可见，详细内容按需加载
+
+---
+
+## 八、Tachikoma 实施建议（详细）
+
+基于源码分析，以下是具体实施建议：
+
+### 8.1 实现 Memory Block 系统
+
+```typescript
+// packages/core/src/agent-identity/blocks.ts
+
+export const BLOCK_LABELS = {
+  // 全局块（用户维度）
+  GLOBAL: ["persona", "preferences"] as const,
+  
+  // 项目块
+  PROJECT: ["project", "skills", "loaded_skills"] as const,
+  
+  // 只读块（由工具管理）
+  READ_ONLY: ["skills", "loaded_skills"] as const,
+};
+
+export interface MemoryBlock {
+  label: string;
+  value: string;
+  description?: string;
+  readOnly?: boolean;
+  scope: "global" | "project";
+}
+
+// 存储位置
+// 全局块: ~/.tachikoma/memory/persona.md, preferences.md
+// 项目块: .tachikoma/memory/project.md, skills.md, loaded_skills.md
+```
+
+### 8.2 实现 /skill 命令
+
+```typescript
+// packages/core/src/skills/skill-learning.ts
+
+export interface SkillLearningInput {
+  trajectory: ThinkingRecord[];   // 执行轨迹
+  feedback?: {                     // 验证反馈
+    testsPassed: boolean;
+    testOutput: string;
+    typeCheckPassed: boolean;
+  };
+  userInstructions?: string;       // 用户指导
+}
+
+export async function learnSkillFromTrajectory(
+  input: SkillLearningInput
+): Promise<LearnedSkill> {
+  // 1. Reflection 阶段：使用 LLM 分析轨迹
+  const reflection = await reflect(input.trajectory, input.feedback);
+  
+  // 2. Creation 阶段：生成 SKILL.md
+  const skillContent = await generateSkill(reflection, input.userInstructions);
+  
+  // 3. 写入 .skills 目录
+  await writeSkillFile(skillContent);
+  
+  // 4. 刷新 skills 内存块
+  await refreshSkillsBlock();
+  
+  return skillContent;
+}
+
+// CLI 命令
+// tachikoma skill --learn "数据库迁移模式"
+```
+
+### 8.3 实现 /remember 命令
+
+```typescript
+// packages/core/src/conversation/commands/remember.ts
+
+export async function handleRememberCommand(
+  content: string,
+  conversationContext: ConversationContext
+): Promise<void> {
+  // 1. 分析对话上下文，确定要记住什么
+  const memoryToStore = await analyzeWhatToRemember(
+    content,
+    conversationContext
+  );
+  
+  // 2. 选择合适的内存块
+  const targetBlock = selectTargetBlock(memoryToStore);
+  
+  // 3. 使用 MemoryService 存储
+  await memoryService.appendToBlock(targetBlock, memoryToStore);
+  
+  // 4. 确认
+  return `已记住：${memoryToStore.summary}，存储到 ${targetBlock}`;
+}
+```
+
+### 8.4 扩展现有 Skills 模块
+
+Tachikoma 已有 `skills/` 模块，建议扩展：
+
+```diff
+// packages/core/src/skills/index.ts
+
++ // 技能学习
++ export { SkillLearner, learnSkillFromTrajectory } from './skill-learning';
++ 
++ // 技能工具（load/unload/refresh）
++ export { SkillTool, createSkillTool } from './skill-tool';
++ 
++ // 技能发现（已有类似逻辑）
+  export { SkillLoader, loadSkillsFromDirectory } from './skill-loader';
+```
+
+---
+
+## 九、与 Tachikoma 现有模块的整合点
+
+| Letta-Code 功能 | Tachikoma 对应模块 | 整合难度 |
+|----------------|-------------------|---------|
+| Memory Blocks | `memory/` + 新增 `agent-identity/` | 中等 |
+| Skill Discovery | `skills/skill-loader.ts` | 低（已有类似） |
+| Skill Tool | `tools/core/` 新增 | 低 |
+| /skill 命令 | `conversation/` + CLI | 中等 |
+| /remember 命令 | `conversation/` + `memory/` | 低 |
+| Agent Identity | 新增 `agent-identity/` | 中等 |
+
+---
+
+## 十、总结
+
+Letta-Code 的源码实现展示了一个精心设计的 **Memory-First** 架构：
+
+1. **Memory Blocks**：分层（全局/项目）、分权限（可写/只读）的内存管理
+2. **Skill Tool**：`load/unload/refresh` 三命令管理技能生命周期
+3. **Skill Learning**：6 步工作流 + Reflection/Creation 两阶段学习
+4. **渐进披露**：description 常驻，详细内容按需加载
+
+对 Tachikoma 最有价值的实现参考：
+- **Skill.ts** 的 load/unload/refresh 实现模式
+- **skill_creator_mode.md** 的 6 步创建流程
+- **remember.md** 的 /remember 命令提示词设计
+- **Memory Block** 的全局/项目分层设计

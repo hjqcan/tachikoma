@@ -25,3 +25,18 @@ export type {
   ReflectionResult,
   ReflectionConfig,
 } from './reflection';
+
+// ============================================================================
+// Creation 导出
+// ============================================================================
+
+export {
+  SkillCreator,
+  createSkillCreator,
+} from './creation';
+
+export type {
+  SkillCreationConfig,
+  SkillCreationInput,
+  SkillCreationResult,
+} from './creation';
