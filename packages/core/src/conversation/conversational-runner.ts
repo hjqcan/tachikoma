@@ -24,6 +24,8 @@ import {
 } from './types';
 import type { ActionRecord, ThinkingRecord, RecoveryStrategy } from '../orchestrator/session/types';
 import { MCPClientManager, loadMCPConfig } from '../mcp';
+import { executeSkillCommand, type SkillCommandContext } from './commands';
+import { thinkingRecordToTrajectory, actionRecordToTrajectory } from '../skills/learning';
 
 type UserLanguage = 'en' | 'zh';
 
@@ -345,6 +347,10 @@ export class ConversationalRunner {
         yield* this.executeHelp(session);
         return { handled: true };
 
+      case 'skill':
+        yield* this.executeSkill(session, args);
+        return { handled: true };
+
       default:
         // 未识别的命令，返回未处理
         return { handled: false };
@@ -650,6 +656,7 @@ export class ConversationalRunner {
 /continue [context]      - Continue the last unfinished task
 /retry [checkpointId]    - Resume from latest checkpoint
 /clear [--checkpoints]   - Clear conversation history
+/skill [subcommand]      - Manage skills (list/load/unload/learn)
 /help                    - Show this help message
 
 All other messages are sent to the AI for processing.`,
@@ -659,12 +666,51 @@ All other messages are sent to the AI for processing.`,
 /continue [context]      - 继续上一次未完成任务
 /retry [checkpointId]    - 从最近检查点继续执行
 /clear [--checkpoints]   - 清空对话历史
+/skill [子命令]          - 管理技能（list/load/unload/learn）
 /help                    - 显示帮助
 
 其他消息会发送给 AI 处理。`,
       }),
       timestamp: Date.now(),
     };
+  }
+
+  /**
+   * /skill [subcommand] - 管理技能
+   */
+  private async *executeSkill(
+    session: SessionState,
+    args: string[],
+  ): AsyncGenerator<StreamEvent> {
+    const ctx: SkillCommandContext = {
+      session,
+      workDir: this.config.workDir,
+      // llmCall 暂时设为 undefined，/skill learn 会提示需要 LLM
+      // 后续可以通过配置或扩展来提供 LLM 能力
+      llmCall: undefined,
+      t: (strings: { en: string; zh: string }) => this.t(session, strings),
+      getTrajectory: async () => {
+        // 从 session variables 获取最近的轨迹
+        const thinking = session.variables.recentThinking as ThinkingRecord[] | undefined;
+        const actions = session.variables.recentActions as ActionRecord[] | undefined;
+        const trajectories: ReturnType<typeof thinkingRecordToTrajectory>[] = [];
+        
+        if (Array.isArray(thinking)) {
+          for (const r of thinking) {
+            trajectories.push(thinkingRecordToTrajectory(r));
+          }
+        }
+        if (Array.isArray(actions)) {
+          for (const r of actions) {
+            trajectories.push(actionRecordToTrajectory(r));
+          }
+        }
+        trajectories.sort((a, b) => a.timestamp - b.timestamp);
+        return trajectories;
+      },
+    };
+
+    yield* executeSkillCommand(args, ctx);
   }
 
   /**
@@ -1193,6 +1239,17 @@ All other messages are sent to the AI for processing.`,
       void this.sessionStore.saveSession(session);
     };
     const onWorkerThinking = (workerId: string, record: ThinkingRecord) => {
+      // 记录轨迹到 session.variables（供 /skill learn 使用）
+      if (!Array.isArray(session.variables.recentThinking)) {
+        session.variables.recentThinking = [];
+      }
+      const thinkingBuffer = session.variables.recentThinking as ThinkingRecord[];
+      thinkingBuffer.push(record);
+      // 保持最近 50 条思考记录
+      if (thinkingBuffer.length > 50) {
+        session.variables.recentThinking = thinkingBuffer.slice(-50);
+      }
+
       if (!this.config.verbose) return;
       const line = record.content.trim().split('\n')[0] ?? '';
       if (!line) return;
@@ -1203,6 +1260,17 @@ All other messages are sent to the AI for processing.`,
       });
     };
     const onWorkerAction = (_workerId: string, record: ActionRecord) => {
+      // 记录轨迹到 session.variables（供 /skill learn 使用）
+      if (!Array.isArray(session.variables.recentActions)) {
+        session.variables.recentActions = [];
+      }
+      const actionBuffer = session.variables.recentActions as ActionRecord[];
+      actionBuffer.push(record);
+      // 保持最近 50 条动作记录
+      if (actionBuffer.length > 50) {
+        session.variables.recentActions = actionBuffer.slice(-50);
+      }
+
       const desc = record.description ?? '';
 
       const callingMatch = desc.match(/^Calling tool:\s*(.+)$/);

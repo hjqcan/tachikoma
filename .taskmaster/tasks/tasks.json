@@ -1776,9 +1776,10 @@
             "description": "在 ConversationalRunner 中添加 /skill 命令",
             "dependencies": [2, 6],
             "details": "1. 在 packages/core/src/conversation/commands/skill-command.ts 实现\\n2. 命令支持：\\n   - /skill：显示帮助\\n   - /skill list：列出可用技能（调用 loadSkills()）\\n   - /skill load <name>：加载技能（调用 Skill Tool）\\n   - /skill unload <name>：卸载技能\\n   - /skill learn [description]：从轨迹学习技能\\n3. 与 ConversationalRunner 命令系统集成",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：各命令正确触发；帮助信息完整",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-25T09:15:00.000Z"
           },
           {
             "id": 8,
