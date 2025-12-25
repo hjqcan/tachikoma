@@ -77,3 +77,26 @@ export {
   createIdentityLoader,
   createIdentityUpdater,
 } from './identity';
+
+// ============================================================================
+// Evolution - Core Memory 进化
+// ============================================================================
+
+export {
+  // 类型
+  type EvolutionTrigger,
+  type LearningType,
+  type CompressionStrategy,
+  type LearningRecord,
+  type EvolutionResult,
+  type EvolutionConfig,
+  // 常量
+  COMPRESSION_THRESHOLD_RATIO,
+  COMPRESSION_TARGET_RATIO,
+  MAX_SINGLE_LEARNING_LENGTH,
+  // 类
+  CoreMemoryEvolver,
+  // 工厂函数
+  createCoreMemoryEvolver,
+} from './evolution';
+

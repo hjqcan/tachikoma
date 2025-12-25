@@ -1858,9 +1858,10 @@
               2
             ],
             "details": "1. 在 packages/core/src/agent-identity/evolution.ts 实现 CoreMemoryEvolver 类\\n2. evolveSystemPrompt(learnings: string[])：\\n   - 分析学习内容，提取通用模式\\n   - 追加到 coreMemory.systemPrompt（不删除原有内容）\\n   - 控制总长度（压缩旧内容）\\n3. learnPreference(preference: string)：添加用户偏好\\n4. learnWorkPattern(pattern: string)：添加工作模式\\n5. 自动触发：任务成功后、/remember 后、技能学习后",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：进化内容正确追加；压缩逻辑正确；不丢失关键信息",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T16:29:00.000Z"
           },
           {
             "id": 4,
