@@ -1885,9 +1885,10 @@
               1
             ],
             "details": "1. 在 packages/core/src/conversation/commands/clear.ts 实现 handleClearCommand()\\n2. 行为（参考 Letta）：\\n   - 清空当前会话消息（ContextManager.clear()）\\n   - 保留所有 Memory Blocks\\n   - 保留 Agent Identity\\n   - 增加 sessionsCount\\n3. 与 ConversationalRunner.reset() 区分（后者完全重置）\n<info added on 2025-12-25T04:26:09.707Z>\n调整实现方式，使用现有的 packages/core/src/conversation/conversational-runner.ts 中的 executeClear() 作为唯一实现入口，补充 Letta 语义：清空会话消息和上下文缓存，但保留持久 Memory Blocks 和 Agent Identity，仅清空 session 级变量与消息。清空持久记忆的功能将通过另设的 /forget 命令实现（不在本子任务范围内）。验收标准为：执行 /clear 后，Memory Blocks 文件与 Agent Identity 文件仍然存在，后续任务的 prompt 注入仍包含其内容。\n</info added on 2025-12-25T04:26:09.707Z>",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：/clear 后消息清空但记忆保留；会话计数增加",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T17:54:00.000Z"
           },
           {
             "id": 6,

@@ -31,7 +31,7 @@ import {
   type RememberCommandContext,
 } from './commands';
 import { thinkingRecordToTrajectory, actionRecordToTrajectory } from '../skills/learning';
-import { getAgentIdFromEnv } from '../agent-identity';
+import { getAgentIdFromEnv, IdentityUpdater } from '../agent-identity';
 
 type UserLanguage = 'en' | 'zh';
 
@@ -607,8 +607,13 @@ export class ConversationalRunner {
   }
 
   /**
-   * /clear [--checkpoints] - Clear conversation history
+   * /clear [--checkpoints] [--no-session] - Clear conversation history
    * 
+   * Letta semantics:
+   * - Clears session messages, context cache, and variables
+   * - Preserves Memory Blocks and AgentIdentity
+   * - Increments sessionsCount (unless --no-session)
+   *
    * Note: Only clears messages and context. Plan state (currentPlan, subtasks) 
    * is managed by Orchestrator and will be rehydrated from session files.
    */
@@ -617,6 +622,7 @@ export class ConversationalRunner {
     args: string[]
   ): AsyncGenerator<StreamEvent> {
     const clearCheckpoints = args.includes('--checkpoints');
+    const skipSessionCount = args.includes('--no-session');
 
     // Clear conversation history only (plan state is canonical in orchestrator files)
     session.messages = [];
@@ -638,17 +644,28 @@ export class ConversationalRunner {
     // Clear context manager cache
     this.contextManagers.delete(session.sessionId);
 
+    // Letta semantics: increment session count (new "conversation session")
+    if (!skipSessionCount) {
+      try {
+        const agentId = getAgentIdFromEnv();
+        const updater = new IdentityUpdater();
+        await updater.incrementSessionCount(agentId);
+      } catch {
+        // Identity not initialized yet, skip session count increment
+      }
+    }
+
     yield {
       type: 'complete',
       success: true,
       summary: clearCheckpoints
         ? this.t(session, {
-            en: 'Conversation cleared (including checkpoints). Ready for a fresh start.',
-            zh: '对话已清空（包含检查点）。可以重新开始。',
+            en: 'Conversation cleared (including checkpoints). Memory and identity preserved. Ready for a fresh start.',
+            zh: '对话已清空（包含检查点）。记忆和身份已保留。可以重新开始。',
           })
         : this.t(session, {
-            en: 'Conversation cleared. Checkpoints preserved for recovery. Note: Active task state is preserved.',
-            zh: '对话已清空。检查点已保留以便恢复。注意：当前任务状态会保留。',
+            en: 'Conversation cleared. Memory, identity, and checkpoints preserved. Note: Active task state is preserved.',
+            zh: '对话已清空。记忆、身份和检查点已保留。注意：当前任务状态会保留。',
           }),
       timestamp: Date.now(),
     };
@@ -667,7 +684,7 @@ export class ConversationalRunner {
 /checkpoints             - List all available checkpoints
 /continue [context]      - Continue the last unfinished task
 /retry [checkpointId]    - Resume from latest checkpoint
-/clear [--checkpoints]   - Clear conversation history
+/clear [--checkpoints]   - Clear conversation (preserves memory/identity)
 /remember [type] <text>  - Remember preference/pattern/principle
 /skill [subcommand]      - Manage skills (list/load/unload/learn)
 /help                    - Show this help message
@@ -678,7 +695,7 @@ All other messages are sent to the AI for processing.`,
 /checkpoints             - 列出所有检查点
 /continue [context]      - 继续上一次未完成任务
 /retry [checkpointId]    - 从最近检查点继续执行
-/clear [--checkpoints]   - 清空对话历史
+/clear [--checkpoints]   - 清空对话（保留记忆/身份）
 /remember [类型] <内容>   - 记住偏好/模式/原则
 /skill [子命令]          - 管理技能（list/load/unload/learn）
 /help                    - 显示帮助
