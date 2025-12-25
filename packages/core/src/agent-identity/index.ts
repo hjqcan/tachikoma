@@ -45,3 +45,35 @@ export {
   createBlockLoader,
   createBlockWriter,
 } from './blocks';
+
+// ============================================================================
+// Identity - Agent 身份持久化
+// ============================================================================
+
+export {
+  // 类型
+  type CoreMemory,
+  type AgentIdentity,
+  type IdentityConfig,
+  type IdentityResult,
+  // 常量
+  DEFAULT_AGENTS_DIR,
+  DEFAULT_AGENT_ID,
+  IDENTITY_FILE_EXTENSION,
+  MAX_CORE_MEMORY_LENGTH,
+  MAX_PREFERENCES_COUNT,
+  MAX_WORK_PATTERNS_COUNT,
+  CURRENT_IDENTITY_VERSION,
+  DEFAULT_MAX_IDENTITY_FILE_SIZE,
+  // 工具函数
+  createDefaultCoreMemory,
+  createDefaultIdentity,
+  getAgentsDir,
+  getAgentIdFromEnv,
+  // 类
+  IdentityLoader,
+  IdentityUpdater,
+  // 工厂函数
+  createIdentityLoader,
+  createIdentityUpdater,
+} from './identity';

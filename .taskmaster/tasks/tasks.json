@@ -1845,9 +1845,10 @@
               1
             ],
             "details": "1. 在 packages/core/src/agent-identity/identity.ts 定义 AgentIdentity 接口：\\n   - id: string（唯一标识）\\n   - createdAt: number\\n   - sessionsCount: number\\n   - tasksCompleted: number\\n   - skillsLearned: string[]\\n   - coreMemory: { systemPrompt: string, preferences: string[], workPatterns: string[] }\\n2. 存储位置：~/.tachikoma/agents/{agentId}.json\\n3. 实现 loadIdentity(agentId) / saveIdentity(identity)\\n4. 首次运行时创建默认 Identity",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "单元测试：创建、加载、保存 Identity；统计更新正确",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T15:55:00.000Z"
           },
           {
             "id": 3,
