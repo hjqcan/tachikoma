@@ -35,6 +35,11 @@ import {
 import { isKeyDecisionAsync } from '../key-decision';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
+// Agent Identity 模块（Letta-code style CoreMemory injection）
+import {
+  IdentityUpdater,
+  getAgentIdFromEnv,
+} from '../../agent-identity';
 // Prompt 上下文工程模块（内部）
 import {
   createPromptContextEngine,
@@ -100,10 +105,7 @@ import { FailureMemory } from '../failure-memory';
 // 常量
 // ============================================================================
 
-/**
- * 默认系统提示
- */
-const DEFAULT_SYSTEM_PROMPT = buildWorkerSystemPrompt();
+// Note: System prompt is now built dynamically in execute() to include identity context
 
 // ============================================================================
 // 错误类型
@@ -464,10 +466,37 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     const taskPrompt = buildTaskPrompt(task, tools, { useNativeToolCalls });
     context.addMessage(createUserMessage(taskPrompt));
 
-    // 构建带 Skills 的 system prompt（缓存，避免每轮重建）
+    // 构建带 Skills 和 Identity 的 system prompt（缓存，避免每轮重建）
+    // Letta-code style: load Identity and inject coreMemory to system prompt
+    let identityContext: string | null = null;
+    if (this.config.identityConfig?.enabled !== false) {
+      try {
+        const agentId = this.config.identityConfig?.agentId ?? getAgentIdFromEnv();
+        const updater = new IdentityUpdater(
+          this.config.identityConfig?.agentsDir || this.config.identityConfig?.maxFileSize
+            ? {
+                ...(this.config.identityConfig?.agentsDir && { agentsDir: this.config.identityConfig.agentsDir }),
+                ...(this.config.identityConfig?.maxFileSize && { maxFileSize: this.config.identityConfig.maxFileSize }),
+              }
+            : undefined
+        );
+        identityContext = await updater.getCoreMemoryForPrompt(agentId);
+        if (identityContext) {
+          console.debug('[GenericAgentBackend] Injected Identity coreMemory for agent:', agentId);
+        }
+      } catch (identityError) {
+        console.debug('[GenericAgentBackend] Identity loading skipped:', identityError);
+      }
+    }
+
+    // Build dynamic system prompt with identity context
+    const baseSystemPrompt = identityContext
+      ? buildWorkerSystemPrompt({ identityContext })
+      : buildWorkerSystemPrompt();
+
     // Pass task objective for skill recommendations with auto-activation
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(
-      DEFAULT_SYSTEM_PROMPT,
+      baseSystemPrompt,
       task.objective,
       { autoActivate: true, ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }) }
     );

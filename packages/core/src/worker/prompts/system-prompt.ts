@@ -51,17 +51,32 @@ const COMMUNICATION_GUIDE = `## Communication
 export function buildWorkerSystemPrompt(options?: {
   memoryContext?: string;
   extraSystemPrompt?: string;
+  /** Agent Identity CoreMemory (preferences, work patterns, learned principles) */
+  identityContext?: string;
 }): string {
   const parts = [
     SYSTEM_PROMPT_BASE,
+  ];
+
+  // Letta-code style: inject identity context right after base prompt
+  // Order: base → identity coreMemory → guides → memory context
+  if (options?.identityContext?.trim()) {
+    parts.push(
+      `## Agent Identity
+The following represents your learned preferences, work patterns, and principles from past interactions:
+${options.identityContext.trim()}`
+    );
+  }
+
+  parts.push(
     EXECUTION_GUIDE,
     ERROR_RECOVERY_GUIDE,
     TASK_TRACKING_GUIDE,
     TESTING_GUIDE,
     TOOL_SELECTION_GUIDE,
     COMMUNICATION_GUIDE,
-    WORKER_BEHAVIOR_GUIDELINES_EN,
-  ];
+    WORKER_BEHAVIOR_GUIDELINES_EN
+  );
 
   if (options?.extraSystemPrompt?.trim()) {
     parts.push(options.extraSystemPrompt.trim());

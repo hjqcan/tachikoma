@@ -64,6 +64,7 @@ import { FailureMemory } from '../failure-memory';
 // 工作区结构缓存（上下文注入）
 import { WorkspaceStructureCache, parseFileListOutput } from '../workspace-cache';
 import { resolve } from 'node:path';
+import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 5,  // Codex-style: allow multiple reconnection attempts
@@ -596,7 +597,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           // 注入工作区结构上下文（如果有）
           const workspaceContext = workspaceCache.generateContext();
           
-          const baseSystemPrompt = this.buildSystemPrompt(memoryContext, toolArgsRetryHint);
+          const baseSystemPrompt = await this.buildSystemPrompt(memoryContext, toolArgsRetryHint);
           const contextParts = [baseSystemPrompt];
           if (failureWarnings) {
             contextParts.push(failureWarnings);
@@ -981,9 +982,35 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
   /**
    * 构建系统提示
    */
-  private buildSystemPrompt(memoryContext: string, extraSystemPrompt?: string | null): string {
+  private async buildSystemPrompt(
+    memoryContext: string,
+    extraSystemPrompt?: string | null
+  ): Promise<string> {
+    // Letta-code style: inject identity context right after base prompt
+    let identityContext: string | null = null;
+    if (this.config.identityConfig?.enabled !== false) {
+      try {
+        const agentId = this.config.identityConfig?.agentId ?? getAgentIdFromEnv();
+        const updater = new IdentityUpdater(
+          this.config.identityConfig?.agentsDir || this.config.identityConfig?.maxFileSize
+            ? {
+                ...(this.config.identityConfig?.agentsDir && { agentsDir: this.config.identityConfig.agentsDir }),
+                ...(this.config.identityConfig?.maxFileSize && { maxFileSize: this.config.identityConfig.maxFileSize }),
+              }
+            : undefined
+        );
+        identityContext = await updater.getCoreMemoryForPrompt(agentId);
+        if (identityContext) {
+          console.debug('[OpenAIAgentsBackend] Injected Identity coreMemory for agent:', agentId);
+        }
+      } catch (identityError) {
+        console.debug('[OpenAIAgentsBackend] Identity loading skipped:', identityError);
+      }
+    }
+
     return buildWorkerSystemPrompt({
       memoryContext,
+      ...(identityContext ? { identityContext } : {}),
       ...(typeof extraSystemPrompt === 'string' ? { extraSystemPrompt } : {}),
     });
   }

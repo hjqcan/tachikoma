@@ -1901,9 +1901,10 @@
               5
             ],
             "details": "1. ConversationalRunner 启动时加载 AgentIdentity\\n2. GenericAgentBackend 构造时注入 coreMemory.systemPrompt\\n3. 加载全局块（persona/preferences）和项目块（project/skills）\\n4. 任务完成后自动更新 Identity 统计\\n5. 会话结束时保存 Identity\\n6. 添加配置开关：identityConfig.enabled（默认 true）\n<info added on 2025-12-25T04:27:26.965Z>\n集成边界与注入顺序：Worker system prompt 拼接顺序必须固定（base→identity coreMemory→role→constraints→project block→skills auto-activation→loaded_skills）。Runner 启动时加载 identity+blocks；Worker 每次渲染 system prompt 时注入。避免与 MemoryService 自动检索冲突：blocks 负责确定性注入，MemoryService 负责按需检索；禁止自动把检索结果写回 blocks。\n</info added on 2025-12-25T04:27:26.965Z>",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "端到端测试：完整生命周期（启动→执行→学习→保存）；跨会话记忆保持",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T19:45:00.000Z"
           },
           {
             "id": 7,

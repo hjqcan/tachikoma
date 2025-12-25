@@ -22,6 +22,7 @@ import { BaseWorkerBackend, ToolCallBudgetExceededError, isRetryableError } from
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy } from '../engines';
+import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
 
 // 工具调用追踪器（防循环）
 import { ToolCallTracker } from '../tool-call-tracker';
@@ -556,9 +557,31 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
 
     // Build unified system prompt with memory context (if available)
     // Filter undefined values for exactOptionalPropertyTypes
-    const promptOptions: { memoryContext?: string; extraSystemPrompt?: string } = {};
+    const promptOptions: { memoryContext?: string; extraSystemPrompt?: string; identityContext?: string } = {};
     if (memoryContext) promptOptions.memoryContext = memoryContext;
     if (sdkConfig.systemPrompt) promptOptions.extraSystemPrompt = sdkConfig.systemPrompt;
+
+    // Letta-code style: inject identity context right after base prompt (best-effort)
+    if (this.config.identityConfig?.enabled !== false) {
+      try {
+        const agentId = this.config.identityConfig?.agentId ?? getAgentIdFromEnv();
+        const updater = new IdentityUpdater(
+          this.config.identityConfig?.agentsDir || this.config.identityConfig?.maxFileSize
+            ? {
+                ...(this.config.identityConfig?.agentsDir && { agentsDir: this.config.identityConfig.agentsDir }),
+                ...(this.config.identityConfig?.maxFileSize && { maxFileSize: this.config.identityConfig.maxFileSize }),
+              }
+            : undefined
+        );
+        const identityContext = await updater.getCoreMemoryForPrompt(agentId);
+        if (identityContext) {
+          promptOptions.identityContext = identityContext;
+          console.debug('[ClaudeAgentSDKBackend] Injected Identity coreMemory for agent:', agentId);
+        }
+      } catch (identityError) {
+        console.debug('[ClaudeAgentSDKBackend] Identity loading skipped:', identityError);
+      }
+    }
     
     let systemPrompt = buildWorkerSystemPrompt(promptOptions);
     if (skillsManager) {

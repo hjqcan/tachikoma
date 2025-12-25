@@ -564,6 +564,24 @@ export interface WorkerBackendBaseConfig {
    * 如果提供，将在启动时加载 Skills 并注入到 system prompt
    */
   skillsConfig?: SkillDiscoveryConfig;
+
+  /**
+   * Agent Identity 配置
+   *
+   * - 默认启用（即：未配置时也会尝试读取 identity 并注入 coreMemory；identity 不存在则跳过）
+   * - 可通过 `enabled:false` 显式关闭
+   * - 可通过 `agentsDir` 指定 identity 存储目录（用于测试或自定义）
+   */
+  identityConfig?: {
+    /** 是否启用 Identity（默认 true） */
+    enabled?: boolean;
+    /** Agent ID（默认从环境变量或 'default'） */
+    agentId?: string;
+    /** Agents 目录（默认 ~/.tachikoma/agents） */
+    agentsDir?: string;
+    /** Identity 文件最大大小（字节，默认 100KB） */
+    maxFileSize?: number;
+  };
 }
 
 /**
