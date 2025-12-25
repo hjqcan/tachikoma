@@ -1872,9 +1872,10 @@
               3
             ],
             "details": "1. 在 packages/core/src/conversation/commands/remember.ts 实现 handleRememberCommand()\\n2. 命令格式：/remember [可选内容]\\n3. 流程：\\n   - 分析对话上下文，确定要记住什么\\n   - 选择合适的内存块（persona/preferences/project）\\n   - 调用 MemoryService 或 BlockWriter 存储\\n   - 调用 CoreMemoryEvolver 更新 Identity\\n   - 确认存储结果\\n4. 参考 Letta 的 remember.md prompt 设计\n<info added on 2025-12-25T04:27:00.118Z>\n明确 /remember 边界与确认流程：默认写入 Memory Blocks（preferences.md/project.md/persona.md），并返回确认摘要；无 content 时先生成候选并要求用户确认后写入。可选将长细节写入 MemoryService 的 user scope（metadata 标记 source=user-command），blocks 仅存短规则/摘要以避免 prompt 漂移与重复注入。必须包含去敏规则（不得存 API key/token/隐私）。\n</info added on 2025-12-25T04:27:00.118Z>",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "集成测试：各类内容（偏好/规则/事实）正确存储到对应块；确认消息正确",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T17:05:00.000Z"
           },
           {
             "id": 5,

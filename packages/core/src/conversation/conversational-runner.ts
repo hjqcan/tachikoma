@@ -24,8 +24,14 @@ import {
 } from './types';
 import type { ActionRecord, ThinkingRecord, RecoveryStrategy } from '../orchestrator/session/types';
 import { MCPClientManager, loadMCPConfig } from '../mcp';
-import { executeSkillCommand, type SkillCommandContext } from './commands';
+import {
+  executeSkillCommand,
+  type SkillCommandContext,
+  executeRememberCommand,
+  type RememberCommandContext,
+} from './commands';
 import { thinkingRecordToTrajectory, actionRecordToTrajectory } from '../skills/learning';
+import { getAgentIdFromEnv } from '../agent-identity';
 
 type UserLanguage = 'en' | 'zh';
 
@@ -214,6 +220,7 @@ export class ConversationalRunner {
    * - /continue - 继续上次任务
    * - /retry - 从最近的检查点继续执行
    * - /clear [--checkpoints] - 清空会话
+   * - /remember [type] <content> - 记住偏好/模式/原则
    * - /help - 显示帮助
    */
   async *handleMessage(
@@ -349,6 +356,11 @@ export class ConversationalRunner {
 
       case 'skill':
         yield* this.executeSkill(session, args);
+        return { handled: true };
+
+      case 'remember':
+      case '记住':
+        yield* this.executeRemember(session, args);
         return { handled: true };
 
       default:
@@ -656,6 +668,7 @@ export class ConversationalRunner {
 /continue [context]      - Continue the last unfinished task
 /retry [checkpointId]    - Resume from latest checkpoint
 /clear [--checkpoints]   - Clear conversation history
+/remember [type] <text>  - Remember preference/pattern/principle
 /skill [subcommand]      - Manage skills (list/load/unload/learn)
 /help                    - Show this help message
 
@@ -666,6 +679,7 @@ All other messages are sent to the AI for processing.`,
 /continue [context]      - 继续上一次未完成任务
 /retry [checkpointId]    - 从最近检查点继续执行
 /clear [--checkpoints]   - 清空对话历史
+/remember [类型] <内容>   - 记住偏好/模式/原则
 /skill [子命令]          - 管理技能（list/load/unload/learn）
 /help                    - 显示帮助
 
@@ -673,6 +687,24 @@ All other messages are sent to the AI for processing.`,
       }),
       timestamp: Date.now(),
     };
+  }
+
+  /**
+   * /remember [type] <content> - 记住偏好/模式/原则
+   */
+  private async *executeRemember(
+    session: SessionState,
+    args: string[],
+  ): AsyncGenerator<StreamEvent> {
+    const ctx: RememberCommandContext = {
+      session,
+      workDir: this.config.workDir,
+      // 使用环境变量或默认值作为稳定 identity key
+      agentId: getAgentIdFromEnv(),
+      t: (strings: { en: string; zh: string }) => this.t(session, strings),
+    };
+
+    yield* executeRememberCommand(args, ctx);
   }
 
   /**
