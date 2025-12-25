@@ -15,6 +15,7 @@ import type {
   ApprovalPolicy,
   DeviationDetectionConfig,
   RetryPolicyMode,
+  SkillLearningConfig,
 } from './types';
 import type { MemoryConfig } from '../memory';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
@@ -285,6 +286,7 @@ export interface PartialOrchestratorConfig {
   deviationDetection?: Partial<DeviationDetectionConfig>;
   memoryConfig?: MemoryConfig;
   collaborationConfig?: OrchestratorConfig['collaborationConfig'];
+  skillLearning?: Partial<SkillLearningConfig>;
 }
 
 /**
@@ -383,6 +385,19 @@ export function createOrchestratorConfig(
     ...(orchestratorMemoryConfig ? { memoryConfig: orchestratorMemoryConfig } : {}),
     ...(overrides.collaborationConfig
       ? { collaborationConfig: overrides.collaborationConfig }
+      : {}),
+    // skillLearning 仅当定义时才包含
+    ...(overrides.skillLearning
+      ? {
+          skillLearning: {
+            enabled: overrides.skillLearning.enabled ?? false,
+            minToolCalls: overrides.skillLearning.minToolCalls ?? 8,
+            minDuration: overrides.skillLearning.minDuration ?? 300000,
+            skillsDir: overrides.skillLearning.skillsDir ?? '.tachikoma/skills',
+            maxSkills: overrides.skillLearning.maxSkills ?? 5,
+            ...(overrides.skillLearning.llmConfig ? { llmConfig: overrides.skillLearning.llmConfig } : {}),
+          },
+        }
       : {}),
   };
 }
@@ -507,6 +522,20 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
       'maxParseRetries must be non-negative',
       'planner.maxParseRetries'
     );
+  }
+
+  // 验证技能学习配置（如果启用）
+  if (config.skillLearning) {
+    const { minToolCalls, minDuration, maxSkills } = config.skillLearning;
+    if (minToolCalls !== undefined && minToolCalls < 0) {
+      throw new OrchestratorConfigError('minToolCalls must be non-negative', 'skillLearning.minToolCalls');
+    }
+    if (minDuration !== undefined && minDuration < 0) {
+      throw new OrchestratorConfigError('minDuration must be non-negative', 'skillLearning.minDuration');
+    }
+    if (maxSkills !== undefined && maxSkills < 1) {
+      throw new OrchestratorConfigError('maxSkills must be at least 1', 'skillLearning.maxSkills');
+    }
   }
 }
 

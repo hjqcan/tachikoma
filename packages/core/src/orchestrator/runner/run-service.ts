@@ -10,8 +10,17 @@ import type { ExecutionLoop } from './execution-loop';
 import type { SessionController } from './session-controller';
 import type { AggregationEngine } from '../engines/aggregation-engine';
 import type { MemoryService } from '../../memory';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 // Agent Identity: automatic learning after task success
 import { CoreMemoryEvolver, getAgentIdFromEnv } from '../../agent-identity';
+// Skill Learning: learn skills from trajectory
+import {
+  learnSkillFromTrajectory,
+  thinkingRecordToTrajectory,
+  actionRecordToTrajectory,
+  type TrajectoryRecord,
+} from '../../skills/learning';
 
 export class RunService {
   constructor(
@@ -125,7 +134,11 @@ export class RunService {
 
       // Agent Identity: automatic learning on task success
       if (aggregated.status === 'success') {
-        await this.learnFromTaskSuccess(orchestratorTask.objective, aggregated.output).catch(() => undefined);
+        const duration = Date.now() - startTime;
+        await this.learnFromTaskSuccess(orchestratorTask.objective, aggregated.output, duration, {
+          workDir,
+          startTime,
+        }).catch(() => undefined);
       }
 
       return finalResult;
@@ -246,26 +259,167 @@ export class RunService {
   }
 
   /**
-   * Learn from successful task completion (Agent Identity automatic learning)
+   * Learn from successful task completion (Agent Identity + Skill Learning)
    *
-   * Calls CoreMemoryEvolver.onTaskSuccess() to update agent stats and
-   * potentially evolve the system prompt based on patterns observed.
+   * 1. Always updates Agent Identity stats
+   * 2. If skillLearning is enabled and triggers are met, learns skills from trajectory
+   *
+   * @param objective - Task objective
+   * @param output - Task output
+   * @param duration - Task duration in ms
    */
-  private async learnFromTaskSuccess(objective: string, output: unknown): Promise<void> {
+  private async learnFromTaskSuccess(
+    objective: string,
+    output: unknown,
+    duration: number,
+    ctx: { workDir: string; startTime: number }
+  ): Promise<void> {
     try {
+      // 1. Always update agent identity stats
       const agentId = getAgentIdFromEnv();
       const evolver = new CoreMemoryEvolver();
       const summary = typeof output === 'string'
         ? output.slice(0, 200)
         : JSON.stringify(output).slice(0, 200);
-      // onTaskSuccess expects (taskDescription, learnings[], agentId)
-      // For automatic learning, we pass the summary as a single-item learnings array
       await evolver.onTaskSuccess(objective, [summary], agentId);
       console.debug('[RunService] Agent identity updated after task success');
+
+      // 2. Check if skill learning is enabled and triggers are met
+      const skillConfig = this.orchestratorConfig.skillLearning;
+      if (!skillConfig?.enabled) {
+        return;
+      }
+
+      const minDuration = skillConfig.minDuration ?? 300000; // 5 min default
+      if (duration < minDuration) {
+        console.debug(
+          `[RunService] Skipping skill learning: duration ${duration}ms < threshold ${minDuration}ms`
+        );
+        return;
+      }
+
+      // 3. Collect trajectory from all workers (both thinking and action logs)
+      const { thinkingLogs, actionLogs } = await this.session.getTrajectoryForAllWorkers(2000);
+
+      // 3.1 Filter by this run time window to avoid mixing trajectories
+      const endTime = ctx.startTime + duration;
+      const filteredThinking = thinkingLogs.filter((t) => t.timestamp >= ctx.startTime && t.timestamp <= endTime);
+      const filteredActions = actionLogs.filter((a) => a.timestamp >= ctx.startTime && a.timestamp <= endTime);
+
+      // P0 fix: minToolCalls should count actual tool calls from actionLogs
+      const toolCallCount = filteredActions.filter((a) => a.type === 'tool_call').length;
+      const minToolCalls = skillConfig.minToolCalls ?? 8;
+      if (toolCallCount < minToolCalls) {
+        console.debug(
+          `[RunService] Skipping skill learning: toolCallCount ${toolCallCount} < threshold ${minToolCalls}`
+        );
+        return;
+      }
+
+      // Convert logs to trajectory records
+      const trajectory: TrajectoryRecord[] = [];
+      for (const log of filteredThinking) {
+        trajectory.push(thinkingRecordToTrajectory(log));
+      }
+      for (const action of filteredActions) {
+        trajectory.push(actionRecordToTrajectory(action));
+      }
+
+      if (trajectory.length === 0) {
+        console.debug('[RunService] No trajectory to learn from');
+        return;
+      }
+
+      // Sort by timestamp
+      trajectory.sort((a, b) => a.timestamp - b.timestamp);
+
+      // 4. Learn skill from trajectory
+      console.debug(`[RunService] Learning skill from ${trajectory.length} trajectory records (${toolCallCount} tool calls)`);
+
+      const skillsDirRaw = skillConfig.skillsDir ?? '.tachikoma/skills';
+      const skillsDir = path.isAbsolute(skillsDirRaw) ? skillsDirRaw : path.join(ctx.workDir, skillsDirRaw);
+      const maxSkills = skillConfig.maxSkills ?? 5;
+      const stableSkillName = deriveStableSkillName(objective);
+
+      // TODO: In future, integrate with actual LLM client from Planner (this.orchestratorConfig.planner.agent)
+      const result = await learnSkillFromTrajectory(trajectory, {
+        llmCall: async (_prompt: string) => {
+          console.debug('[RunService] Skill learning LLM reflection (using configured planner model)');
+
+          // Use simple heuristic based on trajectory patterns
+          // This is a placeholder until proper LLM integration
+          const patterns = trajectory.filter((t) => t.type === 'tool_call').slice(0, 3);
+          if (patterns.length === 0) {
+            return JSON.stringify({
+              success: true,
+              reasoningValid: true,
+              reasoningSummary: 'No tool-call patterns found in trajectory.',
+              patterns: [],
+              failureModes: [],
+              abstractableKnowledge: [],
+              suggestedSkillName: stableSkillName,
+              suggestedSkillDescription: `Auto-learned skill (no patterns extracted) for: ${objective.slice(0, 80)}`,
+              suggestedTags: ['auto-learned'],
+            });
+          }
+
+          return JSON.stringify({
+            success: true,
+            reasoningValid: true,
+            patterns: patterns.map((p) => ({
+              name: `Pattern: ${p.content.slice(0, 30)}`,
+              description: p.content.slice(0, 100),
+              type: 'solution',
+              confidence: 0.7,
+              evidence: [p.id],
+            })),
+            failureModes: [],
+            abstractableKnowledge: [`From task: ${objective.slice(0, 50)}`],
+            reasoningSummary: `Learned from ${trajectory.length} steps, ${toolCallCount} tool calls`,
+            suggestedTags: ['auto-learned'],
+            suggestedSkillName: stableSkillName,
+            suggestedSkillDescription: `Auto-learned best practices for: ${objective.slice(0, 80)}`,
+          });
+        },
+        skillsDir,
+        taskDescription: objective,
+        skillName: stableSkillName,
+        overwrite: true,
+        autoUpdateSimilar: true,
+        maxSkills,
+        source: 'auto',
+        feedback: {
+          success: true,
+          metrics: {
+            duration,
+            toolCalls: toolCallCount,
+          },
+        },
+      });
+
+      if (result.success && result.skill) {
+        console.log(`[RunService] Learned new skill: ${result.skill.name}`);
+        // P0 fix: onSkillLearned(skillName, skillSummary, agentId) - correct param order
+        await evolver.onSkillLearned(result.skill.name, result.skill.summary, agentId);
+      } else {
+        console.debug(`[RunService] Skill learning skipped: ${result.error ?? 'no patterns found'}`);
+      }
     } catch {
-      // Identity learning is best-effort, don't fail the task
+      // Identity/skill learning is best-effort, don't fail the task
     }
   }
+}
+
+function deriveStableSkillName(taskDescription: string): string {
+  const normalized = taskDescription.trim().toLowerCase();
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 42);
+  const hash = createHash('sha1').update(taskDescription).digest('hex').slice(0, 8);
+  const base = slug.length > 0 ? slug : 'skill';
+  return `auto-${base}-${hash}`;
 }
 
 

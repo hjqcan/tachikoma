@@ -118,6 +118,40 @@ function createMockLlmCall() {
   };
 }
 
+function createMockLlmCallWithSkill(input: {
+  skillName: string;
+  patternConfidence: number;
+  knowledgeCount: number;
+  reasoningSummary?: string;
+}): (prompt: string) => Promise<string> {
+  return async (_prompt: string): Promise<string> => {
+    const patterns =
+      input.patternConfidence <= 0
+        ? []
+        : [
+            {
+              name: `pattern-${input.skillName}`,
+              description: 'A reusable pattern extracted from trajectory.',
+              type: 'solution',
+              confidence: input.patternConfidence,
+              evidence: ['thinking-1'],
+            },
+          ];
+    const abstractableKnowledge = Array.from({ length: input.knowledgeCount }, (_, i) => `Insight ${i + 1}`);
+    return JSON.stringify({
+      success: true,
+      reasoningValid: true,
+      reasoningSummary: input.reasoningSummary ?? `Reflection for ${input.skillName}`,
+      patterns,
+      failureModes: [],
+      abstractableKnowledge,
+      suggestedSkillName: input.skillName,
+      suggestedSkillDescription: `Skill for ${input.skillName}`,
+      suggestedTags: ['auto-learned'],
+    });
+  };
+}
+
 beforeEach(() => {
   tempDir = createTempDir();
 });
@@ -312,5 +346,127 @@ describe('learnSkillFromTrajectory', () => {
     // 验证技能内容包含用户指导
     const skillContent = fs.readFileSync(result.skill?.path ?? '', 'utf-8');
     expect(skillContent).toContain('always run linting');
+  });
+
+  test('enforces maxSkills (top-K): skips low quality when full', async () => {
+    const skillsDir = path.join(tempDir, '.tachikoma', 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Create 5 skills with increasing quality
+    const base = [
+      { skillName: 'skill-a', patternConfidence: 0.2, knowledgeCount: 0 },
+      { skillName: 'skill-b', patternConfidence: 0.3, knowledgeCount: 0 },
+      { skillName: 'skill-c', patternConfidence: 0.4, knowledgeCount: 1 },
+      { skillName: 'skill-d', patternConfidence: 0.5, knowledgeCount: 1 },
+      { skillName: 'skill-e', patternConfidence: 0.6, knowledgeCount: 2 },
+    ];
+    for (const cfg of base) {
+      const r = await learnSkillFromTrajectory(createMockTrajectory(), {
+        llmCall: createMockLlmCallWithSkill(cfg),
+        skillsDir,
+        taskDescription: 'Seed skills',
+        overwrite: true,
+        autoUpdateSimilar: true,
+        maxSkills: 5,
+        source: 'manual',
+      });
+      expect(r.success).toBe(true);
+    }
+
+    // Attempt to add a 6th low-quality skill (should be skipped)
+    const result = await learnSkillFromTrajectory(createMockTrajectory(), {
+      llmCall: createMockLlmCallWithSkill({ skillName: 'skill-f', patternConfidence: 0.1, knowledgeCount: 0 }),
+      skillsDir,
+      taskDescription: 'Low quality skill',
+      overwrite: true,
+      autoUpdateSimilar: true,
+      maxSkills: 5,
+      source: 'manual',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.failedAt).toBe('creation');
+    expect(result.error).toContain('Skill governance');
+    expect(fs.existsSync(path.join(skillsDir, 'skill-f'))).toBe(false);
+
+    const dirs = fs.readdirSync(skillsDir).filter((n) => !n.startsWith('.'));
+    expect(dirs.length).toBe(5);
+  });
+
+  test('enforces maxSkills (top-K): evicts lowest when new quality is higher', async () => {
+    const skillsDir = path.join(tempDir, '.tachikoma', 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    // Create 5 skills; skill-a is intentionally the lowest quality
+    const base = [
+      { skillName: 'skill-a', patternConfidence: 0.2, knowledgeCount: 0 },
+      { skillName: 'skill-b', patternConfidence: 0.5, knowledgeCount: 1 },
+      { skillName: 'skill-c', patternConfidence: 0.6, knowledgeCount: 2 },
+      { skillName: 'skill-d', patternConfidence: 0.7, knowledgeCount: 2 },
+      { skillName: 'skill-e', patternConfidence: 0.8, knowledgeCount: 3 },
+    ];
+    for (const cfg of base) {
+      const r = await learnSkillFromTrajectory(createMockTrajectory(), {
+        llmCall: createMockLlmCallWithSkill(cfg),
+        skillsDir,
+        taskDescription: 'Seed skills',
+        overwrite: true,
+        autoUpdateSimilar: true,
+        maxSkills: 5,
+        source: 'manual',
+      });
+      expect(r.success).toBe(true);
+    }
+
+    const newSkill = await learnSkillFromTrajectory(createMockTrajectory(), {
+      llmCall: createMockLlmCallWithSkill({ skillName: 'skill-f', patternConfidence: 0.95, knowledgeCount: 4 }),
+      skillsDir,
+      taskDescription: 'High quality skill',
+      overwrite: true,
+      autoUpdateSimilar: true,
+      maxSkills: 5,
+      source: 'manual',
+    });
+
+    expect(newSkill.success).toBe(true);
+    expect(fs.existsSync(path.join(skillsDir, 'skill-f'))).toBe(true);
+    expect(fs.existsSync(path.join(skillsDir, 'skill-a'))).toBe(false);
+
+    const dirs = fs.readdirSync(skillsDir).filter((n) => !n.startsWith('.'));
+    expect(dirs.length).toBe(5);
+  });
+
+  test('autoUpdateSimilar updates existing skill instead of creating a new one', async () => {
+    const skillsDir = path.join(tempDir, '.tachikoma', 'skills');
+    fs.mkdirSync(skillsDir, { recursive: true });
+
+    const first = await learnSkillFromTrajectory(createMockTrajectory(), {
+      llmCall: createMockLlmCallWithSkill({ skillName: 'alpha-skill', patternConfidence: 0.2, knowledgeCount: 0, reasoningSummary: 'v1' }),
+      skillsDir,
+      taskDescription: 'Alpha',
+      overwrite: true,
+      autoUpdateSimilar: true,
+      maxSkills: 5,
+      source: 'manual',
+    });
+    expect(first.success).toBe(true);
+
+    // "alpha" is a substring of "alpha-skill", should be considered similar and update it
+    const second = await learnSkillFromTrajectory(createMockTrajectory(), {
+      llmCall: createMockLlmCallWithSkill({ skillName: 'alpha', patternConfidence: 0.9, knowledgeCount: 3, reasoningSummary: 'v2' }),
+      skillsDir,
+      taskDescription: 'Alpha improved',
+      overwrite: true,
+      autoUpdateSimilar: true,
+      maxSkills: 5,
+      source: 'manual',
+    });
+    expect(second.success).toBe(true);
+
+    const dirs = fs.readdirSync(skillsDir).filter((n) => !n.startsWith('.'));
+    expect(dirs.length).toBe(1);
+    expect(dirs[0]).toBe('alpha-skill');
+    const content = fs.readFileSync(path.join(skillsDir, 'alpha-skill', 'SKILL.md'), 'utf-8');
+    expect(content).toContain('v2');
   });
 });

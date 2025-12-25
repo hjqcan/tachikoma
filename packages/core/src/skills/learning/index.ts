@@ -10,6 +10,7 @@ import type { TrajectoryRecord, ExecutionFeedback, ReflectionResult } from './re
 import type { SkillCreationResult } from './creation';
 import { TrajectoryReflector } from './reflection';
 import { SkillCreator } from './creation';
+import { createHash } from 'node:crypto';
 
 // ============================================================================
 // Reflection 导出
@@ -76,12 +77,20 @@ export interface LearnSkillConfig {
   skillsDir: string;
   /** 任务描述（反思时使用） */
   taskDescription: string;
+  /** 目标技能名称（可选：用于稳定命名/治理；优先级高于 reflection.suggestedSkillName） */
+  skillName?: string | undefined;
   /** 执行反馈（测试结果/用户反馈） */
   feedback?: ExecutionFeedback | undefined;
   /** 用户指导（追加到技能内容） */
   userGuidance?: string | undefined;
   /** 是否覆盖已存在的技能 */
   overwrite?: boolean | undefined;
+  /** 自动更新相似技能（用于 C-auto/top-K） */
+  autoUpdateSimilar?: boolean | undefined;
+  /** 每个 skillsDir 最多保留的技能数量（用于每项目 Top-K） */
+  maxSkills?: number | undefined;
+  /** 来源（用于审计） */
+  source?: 'auto' | 'manual' | undefined;
   /** 刷新技能列表的回调 */
   onSkillsRefresh?: () => Promise<void>;
   /** 更新 Memory Block 的回调 */
@@ -173,10 +182,28 @@ export async function learnSkillFromTrajectory(
     };
   }
 
+  // ===== 质量与稳定命名（用于 C-auto / Top-K）=====
+  const toolCallCount = trajectory.filter((r) => r.type === 'tool_call').length;
+  const durationMs = (() => {
+    if (trajectory.length === 0) return 0;
+    const ts = trajectory.map((r) => r.timestamp);
+    const min = Math.min(...ts);
+    const max = Math.max(...ts);
+    return Math.max(0, max - min);
+  })();
+  const qualityScore = computeQualityScore(reflection, { toolCallCount, durationMs, feedback: config.feedback });
+
+  const derivedName =
+    config.skillName ??
+    reflection.suggestedSkillName ??
+    deriveStableSkillName(config.taskDescription);
+
   // 2. 创建阶段
   const creator = new SkillCreator({
     skillsDir: config.skillsDir,
     overwrite: config.overwrite,
+    autoUpdateSimilar: config.autoUpdateSimilar,
+    maxSkills: config.maxSkills,
     userGuidance: config.userGuidance,
     onCreated: async (_path) => {
       // 刷新技能列表
@@ -190,6 +217,14 @@ export async function learnSkillFromTrajectory(
   try {
     creationResult = await creator.create({
       reflection,
+      name: derivedName,
+      meta: {
+        score: qualityScore,
+        source: config.source ?? 'manual',
+        taskDescription: config.taskDescription,
+        toolCallCount,
+        durationMs,
+      },
     });
   } catch (error) {
     return {
@@ -248,5 +283,34 @@ function shouldCreateSkill(reflection: ReflectionResult): boolean {
   const hasKnowledge = reflection.abstractableKnowledge.length > 0;
 
   return hasPatterns || hasFailures || hasKnowledge;
+}
+
+function deriveStableSkillName(taskDescription: string): string {
+  const normalized = taskDescription.trim().toLowerCase();
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 42);
+  const hash = createHash('sha1').update(taskDescription).digest('hex').slice(0, 8);
+  const base = slug.length > 0 ? slug : 'skill';
+  return `auto-${base}-${hash}`;
+}
+
+function computeQualityScore(
+  reflection: ReflectionResult,
+  input: { toolCallCount: number; durationMs: number; feedback?: ExecutionFeedback | undefined },
+): number {
+  const patterns = Array.isArray(reflection.patterns) ? reflection.patterns : [];
+  const patternScore = patterns.reduce((sum, p) => {
+    const conf = typeof (p as any).confidence === 'number' ? (p as any).confidence : 0.6;
+    return sum + Math.max(0, Math.min(1, conf)) * 2;
+  }, 0);
+  const knowledgeScore = (reflection.abstractableKnowledge?.length ?? 0) * 1.2;
+  const failureScore = (reflection.failureModes?.length ?? 0) * 0.5;
+  const toolScore = Math.log1p(Math.max(0, input.toolCallCount)) * 1.5;
+  const durationScore = Math.log1p(Math.max(0, input.durationMs) / 60000) * 0.8;
+  const feedbackBonus = input.feedback?.success === true ? 0.5 : 0;
+  return Number((patternScore + knowledgeScore + failureScore + toolScore + durationScore + feedbackBonus).toFixed(3));
 }
 

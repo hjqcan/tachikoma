@@ -622,6 +622,41 @@ export interface DeviationDetectionConfig {
 }
 
 /**
+ * 技能自动学习配置
+ *
+ * 定义 Orchestrator 在任务成功后是否自动学习技能
+ */
+export interface SkillLearningConfig {
+  /** 是否启用自动技能学习（默认 false，需要显式开启） */
+  enabled: boolean;
+  /** 最小工具调用次数阈值（低于此值跳过学习，默认 8） */
+  minToolCalls?: number;
+  /** 最小执行时长阈值（毫秒，低于此值跳过学习，默认 300000 = 5分钟） */
+  minDuration?: number;
+  /** 技能存储目录（默认 .tachikoma/skills） */
+  skillsDir?: string;
+  /**
+   * 每个项目最多保留的技能数量（Top-K 高质量技能）
+   *
+   * 超过上限时：
+   * - 新技能分数 <= 现有最低分：跳过创建
+   * - 新技能分数 > 现有最低分：淘汰最低分技能并创建新技能
+   *
+   * @default 5
+   */
+  maxSkills?: number;
+  /**
+   * LLM 配置（用于反思）
+   * 如不提供，使用默认 Planner agent 配置
+   */
+  llmConfig?: {
+    provider: 'anthropic' | 'openai';
+    model: string;
+    apiKey?: string;
+  };
+}
+
+/**
  * Orchestrator 配置
  */
 export interface OrchestratorConfig {
@@ -662,6 +697,13 @@ export interface OrchestratorConfig {
     backend?: 'file' | 'redis';
     redis?: { url: string; prefix?: string };
   };
+  /**
+   * 技能自动学习配置
+   *
+   * 如果启用，Orchestrator 将在复杂任务成功后自动学习技能
+   * 需要满足 minToolCalls 和 minDuration 阈值才会触发学习
+   */
+  skillLearning?: SkillLearningConfig;
 }
 
 /**

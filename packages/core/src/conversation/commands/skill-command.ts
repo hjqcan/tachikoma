@@ -395,6 +395,10 @@ async function* executeSkillLearn(
       llmCall: ctx.llmCall,
       skillsDir,
       taskDescription: description,
+      overwrite: true,
+      autoUpdateSimilar: true,
+      maxSkills: 5,
+      source: 'manual',
       userGuidance: args.length > 0 ? args.join(' ') : undefined,
       onSkillsRefresh: async () => {
         // 刷新技能列表到 Memory Block

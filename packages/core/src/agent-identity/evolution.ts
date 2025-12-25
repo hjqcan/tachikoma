@@ -120,7 +120,13 @@ const SENSITIVE_PATTERNS = [
   /\b(password|passwd|pwd|secret|token|apikey|api_key)\s*[:=]\s*['"]?[^\s'"]{8,}['"]?/gi,
 ];
 
-function redactSensitive(content: string): string {
+/**
+ * Redact sensitive information from content
+ *
+ * Removes API keys, tokens, passwords, and other sensitive data
+ * to prevent accidental exposure in SKILL.md files, logs, etc.
+ */
+export function redactSensitive(content: string): string {
   let redacted = content;
   for (const pattern of SENSITIVE_PATTERNS) {
     redacted = redacted.replace(pattern, '[REDACTED]');

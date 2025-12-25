@@ -53,6 +53,39 @@ export class SessionController {
     return this.collaborationService;
   }
 
+  /**
+   * Get trajectory logs (thinking + action) for all workers for skill learning
+   * Returns combined thinking and action records from all workers that executed during this session
+   */
+  async getTrajectoryForAllWorkers(limit = 100): Promise<{
+    thinkingLogs: Awaited<ReturnType<ISessionFileManager['readThinkingLogs']>>;
+    actionLogs: Awaited<ReturnType<ISessionFileManager['readActionLogs']>>;
+  }> {
+    const sm = this.deps.state.sessionManager;
+    if (!sm) return { thinkingLogs: [], actionLogs: [] };
+
+    const workers = this.deps.workerPool.getAllWorkers();
+    const thinkingLogs: Awaited<ReturnType<ISessionFileManager['readThinkingLogs']>> = [];
+    const actionLogs: Awaited<ReturnType<ISessionFileManager['readActionLogs']>> = [];
+
+    for (const worker of workers) {
+      try {
+        const thinking = await sm.readThinkingLogs(worker.id, limit);
+        thinkingLogs.push(...thinking);
+      } catch {
+        // Worker may not have thinking logs
+      }
+      try {
+        const actions = await sm.readActionLogs(worker.id, limit);
+        actionLogs.push(...actions);
+      } catch {
+        // Worker may not have action logs
+      }
+    }
+
+    return { thinkingLogs, actionLogs };
+  }
+
   async open(task: OrchestratorTask, sessionId: string): Promise<void> {
     const cfg = this.deps.orchestratorConfig;
 
