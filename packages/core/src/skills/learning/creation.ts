@@ -48,6 +48,8 @@ export interface SkillCreationConfig {
    * 超过上限时，基于 meta.score 淘汰最低分技能。
    */
   maxSkills?: number | undefined;
+  /** 相似技能去重阈值（可配置） */
+  similarity?: { minLen?: number; levenshteinRatio?: number } | undefined;
   /** 用户指导（可选，追加到技能内容） */
   userGuidance?: string | undefined;
   /** 生成后刷新技能列表的回调 */
@@ -109,12 +111,17 @@ export interface SkillCreationResult {
  */
 export class SkillCreator {
   private readonly config: SkillCreationConfig;
+  private readonly similarity: { minLen: number; levenshteinRatio: number };
 
   constructor(config: SkillCreationConfig) {
     this.config = {
       overwrite: false,
       autoUpdateSimilar: false,
       ...config,
+    };
+    this.similarity = {
+      minLen: config.similarity?.minLen ?? 12,
+      levenshteinRatio: config.similarity?.levenshteinRatio ?? 0.2,
     };
   }
 
@@ -278,10 +285,10 @@ export class SkillCreator {
         return existing;
       }
       const minLen = Math.min(name.length, existing.length);
-      if (minLen >= 12) {
+      if (minLen >= this.similarity.minLen) {
         const dist = this.levenshteinDistance(name, existing);
         const ratio = dist / minLen;
-        if (ratio < 0.2) {
+        if (ratio < this.similarity.levenshteinRatio) {
           return existing;
         }
       }

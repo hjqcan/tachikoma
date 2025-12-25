@@ -645,6 +645,13 @@ export interface SkillLearningConfig {
    * @default 5
    */
   maxSkills?: number;
+  /** 相似技能去重阈值（用于 autoUpdateSimilar / Top-K） */
+  similarity?: {
+    /** 仅当 min(name.length, existing.length) >= minLen 时才启用编辑距离比率 */
+    minLen?: number;
+    /** 编辑距离比率阈值：distance / minLen < levenshteinRatio 则视为相似 */
+    levenshteinRatio?: number;
+  };
   /**
    * LLM 配置（用于反思）
    * 如不提供，使用默认 Planner agent 配置
@@ -653,6 +660,10 @@ export interface SkillLearningConfig {
     provider: 'anthropic' | 'openai';
     model: string;
     apiKey?: string;
+    maxTokens?: number;
+    temperature?: number;
+    baseUrl?: string;
+    timeout?: number;
   };
 }
 

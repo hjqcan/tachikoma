@@ -398,6 +398,7 @@ async function* executeSkillLearn(
       overwrite: true,
       autoUpdateSimilar: true,
       maxSkills: 5,
+      similarity: { minLen: 12, levenshteinRatio: 0.2 },
       source: 'manual',
       userGuidance: args.length > 0 ? args.join(' ') : undefined,
       onSkillsRefresh: async () => {

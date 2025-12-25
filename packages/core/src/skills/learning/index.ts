@@ -89,6 +89,8 @@ export interface LearnSkillConfig {
   autoUpdateSimilar?: boolean | undefined;
   /** 每个 skillsDir 最多保留的技能数量（用于每项目 Top-K） */
   maxSkills?: number | undefined;
+  /** 相似技能去重阈值（透传到 SkillCreator） */
+  similarity?: { minLen?: number; levenshteinRatio?: number } | undefined;
   /** 来源（用于审计） */
   source?: 'auto' | 'manual' | undefined;
   /** 刷新技能列表的回调 */
@@ -204,6 +206,7 @@ export async function learnSkillFromTrajectory(
     overwrite: config.overwrite,
     autoUpdateSimilar: config.autoUpdateSimilar,
     maxSkills: config.maxSkills,
+    similarity: config.similarity,
     userGuidance: config.userGuidance,
     onCreated: async (_path) => {
       // 刷新技能列表

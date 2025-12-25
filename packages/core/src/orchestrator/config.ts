@@ -395,6 +395,10 @@ export function createOrchestratorConfig(
             minDuration: overrides.skillLearning.minDuration ?? 300000,
             skillsDir: overrides.skillLearning.skillsDir ?? '.tachikoma/skills',
             maxSkills: overrides.skillLearning.maxSkills ?? 5,
+            similarity: {
+              minLen: overrides.skillLearning.similarity?.minLen ?? 12,
+              levenshteinRatio: overrides.skillLearning.similarity?.levenshteinRatio ?? 0.2,
+            },
             ...(overrides.skillLearning.llmConfig ? { llmConfig: overrides.skillLearning.llmConfig } : {}),
           },
         }
@@ -526,7 +530,7 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
 
   // 验证技能学习配置（如果启用）
   if (config.skillLearning) {
-    const { minToolCalls, minDuration, maxSkills } = config.skillLearning;
+    const { minToolCalls, minDuration, maxSkills, similarity } = config.skillLearning;
     if (minToolCalls !== undefined && minToolCalls < 0) {
       throw new OrchestratorConfigError('minToolCalls must be non-negative', 'skillLearning.minToolCalls');
     }
@@ -535,6 +539,17 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
     }
     if (maxSkills !== undefined && maxSkills < 1) {
       throw new OrchestratorConfigError('maxSkills must be at least 1', 'skillLearning.maxSkills');
+    }
+    if (similarity) {
+      if (similarity.minLen !== undefined && similarity.minLen < 0) {
+        throw new OrchestratorConfigError('similarity.minLen must be non-negative', 'skillLearning.similarity.minLen');
+      }
+      if (similarity.levenshteinRatio !== undefined && (similarity.levenshteinRatio < 0 || similarity.levenshteinRatio > 1)) {
+        throw new OrchestratorConfigError(
+          'similarity.levenshteinRatio must be between 0 and 1',
+          'skillLearning.similarity.levenshteinRatio'
+        );
+      }
     }
   }
 }

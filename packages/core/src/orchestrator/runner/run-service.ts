@@ -12,6 +12,7 @@ import type { AggregationEngine } from '../engines/aggregation-engine';
 import type { MemoryService } from '../../memory';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { createLLMClient, type LLMClientConfig } from '../../planner';
 // Agent Identity: automatic learning after task success
 import { CoreMemoryEvolver, getAgentIdFromEnv } from '../../agent-identity';
 // Skill Learning: learn skills from trajectory
@@ -341,52 +342,63 @@ export class RunService {
       const maxSkills = skillConfig.maxSkills ?? 5;
       const stableSkillName = deriveStableSkillName(objective);
 
-      // TODO: In future, integrate with actual LLM client from Planner (this.orchestratorConfig.planner.agent)
-      const result = await learnSkillFromTrajectory(trajectory, {
-        llmCall: async (_prompt: string) => {
-          console.debug('[RunService] Skill learning LLM reflection (using configured planner model)');
+      const similarity = skillConfig.similarity ?? { minLen: 12, levenshteinRatio: 0.2 };
 
-          // Use simple heuristic based on trajectory patterns
-          // This is a placeholder until proper LLM integration
-          const patterns = trajectory.filter((t) => t.type === 'tool_call').slice(0, 3);
-          if (patterns.length === 0) {
-            return JSON.stringify({
-              success: true,
-              reasoningValid: true,
-              reasoningSummary: 'No tool-call patterns found in trajectory.',
-              patterns: [],
-              failureModes: [],
-              abstractableKnowledge: [],
-              suggestedSkillName: stableSkillName,
-              suggestedSkillDescription: `Auto-learned skill (no patterns extracted) for: ${objective.slice(0, 80)}`,
-              suggestedTags: ['auto-learned'],
-            });
-          }
+      const llmCall = (() => {
+        const plannerCfg = this.orchestratorConfig.planner.agent as unknown as LLMClientConfig;
+        const override = skillConfig.llmConfig;
 
-          return JSON.stringify({
-            success: true,
-            reasoningValid: true,
-            patterns: patterns.map((p) => ({
-              name: `Pattern: ${p.content.slice(0, 30)}`,
-              description: p.content.slice(0, 100),
-              type: 'solution',
-              confidence: 0.7,
-              evidence: [p.id],
-            })),
-            failureModes: [],
-            abstractableKnowledge: [`From task: ${objective.slice(0, 50)}`],
-            reasoningSummary: `Learned from ${trajectory.length} steps, ${toolCallCount} tool calls`,
-            suggestedTags: ['auto-learned'],
-            suggestedSkillName: stableSkillName,
-            suggestedSkillDescription: `Auto-learned best practices for: ${objective.slice(0, 80)}`,
+        const provider = (override?.provider ?? plannerCfg.provider) as LLMClientConfig['provider'];
+        const model = override?.model ?? plannerCfg.model;
+        const maxTokens = override?.maxTokens ?? plannerCfg.maxTokens ?? 2048;
+        const temperature = override?.temperature ?? plannerCfg.temperature ?? 0.2;
+        const baseUrl = override?.baseUrl ?? plannerCfg.baseUrl;
+        const timeout = override?.timeout ?? plannerCfg.timeout;
+
+        const apiKey =
+          override?.apiKey ??
+          plannerCfg.apiKey ??
+          (provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY);
+
+        const cfg: LLMClientConfig = {
+          ...plannerCfg,
+          provider,
+          model,
+          maxTokens,
+          temperature,
+          ...(apiKey ? { apiKey } : {}),
+          ...(baseUrl ? { baseUrl } : {}),
+          ...(timeout ? { timeout } : {}),
+        };
+
+        const client = createLLMClient(cfg);
+        if (!client.isAvailable()) {
+          console.debug('[RunService] Skipping skill learning: LLM client not available (missing apiKey)');
+          return null;
+        }
+
+        return async (prompt: string) => {
+          const resp = await client.complete({
+            systemPrompt: '',
+            messages: [{ role: 'user', content: prompt }],
+            maxTokens,
+            temperature,
           });
-        },
+          return resp.content;
+        };
+      })();
+
+      if (!llmCall) return;
+
+      const result = await learnSkillFromTrajectory(trajectory, {
+        llmCall,
         skillsDir,
         taskDescription: objective,
         skillName: stableSkillName,
         overwrite: true,
         autoUpdateSimilar: true,
         maxSkills,
+        similarity,
         source: 'auto',
         feedback: {
           success: true,
