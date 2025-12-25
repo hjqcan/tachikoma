@@ -1914,9 +1914,10 @@
               6
             ],
             "details": "1. 在 packages/core/tests/agent-identity 添加完整测试套件\\n2. 端到端测试：多会话场景、/remember 流程、Core Memory 进化\\n3. 编写 README 说明 Agent Identity 机制\\n4. 添加迁移指南（从无 Identity 到有 Identity）\\n5. 运行 bun test 确保全量通过\\n6. 更新 walkthrough.md",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "bun test 通过；用户体验测试：多次使用后 Agent 记住偏好",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T20:20:00.000Z"
           }
         ]
       }
