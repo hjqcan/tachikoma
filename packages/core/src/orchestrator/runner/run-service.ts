@@ -10,6 +10,8 @@ import type { ExecutionLoop } from './execution-loop';
 import type { SessionController } from './session-controller';
 import type { AggregationEngine } from '../engines/aggregation-engine';
 import type { MemoryService } from '../../memory';
+// Agent Identity: automatic learning after task success
+import { CoreMemoryEvolver, getAgentIdFromEnv } from '../../agent-identity';
 
 export class RunService {
   constructor(
@@ -120,6 +122,11 @@ export class RunService {
 
       await this.progress.write(task.id, aggregated.status === 'success' ? 'completed' : 'failed').catch(() => undefined);
       await this.saveMemoryBestEffort(orchestratorTask, finalResult, aggregated).catch(() => undefined);
+
+      // Agent Identity: automatic learning on task success
+      if (aggregated.status === 'success') {
+        await this.learnFromTaskSuccess(orchestratorTask.objective, aggregated.output).catch(() => undefined);
+      }
 
       return finalResult;
     } catch (error) {
@@ -236,6 +243,28 @@ export class RunService {
         duration: now - startTime,
       },
     };
+  }
+
+  /**
+   * Learn from successful task completion (Agent Identity automatic learning)
+   *
+   * Calls CoreMemoryEvolver.onTaskSuccess() to update agent stats and
+   * potentially evolve the system prompt based on patterns observed.
+   */
+  private async learnFromTaskSuccess(objective: string, output: unknown): Promise<void> {
+    try {
+      const agentId = getAgentIdFromEnv();
+      const evolver = new CoreMemoryEvolver();
+      const summary = typeof output === 'string'
+        ? output.slice(0, 200)
+        : JSON.stringify(output).slice(0, 200);
+      // onTaskSuccess expects (taskDescription, learnings[], agentId)
+      // For automatic learning, we pass the summary as a single-item learnings array
+      await evolver.onTaskSuccess(objective, [summary], agentId);
+      console.debug('[RunService] Agent identity updated after task success');
+    } catch {
+      // Identity learning is best-effort, don't fail the task
+    }
   }
 }
 
