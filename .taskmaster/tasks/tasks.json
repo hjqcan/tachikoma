@@ -1787,9 +1787,10 @@
             "description": "增强现有 SkillsManager 集成，添加学习提示与统计",
             "dependencies": [3, 7],
             "details": "1. 复用 SkillsManager 的 reload() 和 renderSystemPromptSection()\\n2. GenericAgentBackend 启动时自动刷新 skills Memory Block\\n3. 任务成功后可选提示用户学习技能\\n4. 添加使用统计（加载次数、任务成功率）\\n5. 更新 packages/core/src/skills/README.md\\n6. 运行 bun test packages/core/tests/skills 确保回归测试通过",
-            "status": "pending",
+            "status": "done",
             "testStrategy": "回归测试：现有 skills 功能不受影响；新增集成正确",
-            "parentId": "17"
+            "parentId": "17",
+            "updatedAt": "2025-12-25T10:26:00.000Z"
           }
         ]
       },
