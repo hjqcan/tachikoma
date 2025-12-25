@@ -1831,10 +1831,11 @@
             "title": "设计 Memory Block 分层架构",
             "description": "定义全局块与项目块的类型、存储位置与隔离机制",
             "dependencies": [],
-            "details": "1. 在 packages/core/src/agent-identity/blocks.ts 定义 BLOCK_LABELS：\\n   - GLOBAL: ['persona', 'preferences']（存储在 ~/.tachikoma/memory/）\\n   - PROJECT: ['project', 'skills', 'loaded_skills']（存储在 .tachikoma/memory/）\\n   - READ_ONLY: ['skills', 'loaded_skills']（由工具管理）\\n2. 定义 MemoryBlock 接口（label/value/description/readOnly/scope）\\n3. 实现 BlockLoader：按 scope 加载对应目录的块\\n4. 实现 BlockWriter：原子写入块内容\n<info added on 2025-12-25T04:26:31.262Z>\n补充整合约束（避免双真相）：BlockLoader/BlockWriter 是 blocks 落盘的底层真相；SkillBlockManager 保留 separator 与 renderLoadedSkillsForPrompt 的格式化职责。skillTool 与 /skill load/unload/refresh 更新 skills/loaded_skills 时必须同步落盘到 /.tachikoma/memory/{skills,loaded_skills}.md；启动时从这些文件恢复 loaded_skills。增加安全防御：原子写、最大文件大小、READ_ONLY blocks 默认拒绝直接写。\n</info added on 2025-12-25T04:26:31.262Z>",
-            "status": "pending",
+            "details": "1. 在 packages/core/src/agent-identity/blocks.ts 定义 BLOCK_LABELS：\\n   - GLOBAL: ['persona', 'preferences']（存储在 ~/.tachikoma/memory/）\\n   - PROJECT: ['project', 'skills', 'loaded_skills']（存储在 .tachikoma/memory/）\\n   - READ_ONLY: ['skills', 'loaded_skills']（由工具管理）\\n2. 定义 MemoryBlock 接口（label/value/description/readOnly/scope）\\n3. 实现 BlockLoader：按 scope 加载对应目录的块\\n4. 实现 BlockWriter：原子写入块内容\\n<info added on 2025-12-25T04:26:31.262Z>\\n补充整合约束（避免双真相）：BlockLoader/BlockWriter 是 blocks 落盘的底层真相；SkillBlockManager 保留 separator 与 renderLoadedSkillsForPrompt 的格式化职责。skillTool 与 /skill load/unload/refresh 更新 skills/loaded_skills 时必须同步落盘到 /.tachikoma/memory/{skills,loaded_skills}.md；启动时从这些文件恢复 loaded_skills。增加安全防御：原子写、最大文件大小、READ_ONLY blocks 默认拒绝直接写。\\n</info added on 2025-12-25T04:26:31.262Z>",
+            "status": "done",
             "testStrategy": "单元测试：块正确加载；全局/项目隔离；只读块拒绝直接写入",
-            "parentId": "18"
+            "parentId": "18",
+            "updatedAt": "2025-12-25T15:10:00.000Z"
           },
           {
             "id": 2,
