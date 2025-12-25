@@ -1701,8 +1701,10 @@
         "details": "## 现有模块分析（已实现，复用）\\n- loader.ts：Skill Discovery（global/project/additional 目录扫描）\\n- manager.ts：SkillManager（createSkill/reload/convertToTool）\\n- renderer.ts：renderSkillsSection（System Prompt 注入）\\n- executor.ts：executeSkillScript（沙盒执行）\\n- create_skill tool：动态创建 Skill\\n\\n## 新增功能（Letta-Code 启发）\\n- **Skill Learning**：从执行轨迹学习，生成 SKILL.md（Reflection+Creation 两阶段）\\n- **load/unload 命令**：复用 loadSkillContent()，增加 Memory Block 写入\\n- **skills/loaded_skills 内存块**：与 ContextManager 集成\\n- **/skill CLI 命令**：learn/list/load/unload/refresh\\n\\n## 关键差异\\n- Tachikoma Skills = 可执行脚本（自动转 Tool）\\n- Letta-Code Skills = 知识包（渐进加载到 Context）\\n- 本任务：融合两者，支持「知识型 Skill」+ 现有「脚本型 Skill」",
         "testStrategy": "- 单元测试：复用 packages/core/tests/skills.test.ts 现有测试；新增 learning 模块测试\\n- 集成测试：/skill learn 生成 SKILL.md 后可被现有 loadSkills() 发现\\n- 性能测试：学习后的技能提升任务成功率 >20%\\n- 回归测试：确保现有 SkillManager.createSkill() 功能不受影响",
         "priority": "high",
-        "dependencies": ["9"],
-        "status": "pending",
+        "dependencies": [
+          "9"
+        ],
+        "status": "done",
         "subtasks": [
           {
             "id": 1,
@@ -1719,7 +1721,9 @@
             "id": 2,
             "title": "实现 Skill Tool（load/unload/refresh 命令）",
             "description": "扩展现有 create_skill tool，增加动态加载/卸载能力",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "1. 在 packages/core/src/tools/core/skill-tool.ts 新增 skill tool（区别于 create_skill）\\n2. 复用现有模块：\\n   - refresh: 调用 loadSkills() + 写入 skills Memory Block\\n   - load: 调用 loadSkillContent() + 写入 loaded_skills Memory Block\\n   - unload: 从 loaded_skills 块移除指定技能\\n3. 与 SkillsManager 集成：复用其 reload() 机制\\n4. 输入 schema: { command: 'load' | 'unload' | 'refresh', skills?: string[] }",
             "status": "done",
             "testStrategy": "单元测试：各命令正确调用现有模块；Memory Block 更新正确",
@@ -1730,7 +1734,10 @@
             "id": 3,
             "title": "实现 skills/loaded_skills Memory Block",
             "description": "创建专用内存块，与 ContextManager 和 MemoryService 集成",
-            "dependencies": [1, 2],
+            "dependencies": [
+              1,
+              2
+            ],
             "details": "1. 在 packages/core/src/skills/blocks.ts 定义：\\n   - SKILL_MEMORY_BLOCKS = ['skills', 'loaded_skills']\\n   - 标记为 readOnly（由 Skill Tool 管理）\\n2. skills 块：调用 renderSkillsSection() 生成内容\\n3. loaded_skills 块：存储完整 SKILL.md body（格式: # Skill: {name}\\n{body}\\n---）\\n4. 与 ContextManager 集成：loaded_skills 自动注入到 system prompt\\n5. 复用 SkillsManager.renderSystemPromptSection() 现有逻辑",
             "status": "done",
             "testStrategy": "集成测试：Memory Block 正确创建；ContextManager 注入正确",
@@ -1752,7 +1759,9 @@
             "id": 5,
             "title": "实现 Creation 阶段（技能生成）",
             "description": "基于反思结果生成 SKILL.md，复用现有 SkillManager.createSkill 逻辑",
-            "dependencies": [4],
+            "dependencies": [
+              4
+            ],
             "details": "1. 在 packages/core/src/skills/learning/creation.ts 实现 SkillCreator\\n2. 输入：ReflectionResult + 用户指导（可选）\\n3. 生成 SKILL.md：YAML frontmatter + 推荐方法/常见陷阱/验证策略\\n4. skillType: 'knowledge'（知识型，不包含 scripts/）\\n5. 复用 SkillManager 的目录创建逻辑，但不生成脚本\\n6. 调用 loadSkills() 刷新技能列表",
             "status": "done",
             "testStrategy": "集成测试：生成的 SKILL.md 可被现有 loader 解析",
@@ -1763,7 +1772,10 @@
             "id": 6,
             "title": "实现 learnSkillFromTrajectory 编排函数",
             "description": "组合 Reflection + Creation 的完整学习流程",
-            "dependencies": [4, 5],
+            "dependencies": [
+              4,
+              5
+            ],
             "details": "1. 在 packages/core/src/skills/learning/index.ts 实现 learnSkillFromTrajectory()\\n2. 流程：reflect() → create() → reload() → 更新 Memory Block\\n3. 支持 feedback 输入（测试结果/类型检查）\\n4. 返回 LearnedSkill（name/path/summary）\\n5. 导出到 skills/index.ts",
             "status": "done",
             "testStrategy": "端到端测试：从轨迹到技能生成完整流程",
@@ -1774,7 +1786,10 @@
             "id": 7,
             "title": "实现 /skill CLI 命令",
             "description": "在 ConversationalRunner 中添加 /skill 命令",
-            "dependencies": [2, 6],
+            "dependencies": [
+              2,
+              6
+            ],
             "details": "1. 在 packages/core/src/conversation/commands/skill-command.ts 实现\\n2. 命令支持：\\n   - /skill：显示帮助\\n   - /skill list：列出可用技能（调用 loadSkills()）\\n   - /skill load <name>：加载技能（调用 Skill Tool）\\n   - /skill unload <name>：卸载技能\\n   - /skill learn [description]：从轨迹学习技能\\n3. 与 ConversationalRunner 命令系统集成",
             "status": "done",
             "testStrategy": "集成测试：各命令正确触发；帮助信息完整",
@@ -1785,14 +1800,18 @@
             "id": 8,
             "title": "集成到 GenericAgentBackend 与 SkillsManager",
             "description": "增强现有 SkillsManager 集成，添加学习提示与统计",
-            "dependencies": [3, 7],
+            "dependencies": [
+              3,
+              7
+            ],
             "details": "1. 复用 SkillsManager 的 reload() 和 renderSystemPromptSection()\\n2. GenericAgentBackend 启动时自动刷新 skills Memory Block\\n3. 任务成功后可选提示用户学习技能\\n4. 添加使用统计（加载次数、任务成功率）\\n5. 更新 packages/core/src/skills/README.md\\n6. 运行 bun test packages/core/tests/skills 确保回归测试通过",
             "status": "done",
             "testStrategy": "回归测试：现有 skills 功能不受影响；新增集成正确",
             "parentId": "17",
             "updatedAt": "2025-12-25T10:26:00.000Z"
           }
-        ]
+        ],
+        "updatedAt": "2025-12-25T03:01:49.296Z"
       },
       {
         "id": "18",
@@ -1801,7 +1820,10 @@
         "details": "- Memory Blocks 分层：全局块（persona/preferences，跨项目）+ 项目块（project/skills，当前目录）。\\n- Agent Identity：持久化 Agent ID、创建时间、会话统计、进化的 Core Memory。\\n- /remember 命令：用户主动引导 Agent 记住特定内容（工作偏好、项目规范、常见错误）。\\n- Core Memory 进化：System Prompt 基于学习内容逐渐进化，跨任务通用。\\n- 参考 Letta-Code：'Like having a coworker or mentee that learns and remembers'。",
         "testStrategy": "- 单元测试：Memory Block 正确隔离（全局/项目）；/remember 正确存储到对应块。\\n- 集成测试：跨会话记忆保持；Core Memory 进化后行为改变。\\n- 用户体验测试：相同项目多次使用，Agent 记住用户偏好。",
         "priority": "high",
-        "dependencies": ["9", "17"],
+        "dependencies": [
+          "9",
+          "17"
+        ],
         "status": "pending",
         "subtasks": [
           {
@@ -1818,7 +1840,9 @@
             "id": 2,
             "title": "实现 AgentIdentity 持久化",
             "description": "存储 Agent 元数据与进化的 Core Memory",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "1. 在 packages/core/src/agent-identity/identity.ts 定义 AgentIdentity 接口：\\n   - id: string（唯一标识）\\n   - createdAt: number\\n   - sessionsCount: number\\n   - tasksCompleted: number\\n   - skillsLearned: string[]\\n   - coreMemory: { systemPrompt: string, preferences: string[], workPatterns: string[] }\\n2. 存储位置：~/.tachikoma/agents/{agentId}.json\\n3. 实现 loadIdentity(agentId) / saveIdentity(identity)\\n4. 首次运行时创建默认 Identity",
             "status": "pending",
             "testStrategy": "单元测试：创建、加载、保存 Identity；统计更新正确",
@@ -1828,7 +1852,9 @@
             "id": 3,
             "title": "实现 Core Memory 进化机制",
             "description": "基于学习内容更新 System Prompt",
-            "dependencies": [2],
+            "dependencies": [
+              2
+            ],
             "details": "1. 在 packages/core/src/agent-identity/evolution.ts 实现 CoreMemoryEvolver 类\\n2. evolveSystemPrompt(learnings: string[])：\\n   - 分析学习内容，提取通用模式\\n   - 追加到 coreMemory.systemPrompt（不删除原有内容）\\n   - 控制总长度（压缩旧内容）\\n3. learnPreference(preference: string)：添加用户偏好\\n4. learnWorkPattern(pattern: string)：添加工作模式\\n5. 自动触发：任务成功后、/remember 后、技能学习后",
             "status": "pending",
             "testStrategy": "单元测试：进化内容正确追加；压缩逻辑正确；不丢失关键信息",
@@ -1838,7 +1864,10 @@
             "id": 4,
             "title": "实现 /remember 命令",
             "description": "用户主动引导 Agent 记住特定内容",
-            "dependencies": [1, 3],
+            "dependencies": [
+              1,
+              3
+            ],
             "details": "1. 在 packages/core/src/conversation/commands/remember.ts 实现 handleRememberCommand()\\n2. 命令格式：/remember [可选内容]\\n3. 流程：\\n   - 分析对话上下文，确定要记住什么\\n   - 选择合适的内存块（persona/preferences/project）\\n   - 调用 MemoryService 或 BlockWriter 存储\\n   - 调用 CoreMemoryEvolver 更新 Identity\\n   - 确认存储结果\\n4. 参考 Letta 的 remember.md prompt 设计",
             "status": "pending",
             "testStrategy": "集成测试：各类内容（偏好/规则/事实）正确存储到对应块；确认消息正确",
@@ -1848,7 +1877,9 @@
             "id": 5,
             "title": "实现 /clear 会话重置",
             "description": "清空当前消息但保留持久记忆",
-            "dependencies": [1],
+            "dependencies": [
+              1
+            ],
             "details": "1. 在 packages/core/src/conversation/commands/clear.ts 实现 handleClearCommand()\\n2. 行为（参考 Letta）：\\n   - 清空当前会话消息（ContextManager.clear()）\\n   - 保留所有 Memory Blocks\\n   - 保留 Agent Identity\\n   - 增加 sessionsCount\\n3. 与 ConversationalRunner.reset() 区分（后者完全重置）",
             "status": "pending",
             "testStrategy": "集成测试：/clear 后消息清空但记忆保留；会话计数增加",
@@ -1858,7 +1889,12 @@
             "id": 6,
             "title": "集成到 GenericAgentBackend 与 ConversationalRunner",
             "description": "自动加载 Identity 与 Memory Blocks",
-            "dependencies": [2, 3, 4, 5],
+            "dependencies": [
+              2,
+              3,
+              4,
+              5
+            ],
             "details": "1. ConversationalRunner 启动时加载 AgentIdentity\\n2. GenericAgentBackend 构造时注入 coreMemory.systemPrompt\\n3. 加载全局块（persona/preferences）和项目块（project/skills）\\n4. 任务完成后自动更新 Identity 统计\\n5. 会话结束时保存 Identity\\n6. 添加配置开关：identityConfig.enabled（默认 true）",
             "status": "pending",
             "testStrategy": "端到端测试：完整生命周期（启动→执行→学习→保存）；跨会话记忆保持",
@@ -1868,7 +1904,9 @@
             "id": 7,
             "title": "完善测试与文档",
             "description": "补充端到端测试，编写 Agent Identity 文档",
-            "dependencies": [6],
+            "dependencies": [
+              6
+            ],
             "details": "1. 在 packages/core/tests/agent-identity 添加完整测试套件\\n2. 端到端测试：多会话场景、/remember 流程、Core Memory 进化\\n3. 编写 README 说明 Agent Identity 机制\\n4. 添加迁移指南（从无 Identity 到有 Identity）\\n5. 运行 bun test 确保全量通过\\n6. 更新 walkthrough.md",
             "status": "pending",
             "testStrategy": "bun test 通过；用户体验测试：多次使用后 Agent 记住偏好",
@@ -1879,9 +1917,9 @@
     ],
     "metadata": {
       "version": "1.0.0",
-      "lastModified": "2025-12-18T01:54:40.000Z",
+      "lastModified": "2025-12-25T03:01:49.298Z",
       "taskCount": 18,
-      "completedCount": 9,
+      "completedCount": 10,
       "tags": [
         "master"
       ]

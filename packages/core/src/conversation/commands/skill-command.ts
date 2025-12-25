@@ -11,6 +11,8 @@
  * @module conversation/commands/skill-command
  */
 
+import { join } from 'node:path';
+
 import {
   loadSkills,
   getGlobalSkillBlockManager,
@@ -388,7 +390,7 @@ async function* executeSkillLearn(
     };
 
     // 2. 学习技能
-    const skillsDir = `${ctx.workDir}/.tachikoma/skills`;
+    const skillsDir = join(ctx.workDir, '.tachikoma', 'skills');
     const result: LearnSkillResult = await learnSkillFromTrajectory(trajectory, {
       llmCall: ctx.llmCall,
       skillsDir,

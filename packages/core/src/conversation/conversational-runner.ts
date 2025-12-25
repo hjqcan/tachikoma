@@ -685,9 +685,22 @@ All other messages are sent to the AI for processing.`,
     const ctx: SkillCommandContext = {
       session,
       workDir: this.config.workDir,
-      // llmCall 暂时设为 undefined，/skill learn 会提示需要 LLM
-      // 后续可以通过配置或扩展来提供 LLM 能力
-      llmCall: undefined,
+      // 使用配置的 LLM 为 /skill learn 提供能力
+      llmCall: async (prompt: string) => {
+        const client = createLLMClient({
+          provider: 'openai',
+          model: this.config.llm.model ?? 'gpt-4o',
+          apiKey: this.config.llm.apiKey,
+          ...(this.config.llm.baseUrl && { baseUrl: this.config.llm.baseUrl }),
+          maxTokens: 8192,
+        });
+        const response = await client.complete({
+          systemPrompt: 'You are a helpful assistant specialized in analyzing code execution patterns.',
+          messages: [{ role: 'user', content: prompt }],
+          maxTokens: 4096,
+        });
+        return response.content ?? '';
+      },
       t: (strings: { en: string; zh: string }) => this.t(session, strings),
       getTrajectory: async () => {
         // 从 session variables 获取最近的轨迹

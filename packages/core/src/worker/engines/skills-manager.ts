@@ -14,6 +14,7 @@ import {
   renderSkillsSection,
   renderSkillsSectionWithRecommendations,
   renderSkillsSectionWithActivation,
+  getGlobalSkillBlockManager,
 } from '../../skills';
 import type { ContextMessage } from '../../prompt/types';
 import { 
@@ -50,6 +51,10 @@ export class SkillsManager {
   
   /** 最近一次渲染时激活的 Skills */
   private lastActivatedSkills: ActivatedSkill[] = [];
+  
+  /** 使用统计 */
+  private reloadCount = 0;
+  private lastReloadTime = 0;
 
   /**
    * @param config - Skills 配置
@@ -68,6 +73,9 @@ export class SkillsManager {
    * (重新)加载 Skills 和 Context
    */
   reload(): void {
+    this.reloadCount++;
+    this.lastReloadTime = Date.now();
+
     // 1. Load Skills
     if (this.config?.enabled !== false) {
       const outcome: SkillLoadOutcome = loadSkills(
@@ -92,7 +100,16 @@ export class SkillsManager {
       this.loadErrors = [];
     }
 
-    // 2. Initialize Project Context Injector
+    // 2. Sync to Memory Block (for /skill list and context injection)
+    try {
+      const blockManager = getGlobalSkillBlockManager();
+      blockManager.refreshSkillsBlock(this.skills);
+    } catch (error) {
+      // Best-effort: don't fail reload if block manager has issues
+      console.debug('[SkillsManager] Memory Block refresh failed (continuing):', error);
+    }
+
+    // 3. Initialize Project Context Injector
     if (this.projectContextConfig?.enabled) {
       const loader = createProjectContextLoader(this.projectContextConfig);
       this.projectContextInjector = createProjectContextInjector(loader);
@@ -124,6 +141,17 @@ export class SkillsManager {
   }
 
   /**
+   * 获取使用统计
+   */
+  getStats(): { reloadCount: number; skillCount: number; lastReloadTime: number } {
+    return {
+      reloadCount: this.reloadCount,
+      skillCount: this.skills.length,
+      lastReloadTime: this.lastReloadTime,
+    };
+  }
+
+  /**
    * 渲染 System Prompt 附加部分 (Skills + Project Context)
    * 
    * 支持两种模式：
@@ -140,6 +168,22 @@ export class SkillsManager {
     options?: SkillRenderOptions & { parentObjective?: string }
   ): Promise<string> {
     let finalPrompt = basePrompt;
+
+    // 始终注入“手动加载”的 skills（loaded_skills）
+    // - 这是 Letta-Code 风格的关键闭环：用户/Agent 显式 load 后，必须立刻影响后续推理
+    // - best-effort：任何异常都不应影响主流程
+    const appendLoadedSkills = (prompt: string): string => {
+      try {
+        const blockManager = getGlobalSkillBlockManager();
+        const loadedSection = blockManager.renderLoadedSkillsForPrompt();
+        if (loadedSection) {
+          return `${prompt}\n\n${loadedSection}`;
+        }
+      } catch (error) {
+        console.debug('[SkillsManager] Loaded skills render failed (continuing):', error);
+      }
+      return prompt;
+    };
 
     // 合并上下文用于技能匹配（父任务目标 + 子任务描述）
     // 这确保了子任务能继承父任务的领域关键词
@@ -177,8 +221,8 @@ export class SkillsManager {
       if (section) {
         finalPrompt += '\n\n' + section;
       }
-      
-      return finalPrompt;
+
+      return appendLoadedSkills(finalPrompt);
     }
 
     // 旧模式：只渲染列表（向后兼容）
@@ -204,7 +248,7 @@ export class SkillsManager {
     // 2. Render Project Context - handled separately via injectProjectContext
     // because it injects messages, not just text into system prompt
     
-    return finalPrompt;
+    return appendLoadedSkills(finalPrompt);
   }
 
   /**
