@@ -198,8 +198,18 @@ export class ExecutionLoop {
 
     const execState = this.state.executionState;
     if (subtask.dependencies && execState) {
+      // 诊断日志：检查依赖状态
+      const depStatuses = subtask.dependencies.map(depId => ({
+        id: depId,
+        completed: execState.completedSubtasks.has(depId),
+        failed: execState.failedSubtasks.has(depId),
+        running: execState.runningSubtasks.has(depId),
+      }));
+      console.debug(`[ExecutionLoop] Checking dependencies for subtask ${subtaskId}:`, depStatuses);
+      
       for (const depId of subtask.dependencies) {
         if (!execState.completedSubtasks.has(depId)) {
+          console.warn(`[ExecutionLoop] DEPENDENCY VIOLATION: Subtask ${subtaskId} requires ${depId} which is not completed`);
           this.state.markSubtaskFailed(subtaskId, `Dependency ${depId} not completed`);
           return;
         }
@@ -331,12 +341,15 @@ export class ExecutionLoop {
           if (typeof wd === 'string') workerMetadata.workDir = wd;
         }
 
+        // Derive language constraints from role capabilities
+        const roleConstraints = this.deriveConstraintsFromRole(activeSubtask.roleId);
+        
         const workerTask: Task = {
           id: activeSubtask.id,
           type: 'atomic',
           objective: activeSubtask.objective,
           ...(activeSubtask.parentObjective !== undefined && { parentObjective: activeSubtask.parentObjective }),
-          constraints: activeSubtask.constraints ?? [],
+          constraints: [...(activeSubtask.constraints ?? []), ...roleConstraints],
           ...(activeSubtask.outputSchema !== undefined && { outputSchema: activeSubtask.outputSchema }),
           context: {
             parentTaskId: taskId,
@@ -381,6 +394,7 @@ export class ExecutionLoop {
 
         this.state.markSubtaskCompleted(subtaskId, result);
         activeSubtask.status = 'success';
+        console.info(`[ExecutionLoop] Subtask ${subtaskId} completed successfully`);
         await this.taskMasterAdapter.writeStatus(subtaskId, 'done').catch(() => undefined);
         await this.getApprovalService()?.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
 
@@ -430,6 +444,63 @@ export class ExecutionLoop {
         signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+  }
+
+  /**
+   * Derive language constraints from role capabilities
+   * 
+   * Maps role capabilities like 'react', 'vue', 'python' to constraint strings
+   * that deriveConstraintPolicy() can parse to allow corresponding languages.
+   * 
+   * NOTE: To avoid CONSTRAINT_CONFLICT, we only take the FIRST match per family.
+   * This prevents conflicts when a role accidentally has multiple frameworks.
+   */
+  private deriveConstraintsFromRole(roleId?: string): string[] {
+    if (!roleId) return [];
+    
+    const planOutput = this.state.currentPlanOutput;
+    const role = planOutput?.roles?.find(r => r.id === roleId);
+    if (!role?.capabilities) return [];
+    
+    const constraints: string[] = [];
+    const capabilities = role.capabilities;
+    
+    // Framework definitions
+    const frontendFrameworks = ['react', 'vue', 'angular', 'svelte', 'astro', 'nextjs', 'nuxtjs'];
+    const cssFrameworks = ['tailwindcss', 'tailwind', 'bootstrap', 'material-ui', 'mui', 'chakra', 'antd'];
+    const backendFrameworks = ['fastapi', 'flask', 'django', 'express', 'nestjs', 'spring', 'gin'];
+    
+    // Track first match per family to avoid conflicts
+    let foundFrontend = false;
+    let foundCss = false;
+    let foundBackend = false;
+    
+    for (const cap of capabilities) {
+      const lowerCap = cap.toLowerCase();
+      
+      // Only take first frontend framework to avoid conflicts
+      if (!foundFrontend && frontendFrameworks.some(f => lowerCap.includes(f))) {
+        constraints.push(`Use ${cap}`);
+        foundFrontend = true;
+      }
+      // Only take first CSS framework
+      if (!foundCss && cssFrameworks.some(f => lowerCap.includes(f))) {
+        constraints.push(`Use ${cap}`);
+        foundCss = true;
+      }
+      // Only take first backend framework
+      if (!foundBackend && backendFrameworks.some(f => lowerCap.includes(f))) {
+        constraints.push(`Use ${cap}`);
+        foundBackend = true;
+      }
+    }
+    
+    // Log derived constraints for debugging
+    if (constraints.length > 0) {
+      console.debug(`[ExecutionLoop] Derived constraints from role '${roleId}':`, constraints);
+    }
+    
+    return constraints;
   }
 }
 

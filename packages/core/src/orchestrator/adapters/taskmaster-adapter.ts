@@ -188,6 +188,7 @@ export class TaskMasterAdapter {
   async writeStatus(id: string, status: TaskMasterTaskStatus): Promise<void> {
     if (!this.projectRoot || !this.tasksPath) return;
 
+    console.info(`[TaskMasterAdapter] Status update: ${id} -> ${status}`);
     await updateTaskOrSubtaskStatus(id, status, {
       projectRoot: this.projectRoot,
       file: this.tasksPath,

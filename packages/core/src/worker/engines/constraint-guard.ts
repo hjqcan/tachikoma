@@ -232,7 +232,12 @@ export function deriveConstraintPolicy(constraints: string[]): ConstraintPolicy 
     disallowedBackendFamilies: new Set(),
   };
 
-  if (!Array.isArray(constraints)) return policy;
+  if (!Array.isArray(constraints)) {
+    console.debug('[ConstraintGuard] No constraints provided, returning empty policy');
+    return policy;
+  }
+  
+  console.debug('[ConstraintGuard] Deriving policy from constraints:', constraints);
 
   for (const raw of constraints) {
     if (!raw || typeof raw !== 'string') continue;
@@ -275,6 +280,14 @@ export function deriveConstraintPolicy(constraints: string[]): ConstraintPolicy 
         applyRuleMatch(policy, 'language', rule.language, negated);
       }
     }
+  }
+
+  // Log derived policy for debugging
+  if (policy.allowedLanguages.size > 0 || policy.allowedFrontendFamilies.size > 0) {
+    console.debug('[ConstraintGuard] Derived policy:', {
+      allowedLanguages: Array.from(policy.allowedLanguages),
+      allowedFrontendFamilies: Array.from(policy.allowedFrontendFamilies),
+    });
   }
 
   return policy;

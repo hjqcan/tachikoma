@@ -1,48 +1,50 @@
 Goal (incl. success criteria):
-
-- Start Step 5 (evaluation regression set): define a repeatable benchmark suite for CLI agent runs,
-  with stored prompts/fixtures and measurable pass/fail criteria.
+- Diagnose tachikoma output quality for test-mvp task, explain why result isn't runnable, compare with opencode, and propose fixes/logging to make outputs runnable.
 
 Constraints/Assumptions:
-
 - Follow AGENTS/CONTINUITY rules; keep edits ASCII unless existing file uses Unicode.
 - Approval policy: never; sandbox: danger-full-access; network enabled.
+- Avoid sudo unless explicitly required; root-owned output may block reruns.
 
 Key decisions:
-
-- Step 5 should cover core tasks and stability regressions; store prompts + expected signals.
+- Clone opencode into repo-local `thrid-party/opencode` unless user prefers absolute `/thrid-party`.
+- No code changes yet; focus on analysis and suggested fixes/logging.
 
 State:
-
-- Step 4 execution gate implemented and verified (core typecheck/build passing); inspecting existing
-  eval artifacts for Step 5.
+- Tachikoma run not reproducible due to root-owned `test-mvp` from prior sudo run.
+- Output inspection completed; opencode prompts inspected for build/verify guidance.
 
 Done:
-
-- Step 4: build+smoke execution gate in submit_result, auto-detect for
-  node/python/go/rust/java/.NET, skip when no signals found; env-configurable overrides.
-- Step 4 follow-up: fixed strict TS issues (exactOptionalPropertyTypes/noUncheckedIndexedAccess) and
-  hardened submit_result paths (sanitize SESSION_ID/WORKER_ID/filename; validate artifacts/result
-  stay in workDir).
-- Found existing eval artifacts: `evals/basic.json` and `docs/evals.md`.
-- `docs/evals.md` defines eval JSON format and CLI usage; `evals/basic.json` is a minimal smoke set.
+- Attempted `sudo -E bun run ...` (failed due to no TTY password prompt).
+- Attempted non-sudo run (failed with EACCES creating `test-mvp/.tachikoma`).
+- Inspected `test-mvp` output; key issues:
+  - Frontend compile issues: `src/hooks/useApi.ts` imports missing `./api`/`./mockApi` (should be `src/services/*`), and uses `apiService` directly.
+  - Types missing: `src/types/music.ts` lacks `Artist`/`Album` used by `src/services/api.ts`.
+  - Tailwind build config missing (`postcss.config.js`, autoprefixer), so `src/index.css` @tailwind directives won't compile.
+  - Material icons not loaded (`index.html`) but used in `src/pages/MusicPage.tsx`.
+  - Tests fail: Jest APIs used under Vitest; import paths wrong (e.g., `src/App.test.tsx`).
+  - README/start scripts cover backend only; no unified FE+BE run.
+- Logs show tests failing and timing out; tasks still marked done:
+  - `test-mvp/.tachikoma/conversations/sessions/conv-0ff28da9/conversation/session.json` contains `run_tests` failures (missing deps, jest not defined, timeouts).
+- Cloned `https://github.com/sst/opencode` to `thrid-party/opencode` and inspected prompts:
+  - Plan/build split in `packages/opencode/src/session/prompt.ts`.
+  - Provider prompts emphasize build/test verification (e.g., `packages/opencode/src/session/prompt/gemini.txt`, `codex.txt`).
 
 Now:
-
-- Assess `evals/basic.json` and advise whether the current eval layout fits Step 5 needs.
+- Produce analysis of why output is not runnable, why quality is low, and how to fix.
 
 Next:
-
-- Inspect existing docs/tests to decide where to place evaluation fixtures and how to run them.
+- Propose enforcement changes (treat failed tools/tests as failures; add validation stage; better scaffolding), and optional logging additions.
 
 Open questions (UNCONFIRMED if needed):
-
-- UNCONFIRMED: preferred format/location for regression cases (docs/, .tachikoma/, tests/)?
-- UNCONFIRMED: do we need automated runner or just curated manual prompts + expected outcomes?
+- UNCONFIRMED: Should opencode be cloned to absolute `/thrid-party` instead of repo-local `thrid-party/`?
 
 Working set (files/ids/commands):
-
-- docs/orchestrator-skills-design.md
-- packages/core/src/tools/core/submit-result.ts
-- evals/basic.json
-- docs/evals.md
+- CONTINUITY.md
+- test-mvp/ (README.md, package.json, src/hooks/useApi.ts, src/services/api.ts, src/types/music.ts, src/pages/MusicPage.tsx, index.html)
+- test-mvp/.tachikoma/conversations/sessions/conv-0ff28da9/conversation/session.json
+- packages/core/src/worker/worker-executor.ts
+- packages/core/src/tools/core/run-tests.ts
+- packages/core/src/worker/prompts/system-prompt.ts
+- thrid-party/opencode/packages/opencode/src/session/prompt.ts
+- thrid-party/opencode/packages/opencode/src/session/prompt/gemini.txt
