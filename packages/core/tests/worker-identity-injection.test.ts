@@ -73,14 +73,15 @@ describe('18.6 identityContext injection in SDK backends', () => {
     });
 
     // 调用私有方法（仅用于测试注入逻辑；tools 为空不会触发真实 MCP 执行）
+    // buildSDKOptions signature: (tools, options, task, memoryContext, skillsManager, taskObjective, taskParentObjective, constraintPolicy)
     const sdkOptions = (await (backend as any).buildSDKOptions(
-      [],
-      { workDir },
-      undefined,
-      undefined,
-      'test-objective',
-      undefined,
-      undefined
+      [],                        // tools
+      { workDir },               // options
+      undefined,                 // task
+      undefined,                 // memoryContext
+      undefined,                 // skillsManager (skip to avoid renderSystemPromptSection call)
+      'test-objective',          // taskObjective
+      undefined                  // taskParentObjective
     )) as Record<string, unknown>;
 
     const systemPrompt = sdkOptions.systemPrompt as string | undefined;
