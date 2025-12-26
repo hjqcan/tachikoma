@@ -35,6 +35,17 @@ import { getAgentIdFromEnv, IdentityUpdater } from '../agent-identity';
 
 type UserLanguage = 'en' | 'zh';
 
+const INIT_PROMPT_TEMPLATE = `Please analyze this codebase and create an AGENTS.md file containing:
+1. Build/lint/test commands - especially for running a single test
+2. Code style guidelines including imports, formatting, types, naming conventions, error handling, etc.
+
+The file you create will be given to agentic coding agents (such as yourself) that operate in this repository. Make it about 150 lines long.
+If there are Cursor rules (in .cursor/rules/ or .cursorrules) or Copilot rules (in .github/copilot-instructions.md), make sure to include them.
+
+If there's already an AGENTS.md, improve it if it's located in \${path}
+
+$ARGUMENTS`;
+
 // =============================================================================
 // ConversationalRunner 类
 // =============================================================================
@@ -221,6 +232,7 @@ export class ConversationalRunner {
    * - /retry - 从最近的检查点继续执行
    * - /clear [--checkpoints] - 清空会话
    * - /remember [type] <content> - 记住偏好/模式/原则
+   * - /init [args] - 初始化 AGENTS.md
    * - /help - 显示帮助
    */
   async *handleMessage(
@@ -361,6 +373,10 @@ export class ConversationalRunner {
       case 'remember':
       case '记住':
         yield* this.executeRemember(session, args);
+        return { handled: true };
+
+      case 'init':
+        yield* this.executeInit(session, args);
         return { handled: true };
 
       default:
@@ -660,8 +676,8 @@ export class ConversationalRunner {
       success: true,
       summary: clearCheckpoints
         ? this.t(session, {
-            en: 'Conversation cleared (including checkpoints). Memory and identity preserved. Ready for a fresh start.',
-            zh: '对话已清空（包含检查点）。记忆和身份已保留。可以重新开始。',
+            en: 'Conversation cleared (including checkpoints). Memory and identity preserved. Note: Active task state is preserved.',
+            zh: '对话已清空（包含检查点）。记忆和身份已保留。注意：当前任务状态会保留。',
           })
         : this.t(session, {
             en: 'Conversation cleared. Memory, identity, and checkpoints preserved. Note: Active task state is preserved.',
@@ -687,6 +703,7 @@ export class ConversationalRunner {
 /clear [--checkpoints]   - Clear conversation (preserves memory/identity)
 /remember [type] <text>  - Remember preference/pattern/principle
 /skill [subcommand]      - Manage skills (list/load/unload/learn)
+/init [args]             - Create or update AGENTS.md
 /help                    - Show this help message
 
 All other messages are sent to the AI for processing.`,
@@ -698,12 +715,46 @@ All other messages are sent to the AI for processing.`,
 /clear [--checkpoints]   - 清空对话（保留记忆/身份）
 /remember [类型] <内容>   - 记住偏好/模式/原则
 /skill [子命令]          - 管理技能（list/load/unload/learn）
+/init [参数]             - 创建或更新 AGENTS.md
 /help                    - 显示帮助
 
 其他消息会发送给 AI 处理。`,
       }),
       timestamp: Date.now(),
     };
+  }
+
+  /**
+   * /init [args] - Initialize AGENTS.md
+   */
+  private async *executeInit(
+    session: SessionState,
+    args: string[],
+  ): AsyncGenerator<StreamEvent> {
+    const initPrompt = this.buildInitPrompt(args);
+
+    yield {
+      type: 'thinking',
+      content: this.t(session, {
+        en: 'Initializing project rules (AGENTS.md)...',
+        zh: '正在初始化项目规则（AGENTS.md）...',
+      }),
+      timestamp: Date.now(),
+    };
+
+    yield* this.handleNewTask(session, initPrompt);
+  }
+
+  private buildInitPrompt(args: string[]): string {
+    const argumentText = args.join(' ').trim();
+    const withPath = INIT_PROMPT_TEMPLATE.replace(
+      '${path}',
+      this.config.workDir
+    );
+    if (!argumentText) {
+      return withPath.replace('$ARGUMENTS', '').trim();
+    }
+    return withPath.replace('$ARGUMENTS', argumentText).trim();
   }
 
   /**
@@ -1055,6 +1106,8 @@ All other messages are sent to the AI for processing.`,
       constraints: [
         `Current working directory: ${resolve(this.config.workDir)}`,
         'All file operations must use relative paths.',
+        'Definition of Done (default): build + smoke for runnable apps/services.',
+        'Verification: run the smallest relevant build/test/smoke commands when available; do not claim success without verification.',
         ...(contextText
           ? [`Conversation context (for reference only; do not quote verbatim):\n${contextText}`]
           : []),
@@ -1117,6 +1170,52 @@ All other messages are sent to the AI for processing.`,
     const truncate = (text: string, max: number): string => {
       if (text.length <= max) return text;
       return `${text.slice(0, max)}…[truncated]`;
+    };
+    const extractApplyPatchFiles = (input: unknown): string[] => {
+      const files = new Set<string>();
+      if (isRecord(input)) {
+        const directPath = input.path;
+        if (typeof directPath === 'string' && directPath.trim()) {
+          files.add(directPath.trim());
+        }
+      }
+
+      const patchText = (() => {
+        if (typeof input === 'string') return input;
+        if (!isRecord(input)) return null;
+        const candidates = ['freeform', 'patch', 'diff', 'content', 'input'];
+        for (const key of candidates) {
+          const value = input[key];
+          if (typeof value === 'string') return value;
+        }
+        return null;
+      })();
+
+      if (!patchText) {
+        return Array.from(files);
+      }
+
+      for (const line of patchText.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('*** Update File:')) {
+          files.add(trimmed.replace('*** Update File:', '').trim());
+          continue;
+        }
+        if (trimmed.startsWith('*** Add File:')) {
+          files.add(trimmed.replace('*** Add File:', '').trim());
+          continue;
+        }
+        if (trimmed.startsWith('*** Delete File:')) {
+          files.add(trimmed.replace('*** Delete File:', '').trim());
+          continue;
+        }
+        if (trimmed.startsWith('*** Move to:')) {
+          files.add(trimmed.replace('*** Move to:', '').trim());
+          continue;
+        }
+      }
+
+      return Array.from(files);
     };
     const summarizeToolOutput = (
       tool: string,
@@ -1342,9 +1441,15 @@ All other messages are sent to the AI for processing.`,
         push({ type: 'tool_call', tool, input, timestamp: Date.now() });
 
         // 追踪文件操作（用于 summary）
-        if (['file_write', 'apply_patch'].includes(tool)) {
+        if (tool === 'file_write') {
           const path = (input as Record<string, unknown>).path as string | undefined;
           if (path && !filesAffected.includes(path)) filesAffected.push(path);
+        }
+        if (tool === 'apply_patch') {
+          const paths = extractApplyPatchFiles(input);
+          for (const path of paths) {
+            if (path && !filesAffected.includes(path)) filesAffected.push(path);
+          }
         }
         return;
       }

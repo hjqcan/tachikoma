@@ -46,7 +46,6 @@ import {
   createDefaultPromptConfig,
   type PromptContextEngineDependencies,
   type PromptContextEngine,
-  DEFAULT_PROJECT_CONTEXT_CONFIG,
 } from '../../prompt';
 
 // Memory 模块
@@ -91,6 +90,7 @@ import {
   // SkillsManager
   type SkillsManager,
   createSkillsManager,
+  resolveProjectContextConfig,
   // Interaction Engine
   InteractionEngine,
 } from '../engines';
@@ -234,10 +234,13 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     this.llmExecutor = createLLMExecutor(this.llmClient, llmExecutorConfig);
 
     // 初始化 Skills Manager
+    const projectContextConfig = resolveProjectContextConfig(
+      config.projectContextConfig
+    );
     this.skillsManager = createSkillsManager(
       config.skillsConfig, 
       config.workDir ?? process.cwd(),
-      { ...DEFAULT_PROJECT_CONTEXT_CONFIG, enabled: true }
+      projectContextConfig
     );
 
     this.interactionEngine = new InteractionEngine();
@@ -491,8 +494,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
 
     // Build dynamic system prompt with identity context
     const baseSystemPrompt = identityContext
-      ? buildWorkerSystemPrompt({ identityContext })
-      : buildWorkerSystemPrompt();
+      ? buildWorkerSystemPrompt({
+          identityContext,
+          provider: this.config.provider,
+          model: this.config.model,
+        })
+      : buildWorkerSystemPrompt({ provider: this.config.provider, model: this.config.model });
 
     // Pass task objective for skill recommendations with auto-activation
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(

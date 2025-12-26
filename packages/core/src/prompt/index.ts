@@ -187,6 +187,7 @@ export {
   type ProjectContext,
   type ProjectContextMetadata,
   type ProjectContextLoaderConfig,
+  type ProjectContextConfig,
   DEFAULT_PROJECT_CONTEXT_CONFIG,
   // 类
   ProjectContextLoader,

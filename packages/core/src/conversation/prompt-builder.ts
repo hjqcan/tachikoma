@@ -12,6 +12,18 @@ import type { SessionState, ConversationMessage } from './types';
 
 const DEFAULT_MAX_MESSAGES = 20;
 const SUMMARY_THRESHOLD = 10;
+const VARIABLE_REDACTION_PATTERN = /(secret|token|password|apikey|api_key|auth|bearer)/i;
+const MAX_VARIABLE_CHARS = 800;
+const MAX_VARIABLE_STRING_CHARS = 200;
+const MAX_VARIABLE_ARRAY_ITEMS = 20;
+const MAX_VARIABLE_OBJECT_KEYS = 20;
+const MAX_VARIABLE_DEPTH = 3;
+const EXECUTION_DISCIPLINE_SECTION = [
+  '## Execution Discipline',
+  '- Default DoD for runnable apps/services: build + smoke (start and keep running without errors).',
+  '- Prefer explicit verification steps (build/test/smoke) when relevant.',
+  '- If verification is skipped, explain why and provide the exact command to run.',
+].join('\n');
 
 // =============================================================================
 // PromptBuilder 类
@@ -41,6 +53,8 @@ export class ConversationPromptBuilder {
     parts.push(`Working directory: ${session.workDir}`);
     parts.push(`Session duration: ${this.formatDuration(Date.now() - session.createdAt)}`);
 
+    parts.push(`\n${EXECUTION_DISCIPLINE_SECTION}`);
+
     // 2. 变量上下文（包含上次任务目标和错误信息）
     if (Object.keys(session.variables).length > 0) {
       parts.push('\n## Shared Variables');
@@ -51,10 +65,26 @@ export class ConversationPromptBuilder {
       if (session.variables.lastRunError) {
         parts.push(`- Last run error: ${session.variables.lastRunError}`);
       }
+      // Trajectory buffers are intentionally omitted from LLM context to avoid prompt bloat/leaks.
+      // They are still persisted in session.variables for deterministic /skill learn extraction.
+      const recentThinking = session.variables.recentThinking;
+      if (Array.isArray(recentThinking)) {
+        parts.push(`- recentThinking: ${recentThinking.length} record(s) (omitted)`);
+      }
+      const recentActions = session.variables.recentActions;
+      if (Array.isArray(recentActions)) {
+        parts.push(`- recentActions: ${recentActions.length} record(s) (omitted)`);
+      }
       // 其他变量
       for (const [key, value] of Object.entries(session.variables)) {
-        if (key !== 'lastObjective' && key !== 'lastRunError' && key !== 'lastFilesAffected') {
-          parts.push(`- ${key}: ${JSON.stringify(value)}`);
+        if (
+          key !== 'lastObjective' &&
+          key !== 'lastRunError' &&
+          key !== 'lastFilesAffected' &&
+          key !== 'recentThinking' &&
+          key !== 'recentActions'
+        ) {
+          parts.push(`- ${key}: ${this.formatVariableValue(key, value)}`);
         }
       }
     }
@@ -204,6 +234,90 @@ export class ConversationPromptBuilder {
       return `${minutes}m`;
     }
     return `${seconds}s`;
+  }
+
+  private formatVariableValue(key: string, value: unknown): string {
+    if (this.isSensitiveKey(key)) {
+      return '[REDACTED]';
+    }
+
+    const normalized = this.normalizeVariableValue(value, 0, new WeakSet<object>());
+    let serialized: string;
+    try {
+      serialized = typeof normalized === 'string' ? normalized : JSON.stringify(normalized);
+    } catch {
+      serialized = String(normalized);
+    }
+
+    return this.truncateString(serialized, MAX_VARIABLE_CHARS);
+  }
+
+  private normalizeVariableValue(
+    value: unknown,
+    depth: number,
+    seen: WeakSet<object>
+  ): unknown {
+    if (value === null || value === undefined) return value;
+
+    const valueType = typeof value;
+    if (valueType === 'string') {
+      return this.truncateString(value, MAX_VARIABLE_STRING_CHARS);
+    }
+    if (valueType === 'number' || valueType === 'boolean') {
+      return value;
+    }
+    if (valueType === 'bigint') {
+      return value.toString();
+    }
+    if (valueType === 'symbol' || valueType === 'function') {
+      return String(value);
+    }
+
+    if (typeof value === 'object') {
+      if (seen.has(value as object)) {
+        return '[Circular]';
+      }
+      seen.add(value as object);
+
+      if (depth >= MAX_VARIABLE_DEPTH) {
+        return '[Truncated]';
+      }
+
+      if (Array.isArray(value)) {
+        const items = value.slice(0, MAX_VARIABLE_ARRAY_ITEMS).map((item) =>
+          this.normalizeVariableValue(item, depth + 1, seen)
+        );
+        if (value.length > MAX_VARIABLE_ARRAY_ITEMS) {
+          items.push(`...${value.length - MAX_VARIABLE_ARRAY_ITEMS} more`);
+        }
+        return items;
+      }
+
+      const entries = Object.entries(value as Record<string, unknown>);
+      entries.sort(([a], [b]) => a.localeCompare(b));
+      const limited = entries.slice(0, MAX_VARIABLE_OBJECT_KEYS);
+      const result: Record<string, unknown> = {};
+      for (const [entryKey, entryValue] of limited) {
+        result[entryKey] = this.isSensitiveKey(entryKey)
+          ? '[REDACTED]'
+          : this.normalizeVariableValue(entryValue, depth + 1, seen);
+      }
+      if (entries.length > MAX_VARIABLE_OBJECT_KEYS) {
+        result['...'] = `${entries.length - MAX_VARIABLE_OBJECT_KEYS} more`;
+      }
+      return result;
+    }
+
+    return String(value);
+  }
+
+  private isSensitiveKey(key: string): boolean {
+    return VARIABLE_REDACTION_PATTERN.test(key);
+  }
+
+  private truncateString(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text;
+    return `${text.slice(0, maxLength)}...[truncated]`;
   }
 
   /**

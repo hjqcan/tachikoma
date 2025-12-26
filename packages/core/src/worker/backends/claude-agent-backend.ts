@@ -21,7 +21,7 @@ import { MemoryService } from '../../memory';
 import { BaseWorkerBackend, ToolCallBudgetExceededError, isRetryableError } from './base-backend';
 import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
-import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy } from '../engines';
+import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy, resolveProjectContextConfig } from '../engines';
 import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
 
 // 工具调用追踪器（防循环）
@@ -265,9 +265,13 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     }
 
     let attempt = 0;
+    const projectContextConfig = resolveProjectContextConfig(
+      this.config.projectContextConfig
+    );
     const skillsManager = createSkillsManager(
       this.config.skillsConfig,
-      options.workDir ?? process.cwd()
+      options.workDir ?? process.cwd(),
+      projectContextConfig
     );
 
     try {
@@ -557,7 +561,16 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
 
     // Build unified system prompt with memory context (if available)
     // Filter undefined values for exactOptionalPropertyTypes
-    const promptOptions: { memoryContext?: string; extraSystemPrompt?: string; identityContext?: string } = {};
+    const promptOptions: {
+      memoryContext?: string;
+      extraSystemPrompt?: string;
+      identityContext?: string;
+      provider?: string;
+      model?: string;
+    } = {
+      provider: this.config.provider,
+      model: this.config.model,
+    };
     if (memoryContext) promptOptions.memoryContext = memoryContext;
     if (sdkConfig.systemPrompt) promptOptions.extraSystemPrompt = sdkConfig.systemPrompt;
 
@@ -589,7 +602,11 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
       systemPrompt = await skillsManager.renderSystemPromptSection(
         systemPrompt, 
         taskObjective,
-        { autoActivate: true, ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }) }
+        { 
+          autoActivate: true,
+          includeProjectContext: true,
+          ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }),
+        }
       );
     }
     

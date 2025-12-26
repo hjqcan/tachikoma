@@ -101,6 +101,7 @@ export {
 export {
   SkillsManager,
   createSkillsManager,
+  resolveProjectContextConfig,
 } from './skills-manager';
 
 // Interaction Engine

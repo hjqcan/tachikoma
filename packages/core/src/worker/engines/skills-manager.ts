@@ -21,16 +21,10 @@ import {
   createProjectContextLoader,
   type ProjectContextInjector, 
   createProjectContextInjector, 
-  type ProjectContextLoaderConfig
+  type ProjectContextConfig,
+  DEFAULT_PROJECT_CONTEXT_CONFIG
 } from '../../prompt';
 import type { SkillError } from '../../skills';
-
-/**
- * 项目上下文配置（扩展 ProjectContextLoaderConfig 以包含 enabled）
- */
-export interface ProjectContextConfig extends ProjectContextLoaderConfig {
-  enabled?: boolean;
-}
 
 // ============================================================================
 // Skills Manager
@@ -48,6 +42,7 @@ export class SkillsManager {
   private skills: SkillMetadata[] = [];
   private loadErrors: SkillError[] = [];
   private projectContextInjector: ProjectContextInjector | undefined;
+  private projectContextCacheState: { workDir: string; loadedAt: number } | null = null;
   
   /** 最近一次渲染时激活的 Skills */
   private lastActivatedSkills: ActivatedSkill[] = [];
@@ -113,9 +108,11 @@ export class SkillsManager {
     if (this.projectContextConfig?.enabled) {
       const loader = createProjectContextLoader(this.projectContextConfig);
       this.projectContextInjector = createProjectContextInjector(loader);
+      this.projectContextCacheState = null;
       console.debug('[SkillsManager] ProjectContextInjector initialized');
     } else {
       this.projectContextInjector = undefined;
+      this.projectContextCacheState = null;
     }
   }
 
@@ -165,9 +162,15 @@ export class SkillsManager {
   async renderSystemPromptSection(
     basePrompt: string,
     taskDescription?: string,
-    options?: SkillRenderOptions & { parentObjective?: string }
+    options?: SkillRenderOptions & { parentObjective?: string; includeProjectContext?: boolean }
   ): Promise<string> {
     let finalPrompt = basePrompt;
+    if (options?.includeProjectContext) {
+      const projectContextSection = await this.renderProjectContextSection();
+      if (projectContextSection) {
+        finalPrompt += '\n\n' + projectContextSection;
+      }
+    }
 
     // 始终注入“手动加载”的 skills（loaded_skills）
     // - 这是 Letta-Code 风格的关键闭环：用户/Agent 显式 load 后，必须立刻影响后续推理
@@ -245,8 +248,7 @@ export class SkillsManager {
       finalPrompt += '\n\n' + skillsSection;
     }
 
-    // 2. Render Project Context - handled separately via injectProjectContext
-    // because it injects messages, not just text into system prompt
+    // Project Context can be injected as messages or appended to system prompt
     
     return appendLoadedSkills(finalPrompt);
   }
@@ -261,9 +263,53 @@ export class SkillsManager {
     if (!this.projectContextInjector) {
       return messages;
     }
-    
-    this.projectContextInjector.clearCache();
-    return this.projectContextInjector.injectProjectContext(messages, workDir);
+
+    const shouldRefresh = this.shouldRefreshProjectContext(workDir);
+    if (shouldRefresh) {
+      this.projectContextInjector.clearCache();
+    }
+    const injected = await this.projectContextInjector.injectProjectContext(
+      messages,
+      workDir
+    );
+    if (shouldRefresh || !this.projectContextCacheState) {
+      this.projectContextCacheState = { workDir, loadedAt: Date.now() };
+    }
+    return injected;
+  }
+
+  private async renderProjectContextSection(): Promise<string | null> {
+    if (!this.projectContextInjector) {
+      return null;
+    }
+
+    const shouldRefresh = this.shouldRefreshProjectContext(this.workDir);
+    if (shouldRefresh) {
+      this.projectContextInjector.clearCache();
+    }
+    const injected = await this.projectContextInjector.injectProjectContext([], this.workDir);
+    if (shouldRefresh || !this.projectContextCacheState) {
+      this.projectContextCacheState = { workDir: this.workDir, loadedAt: Date.now() };
+    }
+    const projectMessage = injected.find((m) => m.id === 'project-context');
+    return projectMessage ? projectMessage.content : null;
+  }
+
+  private shouldRefreshProjectContext(workDir: string): boolean {
+    if (!this.projectContextCacheState) {
+      return true;
+    }
+    if (this.projectContextCacheState.workDir !== workDir) {
+      return true;
+    }
+    const ttl = this.projectContextConfig?.cacheTtlMs;
+    if (ttl === undefined) {
+      return false;
+    }
+    if (ttl <= 0) {
+      return true;
+    }
+    return Date.now() - this.projectContextCacheState.loadedAt >= ttl;
   }
 }
 
@@ -276,4 +322,20 @@ export function createSkillsManager(
   projectContextConfig?: ProjectContextConfig
 ): SkillsManager {
   return new SkillsManager(config, workDir, projectContextConfig);
+}
+
+export function resolveProjectContextConfig(
+  config?: ProjectContextConfig
+): ProjectContextConfig | undefined {
+  if (!config) {
+    return { ...DEFAULT_PROJECT_CONTEXT_CONFIG, enabled: true };
+  }
+  if (config.enabled === false) {
+    return config;
+  }
+  return {
+    ...DEFAULT_PROJECT_CONTEXT_CONFIG,
+    ...config,
+    enabled: true,
+  };
 }

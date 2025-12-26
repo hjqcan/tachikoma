@@ -32,6 +32,7 @@ import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 import {
   createSkillsManager,
+  resolveProjectContextConfig,
   checkToolInputSize,
   deriveConstraintPolicy,
   checkToolCallAgainstConstraints,
@@ -541,9 +542,13 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     };
     let totalToolCalls = 0;
     let toolArgsRetryHint: string | null = null;
+    const projectContextConfig = resolveProjectContextConfig(
+      this.config.projectContextConfig
+    );
     const skillsManager = createSkillsManager(
       this.config.skillsConfig,
-      options.workDir ?? process.cwd()
+      options.workDir ?? process.cwd(),
+      projectContextConfig
     );
     const constraintPolicy = deriveConstraintPolicy(task.constraints);
 
@@ -610,7 +615,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           const systemPrompt = await skillsManager.renderSystemPromptSection(
             systemPromptWithContext,
             task.objective,
-            { autoActivate: true, ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }) }
+            { 
+              autoActivate: true,
+              includeProjectContext: true,
+              ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }),
+            }
           );
 
           // 转换工具为 SDK tool() 格式
@@ -1010,6 +1019,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
     return buildWorkerSystemPrompt({
       memoryContext,
+      provider: this.config.provider,
+      model: this.config.model,
       ...(identityContext ? { identityContext } : {}),
       ...(typeof extraSystemPrompt === 'string' ? { extraSystemPrompt } : {}),
     });

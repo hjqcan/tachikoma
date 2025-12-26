@@ -126,6 +126,12 @@ export const PLANNING_SYSTEM_PROMPT = `You are a task planning expert. Your resp
 - Consider failure scenarios and rollback strategies
 - **Essential**: Subtask objectives must be self-contained and descriptive (e.g., instead of "Setup project", use "Setup React project structure for Music App"). Do not assume the Worker knows the parent task context implicitly.
 
+## Execution Discipline (Must Include Verification)
+- Every plan must include explicit verification subtasks when relevant (build/test/smoke).
+- Default DoD for runnable apps/services: build + smoke (start the app/service and confirm it stays up without errors).
+- If build/test commands are unknown, include a subtask to discover them (README, package.json, scripts, etc.) before running.
+- Do not declare the plan complete without a verification step.
+
 ## Large File Creation Strategy (Important)
 When tasks involve creating large code files (>80 lines), use a phased approach:
 
@@ -202,6 +208,12 @@ export const PATCH_PLANNING_SYSTEM_PROMPT = `You are an incremental modification
 - Minimize number of subtasks: small changes usually need only 1-3 subtasks
 - For large changes, still follow "large file phased strategy" but only cover change-related parts
 
+## Execution Discipline (Must Include Verification)
+- Include explicit verification subtasks when relevant (build/test/smoke).
+- Default DoD for runnable apps/services: build + smoke (start the app/service and confirm it stays up without errors).
+- If build/test commands are unknown, include a subtask to discover them before running.
+- Keep verification steps close to the change they validate.
+
 ## Output Requirements
 You must output in JSON format with the following fields:
 - intake: Task intake assessment (optional but recommended; for clarification needs)
@@ -235,6 +247,7 @@ export const SUBTASK_REFINE_SYSTEM_PROMPT = `You are a subtask decomposition rev
 - Keep the subtasks executable in sequence; avoid hidden dependencies.
 - Preserve all original constraints; do not relax them.
 - Prefer small, testable units over large multi-part tasks.
+- If the subtask is a verification step (build/test/smoke), keep it as a single atomic subtask.
 
 ## Output Requirements
 Return JSON only, with fields:
@@ -257,6 +270,12 @@ ${objective}
 
 ## Constraints
 ${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'No special constraints'}
+`;
+
+  prompt += `
+## Definition of Done
+- Default for runnable apps/services: build + smoke (start and keep running without errors).
+- Include explicit verification steps (build/test/smoke) when relevant.
 `;
 
   if (availableTools && availableTools.length > 0) {
@@ -347,6 +366,12 @@ ${objective}
 
 ## Constraints
 ${constraints.length > 0 ? constraints.map((c, i) => `${i + 1}. ${c}`).join('\n') : 'No special constraints'}
+`;
+
+  prompt += `
+## Definition of Done
+- Default for runnable apps/services: build + smoke (start and keep running without errors).
+- Include explicit verification steps (build/test/smoke) when relevant.
 `;
 
   if (previousContext) {

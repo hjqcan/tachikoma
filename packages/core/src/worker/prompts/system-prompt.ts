@@ -35,6 +35,18 @@ const TESTING_GUIDE = `## Progressive Testing
 - Expand to related tests as confidence builds.
 - Avoid running the full suite unless needed.`;
 
+const STRICT_EXECUTION_DISCIPLINE = `## Completion & Verification Discipline
+- Do not stop until the task meets its definition of done.
+- Default DoD for runnable software: build + smoke (start the app/service and confirm it stays up without errors).
+- Always attempt the smallest relevant build/test/smoke command when available.
+- If verification fails, keep iterating until it passes or you are blocked.
+- If you cannot run a command (missing script, permissions, time), state it explicitly and provide the exact command the user should run.
+- Never fabricate test results or server output.`;
+
+const BALANCED_EXECUTION_DISCIPLINE = `## Completion & Verification Discipline
+- Prefer to validate changes with build/tests or smoke checks when feasible.
+- If verification is skipped, explain why and provide the exact command to run.`;
+
 const TOOL_SELECTION_GUIDE = `## Tool Selection Guide
 - Search code: shell_run + rg
 - Read file: file_read
@@ -48,12 +60,33 @@ const COMMUNICATION_GUIDE = `## Communication
 - Before tool calls, send a brief preamble describing what you're about to do.
 - Keep explanations concise unless asked for detail.`;
 
+type PromptProfile = 'strict' | 'balanced';
+
+function resolvePromptProfile(options?: { provider?: string; model?: string; discipline?: PromptProfile }): PromptProfile {
+  if (options?.discipline) return options.discipline;
+  const key = `${options?.provider ?? ''} ${options?.model ?? ''}`.toLowerCase();
+  if (key.includes('gpt-5') || key.includes('o1') || key.includes('o3')) return 'strict';
+  if (key.includes('claude') || key.includes('gpt') || key.includes('gemini')) return 'strict';
+  return 'balanced';
+}
+
 export function buildWorkerSystemPrompt(options?: {
   memoryContext?: string;
   extraSystemPrompt?: string;
   /** Agent Identity CoreMemory (preferences, work patterns, learned principles) */
   identityContext?: string;
+  /** Provider/model hint for prompt profile selection */
+  provider?: string;
+  model?: string;
+  /** Optional override for prompt discipline profile */
+  discipline?: PromptProfile;
 }): string {
+  const profile = resolvePromptProfile({
+    ...(options?.provider ? { provider: options.provider } : {}),
+    ...(options?.model ? { model: options.model } : {}),
+    ...(options?.discipline ? { discipline: options.discipline } : {}),
+  });
+  const disciplineGuide = profile === 'strict' ? STRICT_EXECUTION_DISCIPLINE : BALANCED_EXECUTION_DISCIPLINE;
   const parts = [
     SYSTEM_PROMPT_BASE,
   ];
@@ -73,6 +106,7 @@ ${options.identityContext.trim()}`
     ERROR_RECOVERY_GUIDE,
     TASK_TRACKING_GUIDE,
     TESTING_GUIDE,
+    disciplineGuide,
     TOOL_SELECTION_GUIDE,
     COMMUNICATION_GUIDE,
     WORKER_BEHAVIOR_GUIDELINES_EN

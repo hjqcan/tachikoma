@@ -9,7 +9,7 @@ import type { Sandbox, SandboxConfig } from '../sandbox';
 import type { SandboxSecurityPolicy } from '../sandbox/tool-executor';
 import type { LLMClient } from '../planner/types';
 import type { InterventionFile } from '../orchestrator/session/types';
-import type { PromptContextConfig } from '../prompt';
+import type { PromptContextConfig, ProjectContextConfig } from '../prompt';
 import type { SkillDiscoveryConfig } from '../skills';
 import type { MemoryConfig } from '../memory';
 
@@ -564,6 +564,13 @@ export interface WorkerBackendBaseConfig {
    * 如果提供，将在启动时加载 Skills 并注入到 system prompt
    */
   skillsConfig?: SkillDiscoveryConfig;
+
+  /**
+   * 项目上下文配置
+   *
+   * 控制 AGENTS.md/CLAUDE.md 等规则注入，以及文件树/环境摘要
+   */
+  projectContextConfig?: ProjectContextConfig;
 
   /**
    * Agent Identity 配置

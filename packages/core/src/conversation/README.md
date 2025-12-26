@@ -44,6 +44,7 @@ conversation/
 | `/retry [checkpointId]`  | Resume from the latest checkpoint |
 | `/clear [--checkpoints]` | Clear conversation history        |
 | `/help`                  | Show available commands           |
+| `/init [args]`           | Create or update AGENTS.md        |
 
 All other messages are sent to the Orchestrator for AI processing.
 
