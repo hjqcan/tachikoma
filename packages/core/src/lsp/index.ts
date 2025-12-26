@@ -138,9 +138,10 @@ function applyLspOverrides(
     const spawnFn = override.command
       ? async (rootDir: string, _workDir: string, env: Record<string, string>) => {
           if (!override.command || override.command.length === 0) return undefined;
-          const [command, ...args] = override.command;
+          const [first, ...rest] = override.command;
+          if (!first) return undefined;
           const handle: LspServerHandle = {
-            process: spawn(command, args, {
+            process: spawn(first, rest, {
               cwd: rootDir,
               env: { ...process.env, ...env, ...(envOverride ?? {}) },
             }),

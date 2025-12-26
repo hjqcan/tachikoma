@@ -59,9 +59,65 @@ async function resolveBinary(
   return null;
 }
 
+/**
+ * Detect Python virtual environment and resolve pythonPath for LSP initialization.
+ * Checks VIRTUAL_ENV env var first, then .venv and venv directories in project root.
+ */
+async function detectPythonVenv(
+  root: string,
+  env: Record<string, string>
+): Promise<{ pythonPath?: string; venvBinDir?: string }> {
+  const isWindows = process.platform === 'win32';
+  const pythonBin = isWindows ? 'python.exe' : 'python';
+  const binSubdir = isWindows ? 'Scripts' : 'bin';
+
+  const potentialVenvPaths = [
+    env.VIRTUAL_ENV ?? process.env.VIRTUAL_ENV,
+    path.join(root, '.venv'),
+    path.join(root, 'venv'),
+  ].filter((p): p is string => p !== undefined && p.length > 0);
+
+  for (const venvPath of potentialVenvPaths) {
+    const binDir = path.join(venvPath, binSubdir);
+    const pythonPath = path.join(binDir, pythonBin);
+    if (await fileExists(pythonPath)) {
+      return { pythonPath, venvBinDir: binDir };
+    }
+  }
+
+  return {};
+}
+
+/**
+ * Try to resolve a binary from venv first, then fall back to PATH.
+ */
+async function resolvePythonToolBinary(
+  name: string,
+  root: string,
+  env: Record<string, string>
+): Promise<{ binary: string | null; pythonPath: string | undefined }> {
+  const venv = await detectPythonVenv(root, env);
+
+  // Check venv bin directory first
+  if (venv.venvBinDir) {
+    const isWindows = process.platform === 'win32';
+    const ext = isWindows ? '.exe' : '';
+    const candidate = path.join(venv.venvBinDir, name + ext);
+    if (await fileExists(candidate)) {
+      return { binary: candidate, pythonPath: venv.pythonPath };
+    }
+  }
+
+  // Fall back to PATH resolution
+  const binary = await resolveBinary(name, root, env);
+  return { binary, pythonPath: venv.pythonPath };
+}
+
 function matchesPattern(name: string, pattern: string): boolean {
   if (!pattern.includes('*')) return name === pattern;
-  const [prefix, suffix] = pattern.split('*');
+  const parts = pattern.split('*');
+  const prefix = parts[0] ?? '';
+  const suffix = parts[1] ?? '';
   if (prefix && !name.startsWith(prefix)) return false;
   if (suffix && !name.endsWith(suffix)) return false;
   return name.length >= prefix.length + suffix.length;
@@ -532,7 +588,19 @@ export function getDefaultServers(): Record<string, LspServerInfo> {
       root: tyRoot,
       extensions: ['.py', '.pyi'],
       async spawn(root, _workDir, env) {
-        return spawnBinaryServer('ty', ['server'], root, env);
+        const { binary, pythonPath } = await resolvePythonToolBinary('ty', root, env);
+        if (!binary) return undefined;
+
+        const handle: LspServerHandle = {
+          process: spawn(binary, ['server'], {
+            cwd: root,
+            env: { ...process.env, ...env },
+          }),
+        };
+        if (pythonPath) {
+          handle.initialization = { pythonPath };
+        }
+        return handle;
       },
     },
     pyright: {
@@ -540,7 +608,19 @@ export function getDefaultServers(): Record<string, LspServerInfo> {
       root: pyrightRoot,
       extensions: ['.py', '.pyi'],
       async spawn(root, _workDir, env) {
-        return spawnBinaryServer('pyright-langserver', ['--stdio'], root, env);
+        const { binary, pythonPath } = await resolvePythonToolBinary('pyright-langserver', root, env);
+        if (!binary) return undefined;
+
+        const handle: LspServerHandle = {
+          process: spawn(binary, ['--stdio'], {
+            cwd: root,
+            env: { ...process.env, ...env },
+          }),
+        };
+        if (pythonPath) {
+          handle.initialization = { pythonPath };
+        }
+        return handle;
       },
     },
     'elixir-ls': {
