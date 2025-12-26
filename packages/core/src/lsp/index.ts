@@ -1,8 +1,9 @@
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { LSPClient } from './client';
 import { LSPClient as LspClient } from './client';
-import type { LspServerInfo } from './server';
+import type { LspServerHandle, LspServerInfo } from './server';
 import { getDefaultServers } from './server';
 
 export interface LspStatus {
@@ -22,16 +23,159 @@ interface LspState {
 
 const states = new Map<string, LspState>();
 
-function isLspDisabled(env: Record<string, string> | undefined): boolean {
-  const value = env?.TACHIKOMA_LSP ?? env?.TACHIKOMA_LSP_ENABLED;
+export interface LspServerOverride {
+  disabled?: boolean;
+  command?: string[];
+  extensions?: string[];
+  env?: Record<string, string>;
+  initialization?: Record<string, unknown>;
+}
+
+type LspOverrideMap = Record<string, LspServerOverride>;
+
+function readEnvValue(env: Record<string, string> | undefined, key: string): string | undefined {
+  return env?.[key] ?? process.env[key];
+}
+
+function isDisabledValue(value: string | undefined): boolean {
   if (!value) return false;
   return ['0', 'false', 'off', 'no'].includes(value.toLowerCase());
+}
+
+function isTruthyValue(value: string | undefined): boolean {
+  if (!value) return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+function isLspDisabled(env: Record<string, string> | undefined): boolean {
+  const value = readEnvValue(env, 'TACHIKOMA_LSP') ?? readEnvValue(env, 'TACHIKOMA_LSP_ENABLED');
+  return isDisabledValue(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeOverrides(value: unknown): LspOverrideMap | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: LspOverrideMap = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (!isRecord(raw)) continue;
+    const entry: LspServerOverride = {};
+    if (raw.disabled === true) {
+      entry.disabled = true;
+      result[key] = entry;
+      continue;
+    }
+    if (Array.isArray(raw.command) && raw.command.every((item) => typeof item === 'string' && item.length > 0)) {
+      entry.command = raw.command;
+    }
+    if (Array.isArray(raw.extensions) && raw.extensions.every((item) => typeof item === 'string')) {
+      entry.extensions = raw.extensions;
+    }
+    if (isRecord(raw.env)) {
+      const envMap: Record<string, string> = {};
+      for (const [envKey, envValue] of Object.entries(raw.env)) {
+        if (typeof envValue === 'string') envMap[envKey] = envValue;
+      }
+      if (Object.keys(envMap).length > 0) entry.env = envMap;
+    }
+    if (isRecord(raw.initialization)) {
+      entry.initialization = raw.initialization;
+    }
+    if (Object.keys(entry).length > 0) result[key] = entry;
+  }
+  return result;
+}
+
+function parseLspOverrides(env: Record<string, string> | undefined): LspOverrideMap | false | undefined {
+  const raw =
+    readEnvValue(env, 'TACHIKOMA_LSP_CONFIG') ??
+    readEnvValue(env, 'TACHIKOMA_LSP_MAP');
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed === false) return false;
+    return normalizeOverrides(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function applyExperimentalFilters(servers: Record<string, LspServerInfo>, env: Record<string, string> | undefined) {
+  const tyEnabled = isTruthyValue(readEnvValue(env, 'TACHIKOMA_LSP_EXPERIMENTAL_TY'));
+  if (tyEnabled) {
+    delete servers.pyright;
+  } else {
+    delete servers.ty;
+  }
+}
+
+function applyLspOverrides(
+  servers: Record<string, LspServerInfo>,
+  overrides: LspOverrideMap | false | undefined
+): Record<string, LspServerInfo> {
+  if (overrides === false) return {};
+  if (!overrides) return servers;
+
+  const result: Record<string, LspServerInfo> = { ...servers };
+
+  for (const [name, override] of Object.entries(overrides)) {
+    if (override.disabled) {
+      delete result[name];
+      continue;
+    }
+
+    const existing = result[name];
+    if (!existing && !override.command && !override.extensions) continue;
+
+    const root = existing?.root ?? (async (_file, workDir) => workDir);
+    const extensions = override.extensions ?? existing?.extensions ?? [];
+    const baseSpawn = existing?.spawn;
+    const envOverride = override.env;
+    const initOverride = override.initialization;
+
+    const spawnFn = override.command
+      ? async (rootDir: string, _workDir: string, env: Record<string, string>) => {
+          if (!override.command || override.command.length === 0) return undefined;
+          const [command, ...args] = override.command;
+          const handle: LspServerHandle = {
+            process: spawn(command, args, {
+              cwd: rootDir,
+              env: { ...process.env, ...env, ...(envOverride ?? {}) },
+            }),
+          };
+          if (initOverride && handle) {
+            handle.initialization = initOverride;
+          }
+          return handle;
+        }
+      : async (rootDir: string, workDir: string, env: Record<string, string>) => {
+          if (!baseSpawn) return undefined;
+          const mergedEnv = envOverride ? { ...env, ...envOverride } : env;
+          const handle = await baseSpawn(rootDir, workDir, mergedEnv);
+          if (handle && initOverride) {
+            handle.initialization = { ...handle.initialization, ...initOverride };
+          }
+          return handle;
+        };
+
+    result[name] = {
+      id: name,
+      root,
+      extensions,
+      spawn: spawnFn,
+    };
+  }
+
+  return result;
 }
 
 function getState(workDir: string, env?: Record<string, string>): LspState {
   const resolvedWorkDir = path.resolve(workDir);
   const existing = states.get(resolvedWorkDir);
-  const disabled = isLspDisabled(env);
+  const overrides = parseLspOverrides(env);
+  const disabled = isLspDisabled(env) || overrides === false;
 
   if (existing) {
     if (env && Object.keys(env).length > 0) {
@@ -43,10 +187,16 @@ function getState(workDir: string, env?: Record<string, string>): LspState {
     return existing;
   }
 
+  let servers = disabled ? {} : getDefaultServers();
+  if (!disabled) {
+    applyExperimentalFilters(servers, env);
+    servers = applyLspOverrides(servers, overrides);
+  }
+
   const state: LspState = {
     workDir: resolvedWorkDir,
     env: env ?? {},
-    servers: disabled ? {} : getDefaultServers(),
+    servers,
     clients: [],
     broken: new Set<string>(),
     spawning: new Map<string, Promise<LSPClient.Info | undefined>>(),
@@ -57,7 +207,7 @@ function getState(workDir: string, env?: Record<string, string>): LspState {
 
 async function getClients(filePath: string, workDir: string, env?: Record<string, string>) {
   const state = getState(workDir, env);
-  const extension = path.extname(filePath) || filePath;
+  const extension = path.extname(filePath) || path.basename(filePath);
   const result: LSPClient.Info[] = [];
 
   for (const server of Object.values(state.servers)) {
@@ -153,7 +303,7 @@ export namespace LSP {
 
   export async function hasClients(filePath: string, workDir: string, env?: Record<string, string>) {
     const state = getState(workDir, env);
-    const extension = path.extname(filePath) || filePath;
+    const extension = path.extname(filePath) || path.basename(filePath);
     for (const server of Object.values(state.servers)) {
       if (server.extensions.length > 0 && !server.extensions.includes(extension)) continue;
       const root = await server.root(filePath, state.workDir);
