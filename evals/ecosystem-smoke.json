@@ -1,0 +1,26 @@
+{
+  "id": "ecosystem-smoke",
+  "name": "Ecosystem Smoke Set",
+  "description": "Run with --workdir set to evals/fixtures/<ecosystem>.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "touch-readme",
+      "objective": "Update README.md by appending a line: Eval touch: README.",
+      "expected": {
+        "success": true,
+        "contains": ["README.md"],
+        "minScore": 1
+      }
+    },
+    {
+      "id": "write-notes",
+      "objective": "Create or overwrite notes.txt with a single line: notes ok.",
+      "expected": {
+        "success": true,
+        "contains": ["notes.txt"],
+        "minScore": 1
+      }
+    }
+  ]
+}

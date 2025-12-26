@@ -1,22 +1,24 @@
 {
   "id": "basic",
   "name": "Basic Eval Set",
-  "description": "Minimal examples for verifying eval wiring.",
-  "version": "1.0.0",
+  "description": "Minimal examples for verifying eval wiring and file tracking.",
+  "version": "1.1.0",
   "cases": [
     {
-      "id": "case-hello",
-      "objective": "Reply with exactly: EVAL_OK",
+      "id": "case-file-write",
+      "objective": "Create a file at evals/fixtures/basic/hello.txt with a single line: hello eval.",
       "expected": {
-        "contains": ["EVAL_OK"],
+        "success": true,
+        "contains": ["evals/fixtures/basic/hello.txt"],
         "minScore": 1
       }
     },
     {
-      "id": "case-files",
-      "objective": "List the repository root entries using tools, then reply with: EVAL_OK_FILE_LIST",
+      "id": "case-apply-patch",
+      "objective": "If evals/fixtures/basic/hello.txt is missing, create it. Then use apply_patch to append a new line: patched.",
       "expected": {
-        "contains": ["EVAL_OK_FILE_LIST"],
+        "success": true,
+        "contains": ["evals/fixtures/basic/hello.txt"],
         "minScore": 1
       }
     }

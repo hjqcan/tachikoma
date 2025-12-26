@@ -30,6 +30,29 @@ Each case has:
 
 See `evals/basic.json` for a minimal example.
 
+## Fixture Workdirs (Ecosystem Smoke)
+
+Fixtures live under `evals/fixtures/<ecosystem>`. Use `--workdir` to point at a fixture:
+
+```bash
+TACHIKOMA_EXECUTION_GATE_MODE=off \
+  tachikoma eval --eval-set ./evals/ecosystem-smoke.json --workdir ./evals/fixtures/node
+```
+
+Supported fixtures:
+
+- `evals/fixtures/node`
+- `evals/fixtures/python`
+- `evals/fixtures/go`
+- `evals/fixtures/rust`
+- `evals/fixtures/java`
+- `evals/fixtures/dotnet`
+
+Notes:
+
+- If you want to exercise execution gate behavior, omit `TACHIKOMA_EXECUTION_GATE_MODE=off`.
+- Java/.NET evals require local toolchains (mvn/dotnet). .NET also needs NuGet restore access.
+
 ## Run an Eval Set
 
 ```bash
@@ -43,7 +66,7 @@ tachikoma eval \
   --eval-set ./evals/basic.json \
   --workdir . \
   --report ./evals/report.json \
-  --case case-hello,case-files \
+  --case case-file-write,case-apply-patch \
   --no-approval
 ```
 
