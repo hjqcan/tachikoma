@@ -18,6 +18,7 @@ import type {
   SkillLearningConfig,
 } from './types';
 import type { MemoryConfig } from '../memory';
+import type { SkillDiscoveryConfig } from '../skills';
 import type { RetryPolicy, AgentConfig, DelegationMode } from '../types';
 
 // ============================================================================
@@ -287,6 +288,10 @@ export interface PartialOrchestratorConfig {
   memoryConfig?: MemoryConfig;
   collaborationConfig?: OrchestratorConfig['collaborationConfig'];
   skillLearning?: Partial<SkillLearningConfig>;
+  /** 工作目录（用于 Skills 发现和项目上下文加载） */
+  workDir?: string;
+  /** Skills 发现配置 */
+  skillsConfig?: SkillDiscoveryConfig;
 }
 
 /**
@@ -403,6 +408,9 @@ export function createOrchestratorConfig(
           },
         }
       : {}),
+    // workDir 和 skillsConfig
+    ...(overrides.workDir ? { workDir: overrides.workDir } : {}),
+    ...(overrides.skillsConfig ? { skillsConfig: overrides.skillsConfig } : {}),
   };
 }
 

@@ -92,9 +92,81 @@ export function loadSkills(
 }
 
 /**
- * 获取所有搜索目录
+ * 按 scope 加载 Skills
+ *
+ * 在所有搜索目录下查找指定的 scope 子目录（如 'orchestrator', 'worker'），
+ * 仅加载该子目录下的 Skills。
+ *
+ * @param scope - 范围目录名（如 'orchestrator', 'worker', 'shared'）
+ * @param config - 发现配置
+ * @param cwd - 当前工作目录
+ * @returns 加载结果
+ *
+ * @example
+ * ```ts
+ * // 加载 orchestrator 专用 skills
+ * const outcome = loadSkillsByScope('orchestrator', config, cwd);
+ * console.log(`Loaded ${outcome.skills.length} orchestrator skills`);
+ * ```
  */
-function getSearchDirs(config: SkillDiscoveryConfig, cwd?: string): string[] {
+export function loadSkillsByScope(
+  scope: string,
+  config: SkillDiscoveryConfig = {},
+  cwd?: string
+): SkillLoadOutcome {
+  const outcome: SkillLoadOutcome = {
+    skills: [],
+    errors: [],
+  };
+
+  // 如果禁用，直接返回
+  if (config.enabled === false) {
+    return outcome;
+  }
+
+  // 收集所有搜索目录
+  const searchDirs = getSearchDirs(config, cwd);
+  
+  // 获取忽略目录列表
+  const ignoreDirs = new Set(config.ignoreDirs ?? DEFAULT_IGNORE_DIRS);
+
+  // 要搜索的子目录：指定 scope + shared（共享技能）
+  const scopesToSearch = [scope, 'shared'];
+
+  // 遍历每个目录，查找 scope 和 shared 子目录
+  for (const dir of searchDirs) {
+    for (const scopeDir of scopesToSearch) {
+      const scopedDir = path.join(dir, scopeDir);
+      // 检查 scope 目录是否存在
+      if (fs.existsSync(scopedDir)) {
+        try {
+          const stat = fs.statSync(scopedDir);
+          if (stat.isDirectory()) {
+            discoverSkillsInDir(scopedDir, outcome, ignoreDirs);
+          }
+        } catch {
+          // 忽略访问错误
+        }
+      }
+    }
+  }
+
+  // 按名称排序（保持稳定）
+  outcome.skills.sort((a, b) => {
+    const nameCompare = a.name.localeCompare(b.name);
+    if (nameCompare !== 0) return nameCompare;
+    return a.path.localeCompare(b.path);
+  });
+
+  return outcome;
+}
+
+/**
+ * 获取所有搜索目录
+ *
+ * @internal 内部使用，也可被外部调用以了解搜索路径
+ */
+export function getSearchDirs(config: SkillDiscoveryConfig, cwd?: string): string[] {
   const dirs: string[] = [];
 
   // 全局目录

@@ -94,7 +94,14 @@ export class Orchestrator extends BaseAgent {
     super(id, 'orchestrator', orchestratorConfig.agent);
 
     this.orchestratorConfig = orchestratorConfig;
-    this.planner = options.planner ?? new Planner({ config: orchestratorConfig.planner });
+    // Pass cwd and skillsConfig to Planner for orchestrator skills discovery
+    // Use config.workDir if provided, otherwise fall back to process.cwd()
+    const workDir = orchestratorConfig.workDir ?? process.cwd();
+    this.planner = options.planner ?? new Planner({
+      config: orchestratorConfig.planner,
+      cwd: workDir,
+      ...(orchestratorConfig.skillsConfig && { skillsConfig: orchestratorConfig.skillsConfig }),
+    });
     this.workerPool = options.workerPool ?? new DefaultWorkerPool(orchestratorConfig.workerPool);
     this.workerPoolInjected = options.workerPool !== undefined;
     this.injectedSessionManager = options.sessionManager ?? null;

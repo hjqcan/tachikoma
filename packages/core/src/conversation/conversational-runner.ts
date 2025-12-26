@@ -994,6 +994,7 @@ All other messages are sent to the AI for processing.`,
           apiKey,
         },
       },
+      cwd: resolve(this.config.workDir),
     });
 
     const orchestrator = new Orchestrator(`orch-${session.sessionId}`, {

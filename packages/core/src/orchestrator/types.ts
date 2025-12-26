@@ -18,6 +18,7 @@ import type {
   AgentConfig,
 } from '../types';
 import type { MemoryConfig } from '../memory';
+import type { SkillDiscoveryConfig } from '../skills';
 
 // ============================================================================
 // 统筹者任务类型
@@ -715,6 +716,18 @@ export interface OrchestratorConfig {
    * 需要满足 minToolCalls 和 minDuration 阈值才会触发学习
    */
   skillLearning?: SkillLearningConfig;
+  /**
+   * 工作目录（用于 Skills 发现和项目上下文加载）
+   *
+   * 默认为 process.cwd()，作为库使用时应显式指定
+   */
+  workDir?: string;
+  /**
+   * Skills 发现配置
+   *
+   * 传递给 Planner 用于加载 Orchestrator Skills
+   */
+  skillsConfig?: SkillDiscoveryConfig;
 }
 
 /**

@@ -40,6 +40,11 @@ import { injectToolRecommendations } from './subtask-validator';
 import { MemoryService } from '../memory';
 import { z } from 'zod';
 
+// Skills imports
+import { loadSkillsByScope } from '../skills/loader';
+import { activateSkillsAsync, renderActivatedSkills } from '../skills/activator';
+import type { SkillMetadata, SkillDiscoveryConfig } from '../skills/types';
+
 // ============================================================================
 // 类型定义
 // ============================================================================
@@ -54,6 +59,10 @@ export interface PlannerOptions {
   llmClient?: LLMClient;
   /** 解析重试配置 */
   parseRetryConfig?: Partial<ParseRetryConfig>;
+  /** Skills 发现配置（用于加载 Orchestrator Skills） */
+  skillsConfig?: SkillDiscoveryConfig;
+  /** 当前工作目录（用于发现项目级 Skills） */
+  cwd?: string;
 }
 
 /**
@@ -192,6 +201,11 @@ export class Planner {
     tokensSaved: 0,
     totalLatencyMs: 0,
   };
+  
+  // Orchestrator Skills
+  private readonly skillsConfig: SkillDiscoveryConfig | undefined;
+  private readonly cwd: string | undefined;
+  private orchestratorSkills: SkillMetadata[] = [];
 
   constructor(options: PlannerOptions = {}) {
     // 合并配置
@@ -221,6 +235,24 @@ export class Planner {
     if (this.config.memoryConfig?.enabled) {
       this.memoryService = new MemoryService(this.config.memoryConfig);
       console.debug('[Planner] MemoryService initialized');
+    }
+    
+    // 加载 Orchestrator Skills
+    this.skillsConfig = options.skillsConfig;
+    this.cwd = options.cwd;
+    if (this.skillsConfig?.enabled !== false) {
+      try {
+        const outcome = loadSkillsByScope('orchestrator', this.skillsConfig, this.cwd);
+        this.orchestratorSkills = outcome.skills;
+        if (this.orchestratorSkills.length > 0) {
+          console.debug(`[Planner] Loaded ${this.orchestratorSkills.length} orchestrator skills`);
+        }
+        if (outcome.errors.length > 0) {
+          console.warn(`[Planner] Skills loading had ${outcome.errors.length} errors`);
+        }
+      } catch (error) {
+        console.warn('[Planner] Failed to load orchestrator skills:', error);
+      }
     }
   }
 
@@ -776,6 +808,29 @@ export class Planner {
     }
     if (preferences?.conservativeMode) {
       parts.push('模式：保守模式，生成较少的子任务');
+    }
+
+    // Skills: 激活匹配的 Orchestrator Skills (best-effort)
+    if (this.orchestratorSkills.length > 0) {
+      try {
+        const activated = await activateSkillsAsync(
+          this.orchestratorSkills,
+          task.objective,
+          { autoActivate: true, maxAutoActivated: 3 }
+        );
+        
+        if (activated.length > 0) {
+          const skillsPrompt = renderActivatedSkills(activated);
+          if (skillsPrompt) {
+            console.debug(`[Planner] Activated ${activated.length} orchestrator skills for planning`);
+            parts.push('');
+            parts.push('[规划指导技能]');
+            parts.push(skillsPrompt);
+          }
+        }
+      } catch (error) {
+        console.warn('[Planner] Skills activation failed (continuing):', error);
+      }
     }
 
     // Memory: 检索相关历史记忆 (best-effort)
