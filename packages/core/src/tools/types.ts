@@ -584,6 +584,79 @@ export interface ScriptRunOutput {
 }
 
 // ============================================================================
+// LSP 工具类型
+// ============================================================================
+
+export type LspOperation =
+  | 'goToDefinition'
+  | 'findReferences'
+  | 'hover'
+  | 'documentSymbol'
+  | 'workspaceSymbol'
+  | 'goToImplementation'
+  | 'prepareCallHierarchy'
+  | 'incomingCalls'
+  | 'outgoingCalls';
+
+export interface LspToolInput {
+  operation: LspOperation;
+  filePath: string;
+  line?: number;
+  character?: number;
+  query?: string;
+}
+
+export interface LspToolOutput {
+  operation: LspOperation;
+  file: string;
+  count: number;
+  result: unknown;
+}
+
+export interface LspDiagnosticsInput {
+  path: string;
+}
+
+export interface LspDiagnosticsOutput {
+  file: string;
+  count: number;
+  diagnostics: unknown[];
+  pretty: string[];
+}
+
+// ============================================================================
+// Todo 工具类型
+// ============================================================================
+
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type TodoPriority = 'high' | 'medium' | 'low';
+
+export interface TodoItem {
+  id: string;
+  content: string;
+  status: TodoStatus;
+  priority: TodoPriority;
+}
+
+export interface TodoWriteInput {
+  todos: TodoItem[];
+}
+
+export interface TodoWriteOutput {
+  todos: TodoItem[];
+  pendingCount: number;
+}
+
+export interface TodoReadInput {
+  // empty
+}
+
+export interface TodoReadOutput {
+  todos: TodoItem[];
+  pendingCount: number;
+}
+
+// ============================================================================
 // 工具函数类型
 // ============================================================================
 

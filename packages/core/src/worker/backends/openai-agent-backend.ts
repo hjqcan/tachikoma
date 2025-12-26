@@ -1063,15 +1063,14 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     failureMemory?: FailureMemory,
     workspaceCache?: WorkspaceStructureCache
   ): unknown[] {
+    // Build one shared execution context per run so effectiveCwd updates persist across tools.
+    const executionContext = this.buildExecutionContext(task, options);
+
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
       const zodParameters = toolInputSchemaToZod(
         tachikomaTool.inputSchema as Record<string, unknown>
       );
-
-      // 构建完整的执行上下文
-      // 注意：sandboxId 为可选字段，省略即可
-      const executionContext = this.buildExecutionContext(task, options);
 
       // 创建 SDK tool
       return sdkTool({
@@ -1099,6 +1098,25 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             } else if (duplicateCheck.warning) {
               // 仅记录警告，不阻止执行
               console.warn(`[ToolCallTracker] ${duplicateCheck.warning}`);
+            }
+          }
+
+          if (toolCallTracker) {
+            const doomDecision = await this.checkDoomLoopAndApprove({
+              tracker: toolCallTracker,
+              toolName: tachikomaTool.name,
+              args: params,
+              options,
+              taskId: task.id,
+            });
+            if (!doomDecision.allowed) {
+              return JSON.stringify({
+                success: false,
+                error: doomDecision.message,
+                tool: tachikomaTool.name,
+                code: 'DOOM_LOOP_BLOCKED',
+                duplicateCount: doomDecision.count,
+              });
             }
           }
           
@@ -1353,6 +1371,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
         return 'dangerous_operation';
       case 'resource_intensive':
         return 'resource_intensive';
+      case 'doom_loop':
+        return 'resource_intensive';
       default:
         return 'dangerous_operation';
     }
@@ -1464,7 +1484,17 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             output = typeof rawItem.output === 'string' ? rawItem.output : JSON.stringify(rawItem.output);
          }
 
-         messages.push(createToolResultMessage(toolName, callId, output, true, 0));
+         // Best-effort: parse structured ToolResult JSON to set success accurately.
+         let success = true;
+         try {
+           const parsed = JSON.parse(output) as unknown;
+           if (parsed && typeof parsed === 'object' && 'success' in (parsed as any)) {
+             success = Boolean((parsed as any).success);
+           }
+         } catch {
+           // Non-JSON output -> assume success (transport succeeded).
+         }
+         messages.push(createToolResultMessage(toolName, callId, output, success, 0));
          break;
       }
 

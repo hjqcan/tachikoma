@@ -57,6 +57,16 @@ export interface DuplicateCheckResult {
 }
 
 /**
+ * Doom-loop detection result
+ */
+export interface DoomLoopCheckResult {
+  /** Number of identical calls in the current window (including this one) */
+  count: number;
+  /** Whether the doom-loop threshold is reached */
+  isLoop: boolean;
+}
+
+/**
  * Configuration for the tool call tracker
  */
 export interface ToolCallTrackerConfig {
@@ -274,6 +284,27 @@ export class ToolCallTracker {
       failureCount,
       warning,
       shouldBlock,
+    };
+  }
+
+  /**
+   * Checks for potential doom-loop based on repeated identical calls.
+   *
+   * @param toolName - Name of the tool being called
+   * @param input - Input parameters for the tool
+   * @param threshold - Trigger threshold (default: 3)
+   */
+  checkDoomLoop(toolName: string, input: unknown, threshold = 3): DoomLoopCheckResult {
+    const inputHash = this.hashInput(input);
+    const recentCalls = this.getRecentWindowCalls();
+    const matchingCalls = recentCalls.filter(
+      (call) => call.toolName === toolName && call.inputHash === inputHash
+    );
+
+    const count = matchingCalls.length + 1; // include current call
+    return {
+      count,
+      isLoop: count >= threshold,
     };
   }
 

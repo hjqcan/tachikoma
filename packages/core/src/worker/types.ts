@@ -143,6 +143,7 @@ export type ApprovalCategory =
   | 'external_api_call'  // 外部 API 调用
   | 'dangerous_operation' // 危险操作
   | 'resource_intensive' // 资源密集型操作
+  | 'doom_loop'          // 重复工具调用死循环
   | 'custom';            // 自定义
 
 /**
@@ -235,6 +236,8 @@ export interface WorkerExecutionOptions {
   securityPolicy?: SandboxSecurityPolicy;
   /** 关键决策策略 */
   keyDecisionPolicy?: KeyDecisionPolicy;
+  /** Doom-loop 防护策略 */
+  doomLoopPolicy?: DoomLoopPolicy;
   /**
    * Intervention 检查回调
    * 返回 InterventionFile 如果有干预，否则 null
@@ -455,6 +458,7 @@ export const SEQUENTIAL_TOOLS: readonly string[] = [
   'run_command',
   'spawn_subagent',
   'submit_result',
+  'todowrite',
   'delete_file',
   'create_directory',
 ] as const;
@@ -519,6 +523,39 @@ export const DEFAULT_KEY_DECISION_POLICY: Required<Omit<KeyDecisionPolicy, 'trig
   approvalTimeout: 300_000, // 5 分钟
   defaultDecision: 'reject',
   triggers: DEFAULT_KEY_DECISION_TRIGGERS,
+};
+
+// ============================================================================
+// Doom-loop 防护策略
+// ============================================================================
+
+/**
+ * Doom-loop 防护策略
+ *
+ * 用于检测重复工具调用并触发审批或阻止执行
+ */
+export interface DoomLoopPolicy {
+  /** 是否启用（默认 true） */
+  enabled?: boolean;
+  /** 相同调用触发阈值（默认 3 次） */
+  threshold?: number;
+  /** 触发后的处理方式（ask/deny/allow） */
+  mode?: 'ask' | 'deny' | 'allow';
+  /** 审批超时时间（毫秒） */
+  approvalTimeout?: number;
+  /** 超时默认决策 */
+  defaultDecision?: 'approve' | 'reject';
+}
+
+/**
+ * 默认 Doom-loop 策略
+ */
+export const DEFAULT_DOOM_LOOP_POLICY: Required<DoomLoopPolicy> = {
+  enabled: true,
+  threshold: 3,
+  mode: 'ask',
+  approvalTimeout: 300_000, // 5 分钟
+  defaultDecision: 'reject',
 };
 
 // ============================================================================

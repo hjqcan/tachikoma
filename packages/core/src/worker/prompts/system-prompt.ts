@@ -26,6 +26,7 @@ Common patterns:
 
 const TASK_TRACKING_GUIDE = `## Task Tracking
 For multi-step work, keep a short checklist and update it as you go:
+- Use todowrite/todoread to persist the list when available
 - [ ] pending: not started
 - [→] in_progress: currently working
 - [x] completed: done and verified`;

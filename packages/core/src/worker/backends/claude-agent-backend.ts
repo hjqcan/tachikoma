@@ -13,7 +13,7 @@ import type {
   WorkerExecutionOptions,
   ClaudeAgentSDKBackendConfig,
 } from '../types';
-import { DEFAULT_RESOURCE_LIMITS } from '../types';
+import { DEFAULT_DOOM_LOOP_POLICY, DEFAULT_RESOURCE_LIMITS } from '../types';
 import type { Tool, RetryPolicy } from '../../types';
 import { ToolToMCPBridge } from '../../mcp/tool-bridge';
 import type { ToolBridgeConfig } from '../../mcp/tool-bridge';
@@ -130,6 +130,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
   // 失败后增量恢复支持
   private toolCallTracker: ToolCallTracker | null = null;
   private failureMemory: FailureMemory | null = null;
+  // Track tool_use id -> input for accurate tool_result success/failure attribution
+  private readonly toolCallInputs = new Map<string, { toolName: string; input: unknown }>();
 
   constructor(config: ClaudeAgentSDKBackendConfig) {
     // 调用基类构造函数（不使用基类 Memory，保留本地实现）
@@ -214,6 +216,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     this.injectedMemoryIds.clear();
     delete this.lastMemoryRetrievalAt;
     this.resetToolCallGuard();
+    this.toolCallInputs.clear();
     
     // Initialize failure tracking systems for incremental recovery
     this.toolCallTracker = new ToolCallTracker({
@@ -296,6 +299,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           const sdkOptions = await this.buildSDKOptions(
             tools,
             options,
+            task,
             memoryContext,
             skillsManager,
             task.objective,
@@ -534,6 +538,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
   private async buildSDKOptions(
     tools: Tool[],
     options: WorkerExecutionOptions,
+    task: WorkerTask,
     memoryContext?: string,
     skillsManager?: SkillsManager,
     taskObjective?: string,
@@ -543,7 +548,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     const sdkConfig = this.config.sdkOptions || {};
 
     // 构造 overrides 对象（过滤 undefined 以满足 exactOptionalPropertyTypes）
-    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy'>> = {};
+    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute'>> = {};
     if (options.workDir !== undefined) {
       overrides.workDir = options.workDir;
     }
@@ -554,6 +559,10 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
       options.resourceLimits?.maxToolInputBytes ?? DEFAULT_RESOURCE_LIMITS.maxToolInputBytes;
     if (constraintPolicy) {
       overrides.constraintPolicy = constraintPolicy;
+    }
+    const doomLoopGuard = this.buildDoomLoopGuard(options, task);
+    if (doomLoopGuard) {
+      overrides.beforeExecute = doomLoopGuard;
     }
 
     // 将 Tachikoma 工具转换为 MCP Server（同步等待，保证首轮可用）
@@ -665,6 +674,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
       case 'tool_use': {
         const toolName = String(sdkMessage.name || 'unknown');
         const input = sdkMessage.input;
+        const callId = String(sdkMessage.id || `call-${timestamp}`);
+        this.toolCallInputs.set(callId, { toolName, input });
         
         // 检查是否为重复调用（防循环）
         if (this.toolCallTracker) {
@@ -680,30 +691,61 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           type: 'tool_call',
           tool: toolName,
           input,
-          callId: String(sdkMessage.id || `call-${timestamp}`),
+          callId,
           timestamp,
         };
       }
 
       case 'tool_result': {
-        const toolName = String(sdkMessage.name || 'unknown');
-        const isSuccess = !sdkMessage.is_error;
+        const callId = String(sdkMessage.tool_use_id || sdkMessage.id || `call-${timestamp}`);
+        const tracked = this.toolCallInputs.get(callId);
+        const toolName = tracked?.toolName ?? String(sdkMessage.name || 'unknown');
+        const input = tracked?.input ?? {};
+        this.toolCallInputs.delete(callId);
+
         const resultContent = sdkMessage.content || sdkMessage.output;
+        const isErrorFlag = Boolean((sdkMessage as any).is_error);
+
+        // SDK-level is_error only reflects transport/runtime errors, not ToolResult.success=false.
+        // Our MCP bridge encodes failures as JSON with { success:false, error: ... }.
+        let isSuccess = !isErrorFlag;
+        let errorMsg: string | undefined;
+        if (typeof resultContent === 'string') {
+          try {
+            const parsed = JSON.parse(resultContent) as unknown;
+            if (
+              parsed &&
+              typeof parsed === 'object' &&
+              (parsed as any).success === false
+            ) {
+              isSuccess = false;
+              const maybeError = (parsed as any).error;
+              errorMsg = typeof maybeError === 'string' ? maybeError : 'Tool returned success=false';
+            }
+          } catch {
+            // Non-JSON output (e.g., plain text) -> treat as success unless SDK flagged error.
+          }
+        }
+        if (!isSuccess && !errorMsg) {
+          errorMsg =
+            typeof resultContent === 'string'
+              ? resultContent
+              : JSON.stringify(resultContent);
+        }
         
         // 记录工具调用结果到追踪器
         if (!isSuccess) {
-          const errorMsg = typeof resultContent === 'string' ? resultContent : JSON.stringify(resultContent);
-          this.failureMemory?.recordFailure(toolName, {}, errorMsg);
-          this.toolCallTracker?.record(toolName, {}, false, errorMsg);
+          this.failureMemory?.recordFailure(toolName, input, errorMsg ?? 'Tool failed');
+          this.toolCallTracker?.record(toolName, input, false, errorMsg);
         } else {
-          this.toolCallTracker?.record(toolName, {}, true);
+          this.toolCallTracker?.record(toolName, input, true);
         }
         
         // 工具结果
         return {
           type: 'tool_result',
           tool: toolName,
-          callId: String(sdkMessage.tool_use_id || `call-${timestamp}`),
+          callId,
           result: resultContent,
           success: isSuccess,
           duration: 0, // SDK 不提供持续时间
@@ -747,5 +789,30 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     this.toolCallsThisRun += 1;
     this.toolCallsInAttempt += 1;
     this.guardAgainstRepeatedToolCall(toolName, input);
+  }
+
+  private buildDoomLoopGuard(
+    options: WorkerExecutionOptions,
+    task: WorkerTask
+  ): ToolBridgeConfig['beforeExecute'] | undefined {
+    if (!this.toolCallTracker) return undefined;
+    const policy = {
+      ...DEFAULT_DOOM_LOOP_POLICY,
+      ...(options.doomLoopPolicy ?? {}),
+    };
+    if (!policy.enabled) return undefined;
+
+    return async (toolName, args) => {
+      if (!this.toolCallTracker) return { allowed: true };
+      const decision = await this.checkDoomLoopAndApprove({
+        tracker: this.toolCallTracker,
+        toolName,
+        args,
+        options,
+        taskId: task.id,
+      });
+      if (decision.allowed) return { allowed: true };
+      return { allowed: false, message: decision.message };
+    };
   }
 }

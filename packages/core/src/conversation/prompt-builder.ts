@@ -259,17 +259,16 @@ export class ConversationPromptBuilder {
   ): unknown {
     if (value === null || value === undefined) return value;
 
-    const valueType = typeof value;
-    if (valueType === 'string') {
+    if (typeof value === 'string') {
       return this.truncateString(value, MAX_VARIABLE_STRING_CHARS);
     }
-    if (valueType === 'number' || valueType === 'boolean') {
+    if (typeof value === 'number' || typeof value === 'boolean') {
       return value;
     }
-    if (valueType === 'bigint') {
+    if (typeof value === 'bigint') {
       return value.toString();
     }
-    if (valueType === 'symbol' || valueType === 'function') {
+    if (typeof value === 'symbol' || typeof value === 'function') {
       return String(value);
     }
 

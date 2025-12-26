@@ -1390,6 +1390,21 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       }
     }
 
+    if (this.toolCallTracker) {
+      const doomDecision = await this.checkDoomLoopAndApprove({
+        tracker: this.toolCallTracker,
+        toolName: call.name,
+        args: call.input,
+        options,
+      });
+      if (!doomDecision.allowed) {
+        return {
+          success: false,
+          output: doomDecision.message,
+        };
+      }
+    }
+
     if (this.constraintPolicy) {
       const violation = checkToolCallAgainstConstraints(call.name, call.input, this.constraintPolicy);
       if (violation) {

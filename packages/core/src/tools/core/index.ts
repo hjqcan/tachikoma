@@ -11,6 +11,7 @@ export { shellRunTool } from './shell-run';
 export { codeSearchTool } from './code-search';
 export { applyPatchTool } from './file-patch';
 export { replaceBetweenMarkersTool } from './file-replace-markers';
+export { lspTool, lspDiagnosticsTool } from './lsp';
 
 // 扩展工具
 export { runTestsTool } from './run-tests';
@@ -32,6 +33,7 @@ export { dockerizeTool } from './dockerize';
 // 技能工具
 export { createSkillTool } from './create-skill';
 export { skillTool } from './skill-tool';
+export { todoWriteTool, todoReadTool } from './todo';
 
 // 开发服务器工具
 export { devServerTool, cleanupAllServers, cleanupServersForTask } from './dev-server';

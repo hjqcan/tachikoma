@@ -20,6 +20,7 @@ import type {
   WorkerApprovalRequestMessage,
   PendingApprovalInput,
 } from '../types';
+import { DEFAULT_DOOM_LOOP_POLICY } from '../types';
 import type { Tool } from '../../types';
 import type { MemoryConfig } from '../../memory';
 import { MemoryService } from '../../memory';
@@ -354,6 +355,10 @@ class ToolCallLoopError extends Error {
   }
 }
 
+interface DoomLoopTrackerLike {
+  checkDoomLoop: (toolName: string, input: unknown, threshold?: number) => { count: number; isLoop: boolean };
+}
+
 /**
  * Tool call budget error
  *
@@ -435,8 +440,8 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   protected effectiveCwd = '';
 
   // Detect repeated calls to identical tool+input combinations.
-  private static readonly TOOL_CALL_REPEAT_LIMIT = 3;
-  private static readonly TOOL_CALL_REPEAT_LIMIT_RELAXED = 6;
+  private static readonly TOOL_CALL_REPEAT_LIMIT = 6;
+  private static readonly TOOL_CALL_REPEAT_LIMIT_RELAXED = 10;
   private static readonly TOOL_CALL_REPEAT_LIMIT_OVERRIDES = new Set(['file_list', 'file_read']);
   private static readonly TOOL_INPUT_PREVIEW_LIMIT = 200;
 
@@ -607,6 +612,70 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   }
 
   // ============================================================================
+  // Doom-loop helper (dedupe across backends)
+  // ============================================================================
+
+  /**
+   * Check for repeated identical tool calls (doom-loop) and optionally request approval.
+   *
+   * Returns { allowed: true } when execution may continue. When blocked, returns { allowed:false, message, count }.
+   */
+  protected async checkDoomLoopAndApprove(input: {
+    tracker: DoomLoopTrackerLike;
+    toolName: string;
+    args: unknown;
+    options: WorkerExecutionOptions;
+    taskId?: string;
+  }): Promise<{ allowed: true; count: number } | { allowed: false; count: number; message: string }> {
+    const policy = {
+      ...DEFAULT_DOOM_LOOP_POLICY,
+      ...(input.options.doomLoopPolicy ?? {}),
+    };
+    if (!policy.enabled) return { allowed: true, count: 0 };
+
+    const doomCheck = input.tracker.checkDoomLoop(input.toolName, input.args, policy.threshold);
+    if (!doomCheck.isLoop) return { allowed: true, count: doomCheck.count };
+
+    const description =
+      `Possible doom loop: "${input.toolName}" called ${doomCheck.count} times ` +
+      'with identical input.';
+
+    if (policy.mode === 'deny') {
+      return {
+        allowed: false,
+        count: doomCheck.count,
+        message: `${description} Denied by policy.`,
+      };
+    }
+
+    if (policy.mode === 'ask') {
+      const approvalRequest: WorkerApprovalRequestMessage = {
+        type: 'approval_request',
+        requestId: `doom-loop-${input.toolName}-${Date.now()}`,
+        action: input.toolName,
+        description,
+        details: { input: input.args, count: doomCheck.count },
+        timestamp: Date.now(),
+        category: 'doom_loop',
+        timeout: policy.approvalTimeout,
+        defaultDecision: policy.defaultDecision,
+      };
+      const approved = await this.waitForApproval(
+        approvalRequest,
+        input.options,
+        policy.approvalTimeout,
+        policy.defaultDecision,
+        input.taskId
+      );
+      if (approved) return { allowed: true, count: doomCheck.count };
+      return { allowed: false, count: doomCheck.count, message: 'Doom-loop approval denied.' };
+    }
+
+    // mode === 'allow'
+    return { allowed: true, count: doomCheck.count };
+  }
+
+  // ============================================================================
   // 共享审批等待逻辑
   // ============================================================================
 
@@ -733,7 +802,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
 
       // 2. 轮询等待响应
       const startTime = Date.now();
-      while (Date.now() - startTime < timeout) {
+      while (Date.now() - startTime < effectiveTimeout) {
         // 检查中断
         if (this.executionController.isAborted) {
           return false;
@@ -756,7 +825,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
       }
 
       // 超时 - 清理 pending 文件
-      console.warn(`[${this.backendName}] Approval timeout, using default: ${defaultDecision}`);
+      console.warn(`[${this.backendName}] Approval timeout, using default: ${effectiveDefaultDecision}`);
       if (options.onClearPendingApproval) {
         try {
           await options.onClearPendingApproval();
@@ -764,7 +833,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
           console.warn(`[${this.backendName}] Failed to cleanup pending approval:`, cleanupError);
         }
       }
-      return defaultDecision === 'approve';
+      return effectiveDefaultDecision === 'approve';
     } catch (error) {
       console.error(`[${this.backendName}] File protocol error:`, error);
       return defaultDecision === 'approve';
@@ -792,6 +861,8 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
       case 'shell_command':
         return 'dangerous_operation';
       case 'resource_intensive':
+        return 'resource_intensive';
+      case 'doom_loop':
         return 'resource_intensive';
       default:
         return 'dangerous_operation';

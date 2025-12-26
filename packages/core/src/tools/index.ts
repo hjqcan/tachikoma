@@ -15,11 +15,15 @@ import {
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  lspTool,
+  lspDiagnosticsTool,
   runTestsTool,
   typeCheckTool,
   packageInfoTool,
   packageInstallTool,
   envGetTool,
+  todoWriteTool,
+  todoReadTool,
   // devServerTool 从 core 导入但不放入 baseTools
   devServerTool,
 } from './core';
@@ -62,6 +66,16 @@ export type {
   ApplyPatchOutput,
   ReplaceBetweenMarkersInput,
   ReplaceBetweenMarkersOutput,
+  LspToolInput,
+  LspToolOutput,
+  LspDiagnosticsInput,
+  LspDiagnosticsOutput,
+  LspOperation,
+  TodoItem,
+  TodoWriteInput,
+  TodoWriteOutput,
+  TodoReadInput,
+  TodoReadOutput,
   // 扩展工具类型
   RunTestsInput,
   RunTestsOutput,
@@ -109,12 +123,16 @@ export {
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  lspTool,
+  lspDiagnosticsTool,
   // 扩展工具
   runTestsTool,
   typeCheckTool,
   packageInfoTool,
   packageInstallTool,
   envGetTool,
+  todoWriteTool,
+  todoReadTool,
   // 安全工具函数
   DEFAULT_ENV_WHITELIST,
   isEnvAllowed,
@@ -170,6 +188,8 @@ export const baseTools: Tool[] = [
   codeSearchTool,
   applyPatchTool,
   replaceBetweenMarkersTool,
+  lspTool,
+  lspDiagnosticsTool,
   // 扩展工具
   runTestsTool,
   typeCheckTool,
@@ -193,6 +213,8 @@ export const agentTools: Tool[] = [
   spawnSubagentTool,
   submitResultTool,
   expandCommitTool,
+  todoWriteTool,
+  todoReadTool,
   createSkillTool,
   skillTool,  // Skill 生命周期管理
 ];

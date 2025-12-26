@@ -53,6 +53,11 @@ export interface ToolBridgeConfig {
   maxToolInputBytes?: number;
   /** 约束策略（用于工具调用约束） */
   constraintPolicy?: ConstraintPolicy | null;
+  /** 工具执行前的自定义检查（例如 doom-loop） */
+  beforeExecute?: (toolName: string, args: Record<string, unknown>) => Promise<{
+    allowed: boolean;
+    message?: string;
+  }>;
 }
 
 // ============================================================================
@@ -78,11 +83,15 @@ export interface ToolBridgeConfig {
  * ```
  */
 export class ToolToMCPBridge {
-  private readonly config: Required<ToolBridgeConfig>;
+  private readonly config: Required<Omit<ToolBridgeConfig, 'beforeExecute'>> & {
+    beforeExecute?: ToolBridgeConfig['beforeExecute'];
+  };
   private sdkAvailable: boolean | null = null;
 
   constructor(config: ToolBridgeConfig = {}) {
-    this.config = {
+    const resolved: Required<Omit<ToolBridgeConfig, 'beforeExecute'>> & {
+      beforeExecute?: ToolBridgeConfig['beforeExecute'];
+    } = {
       serverName: config.serverName ?? 'tachikoma-tools',
       includeMetadata: config.includeMetadata ?? true,
       workDir: config.workDir ?? process.cwd(),
@@ -90,6 +99,10 @@ export class ToolToMCPBridge {
       maxToolInputBytes: config.maxToolInputBytes ?? DEFAULT_WORKER_LIMITS.maxToolInputBytes,
       constraintPolicy: config.constraintPolicy ?? null,
     };
+    if (typeof config.beforeExecute === 'function') {
+      resolved.beforeExecute = config.beforeExecute;
+    }
+    this.config = resolved;
   }
 
   /**
@@ -117,7 +130,7 @@ export class ToolToMCPBridge {
    */
   async convertToMCPServers(
     tools: Tool[],
-    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy'>>
+    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute'>>
   ): Promise<unknown[]> {
     if (!tools || tools.length === 0) {
       return [];
@@ -154,8 +167,9 @@ export class ToolToMCPBridge {
         overrides?.maxToolInputBytes ?? this.config.maxToolInputBytes;
       const constraintPolicy =
         overrides?.constraintPolicy ?? this.config.constraintPolicy ?? null;
+      const beforeExecute = overrides?.beforeExecute ?? this.config.beforeExecute;
       const mcpTools = tools.map((t) =>
-        this.createMCPTool(t, tool, context, maxToolInputBytes, constraintPolicy)
+        this.createMCPTool(t, tool, context, maxToolInputBytes, constraintPolicy, beforeExecute)
       );
 
       // 创建 MCP Server
@@ -188,7 +202,11 @@ export class ToolToMCPBridge {
     toolFactory: any,
     context: ExecutionContext,
     maxToolInputBytes: number,
-    constraintPolicy: ConstraintPolicy | null
+    constraintPolicy: ConstraintPolicy | null,
+    beforeExecute?: (toolName: string, args: Record<string, unknown>) => Promise<{
+      allowed: boolean;
+      message?: string;
+    }>
   ): unknown {
     // 使用 SDK 的 tool() 函数创建 MCP Tool
     return toolFactory(
@@ -197,6 +215,21 @@ export class ToolToMCPBridge {
       tachikoma.inputSchema ?? { type: 'object', properties: {} },
       async (args: Record<string, unknown>): Promise<string> => {
         try {
+          if (beforeExecute) {
+            const guard = await beforeExecute(tachikoma.name, args);
+            if (!guard.allowed) {
+              return JSON.stringify(
+                {
+                  success: false,
+                  error: guard.message ?? 'Tool execution blocked by guard.',
+                  tool: tachikoma.name,
+                  code: 'TOOL_EXECUTION_BLOCKED',
+                },
+                null,
+                2
+              );
+            }
+          }
           if (constraintPolicy) {
             const violation = checkToolCallAgainstConstraints(
               tachikoma.name,
@@ -278,12 +311,20 @@ export class ToolToMCPBridge {
   ): ExecutionContext {
     const workDir = overrides?.workDir ?? this.config.workDir;
     const env = { ...this.config.env, ...(overrides?.env ?? {}) };
+    // Preserve effectiveCwd across tool calls for this bridged session (P1-A).
+    const cwdState = { current: workDir };
 
     return {
       taskId: 'mcp-bridge',
       agentId: 'mcp-bridge',
       traceId: `bridge-${Date.now()}`,
       workDir,
+      get effectiveCwd() {
+        return cwdState.current;
+      },
+      updateCwd: (newCwd: string) => {
+        cwdState.current = newCwd;
+      },
       env,
     };
   }
