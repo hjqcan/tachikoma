@@ -801,6 +801,7 @@ export type OrchestratorEventType =
   | 'plan:start'
   | 'plan:complete'
   | 'plan:failed'
+  | 'plan:replan'
   | 'subtask:assigned'
   | 'subtask:progress'
   | 'subtask:complete'

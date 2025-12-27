@@ -1,0 +1,102 @@
+/**
+ * Browser verification runner
+ *
+ * Wraps the browser_verify tool for orchestrator services usage.
+ */
+
+import type { ExecutionContext } from '../../types';
+import { browserVerifyTool } from '../../tools/core/browser-verify';
+import { globalToolExecutor } from '../../tools/tool-executor';
+
+export interface BrowserVerifyRunnerInput {
+  workDir: string;
+  url: string;
+  requiredSelectors?: string[];
+  screenshotPath?: string;
+  checkConsoleErrors?: boolean;
+  timeout?: number;
+  headless?: boolean;
+  viewportWidth?: number;
+  viewportHeight?: number;
+  taskId?: string;
+  agentId?: string;
+  traceId?: string;
+}
+
+export interface BrowserVerifyRunnerResult {
+  passed: boolean;
+  consoleErrors: string[];
+  missingSelectors: string[];
+  screenshotPath?: string;
+  title?: string;
+  url?: string;
+  visibleText?: string;
+  error?: string;
+}
+
+function buildEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+function buildContext(input: BrowserVerifyRunnerInput): ExecutionContext {
+  return {
+    taskId: input.taskId ?? 'browser-verify',
+    agentId: input.agentId ?? 'orchestrator',
+    traceId: input.traceId ?? `trace-${Date.now()}`,
+    workDir: input.workDir,
+    env: buildEnv(),
+    sandboxId: 'orchestrator',
+  };
+}
+
+export async function runBrowserVerify(
+  input: BrowserVerifyRunnerInput
+): Promise<BrowserVerifyRunnerResult> {
+  const context = buildContext(input);
+
+  const toolInput = {
+    url: input.url,
+    screenshotPath: input.screenshotPath,
+    waitForSelectors: input.requiredSelectors,
+    checkConsoleErrors: input.checkConsoleErrors ?? true,
+    timeout: input.timeout,
+    headless: input.headless ?? true,
+    viewportWidth: input.viewportWidth,
+    viewportHeight: input.viewportHeight,
+  };
+
+  const result = await globalToolExecutor.execute(browserVerifyTool, toolInput, context, {
+    throwOnError: false,
+  });
+
+  const data = (result.data ?? {}) as {
+    success?: boolean;
+    title?: string;
+    url?: string;
+    screenshotPath?: string;
+    consoleErrors?: string[];
+    missingSelectors?: string[];
+    visibleText?: string;
+    error?: string;
+  };
+
+  const consoleErrors = Array.isArray(data.consoleErrors) ? data.consoleErrors : [];
+  const missingSelectors = Array.isArray(data.missingSelectors) ? data.missingSelectors : [];
+
+  return {
+    passed: Boolean(result.success && data.success),
+    consoleErrors,
+    missingSelectors,
+    screenshotPath: typeof data.screenshotPath === 'string' ? data.screenshotPath : undefined,
+    title: typeof data.title === 'string' ? data.title : undefined,
+    url: typeof data.url === 'string' ? data.url : undefined,
+    visibleText: typeof data.visibleText === 'string' ? data.visibleText : undefined,
+    error: result.success ? data.error : result.error ?? data.error,
+  };
+}

@@ -22,6 +22,8 @@ interface BrowserVerifyInput {
   screenshotPath?: string;
   /** 等待指定 CSS 选择器出现 */
   waitForSelector?: string;
+  /** 等待多个 CSS 选择器出现（全部） */
+  waitForSelectors?: string[];
   /** 是否收集控制台错误 */
   checkConsoleErrors?: boolean;
   /** 页面加载超时 (ms)，默认 30000 */
@@ -47,6 +49,10 @@ interface BrowserVerifyOutput {
   consoleErrors?: string[] | undefined;
   /** waitForSelector 是否找到元素 */
   elementFound?: boolean | undefined;
+  /** waitForSelectors 未找到的元素 */
+  missingSelectors?: string[] | undefined;
+  /** waitForSelectors 找到的元素 */
+  foundSelectors?: string[] | undefined;
   /** 页面可见文本（前 500 字符） */
   visibleText?: string | undefined;
   /** 错误信息 */
@@ -83,6 +89,7 @@ async function verifyPage(
     url,
     screenshotPath,
     waitForSelector,
+    waitForSelectors,
     checkConsoleErrors = true,
     timeout = 30000,
     headless = true,
@@ -157,16 +164,34 @@ async function verifyPage(
       // 忽略超时，继续执行
     }
 
-    // 等待指定元素
-    let elementFound: boolean | undefined;
-    if (waitForSelector) {
-      try {
-        await page.waitForSelector(waitForSelector, { timeout: 10000 });
-        elementFound = true;
-      } catch {
-        elementFound = false;
+    // 等待指定元素（支持单个与多个）
+    const selectorsToCheck = new Set<string>();
+    if (waitForSelector) selectorsToCheck.add(waitForSelector);
+    if (Array.isArray(waitForSelectors)) {
+      for (const selector of waitForSelectors) {
+        if (typeof selector === 'string' && selector.trim().length > 0) {
+          selectorsToCheck.add(selector);
+        }
       }
     }
+
+    const foundSelectors: string[] = [];
+    const missingSelectors: string[] = [];
+    const selectorTimeout = Math.min(10000, timeout);
+
+    if (selectorsToCheck.size > 0) {
+      for (const selector of selectorsToCheck) {
+        try {
+          await page.waitForSelector(selector, { timeout: selectorTimeout });
+          foundSelectors.push(selector);
+        } catch {
+          missingSelectors.push(selector);
+        }
+      }
+    }
+
+    const elementFound =
+      waitForSelector !== undefined ? !missingSelectors.includes(waitForSelector) : undefined;
 
     // 获取页面信息
     const title = await page.title();
@@ -199,23 +224,54 @@ async function verifyPage(
     browser = null;
 
     // 判断成功：页面加载成功且没有严重错误
+    // Enhanced error patterns for React/Vite applications
+    const criticalErrorPatterns = [
+      // JavaScript errors
+      'SyntaxError',
+      'TypeError',
+      'ReferenceError',
+      'Uncaught',
+      'Unhandled',
+      // React-specific errors
+      'Objects are not valid as a React child',
+      'Error boundary',
+      'Error: Rendered fewer hooks',
+      'Error: Too many re-renders',
+      'ChunkLoadError',
+      'Loading chunk',
+      'Failed to fetch dynamically imported module',
+      // Module errors
+      'Cannot find module',
+      'Module not found',
+      'Failed to resolve module',
+    ];
+    
     const hasPageErrors = consoleErrors.some(
-      (e) =>
-        e.includes('SyntaxError') ||
-        e.includes('TypeError') ||
-        e.includes('ReferenceError') ||
-        e.includes('Uncaught')
+      (e) => criticalErrorPatterns.some(pattern => e.includes(pattern))
     );
+    const hasSelectorErrors = missingSelectors.length > 0;
+    
+    // Blank page detection: empty #root or empty body
+    const isBlankPage = !visibleText || visibleText.trim().length === 0;
+    const hasBlankRootWarning = isBlankPage && !hasPageErrors; // Warn if blank but no error
+    
+    if (hasBlankRootWarning) {
+      consoleErrors.push('Warning: Page appears blank (no visible text). Check if React app is mounting to #root correctly.');
+    }
+    
+    const success = !hasPageErrors && !hasSelectorErrors && !isBlankPage;
 
     return {
-      success: !hasPageErrors,
+      success,
       data: {
-        success: !hasPageErrors,
+        success,
         title,
         url: finalUrl,
         screenshotPath: savedScreenshotPath,
         consoleErrors: consoleErrors.length > 0 ? consoleErrors : undefined,
         elementFound,
+        missingSelectors: missingSelectors.length > 0 ? missingSelectors : undefined,
+        foundSelectors: foundSelectors.length > 0 ? foundSelectors : undefined,
         visibleText,
       },
     };
@@ -271,6 +327,11 @@ bunx playwright install chromium
         type: 'string',
         description: 'CSS selector to wait for',
       },
+      waitForSelectors: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'List of CSS selectors to wait for',
+      },
       checkConsoleErrors: {
         type: 'boolean',
         description: 'Collect console errors (default true)',
@@ -311,6 +372,14 @@ bunx playwright install chromium
             items: { type: 'string' },
           },
           elementFound: { type: 'boolean' },
+          missingSelectors: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          foundSelectors: {
+            type: 'array',
+            items: { type: 'string' },
+          },
           visibleText: { type: 'string' },
         },
       },

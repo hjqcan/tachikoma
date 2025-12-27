@@ -6,7 +6,7 @@ import type { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
 import type { EmitFn } from './types';
 import type { ProgressReporter } from './progress-reporter';
 import type { CheckpointService } from './checkpoint-service';
-import type { ExecutionLoop } from './execution-loop';
+import { type ExecutionLoop, ReplanNeededError } from './execution-loop';
 import type { SessionController } from './session-controller';
 import type { AggregationEngine } from '../engines/aggregation-engine';
 import type { MemoryService } from '../../memory';
@@ -73,11 +73,24 @@ export class RunService {
       }
 
       this.emit('plan:start', task.id, { task: orchestratorTask });
-      const planResult = await this.planEngine.executePlanPhase(
-        orchestratorTask,
-        { projectRoot: workDir, tag: sessionId },
-        signal
-      );
+      
+      const maxReplanAttempts = 1;
+      let replanAttempts = 0;
+      
+      while (true) {
+        try {
+          // If replanning, ensure state is clean for new plan
+          if (replanAttempts > 0) {
+            this.state.resetForNewRun();
+            this.state.currentRunMetadata = task.context?.metadata ?? null;
+            this.state.initExecutionState(Date.now());
+          }
+
+          const planResult = await this.planEngine.executePlanPhase(
+            orchestratorTask,
+            { projectRoot: workDir, tag: sessionId },
+            signal
+          );
 
       if (!planResult.success || !planResult.output) {
         this.emit('plan:failed', task.id, { error: planResult.error });
@@ -143,6 +156,20 @@ export class RunService {
       }
 
       return finalResult;
+    } catch (error) {
+      if (error instanceof ReplanNeededError && replanAttempts < maxReplanAttempts) {
+        replanAttempts++;
+        console.warn(`[RunService] Replan requested (${replanAttempts}/${maxReplanAttempts}): ${error.reason}`);
+        
+        // Append error context to task objective to guide Planner
+        orchestratorTask.objective = `${orchestratorTask.objective}\n\n[PREVIOUS ATTEMPT FAILED]\nError: ${error.reason}\nSummary: ${error.errorSummary}\nPlease create a new plan to fix these issues.`;
+        
+        this.emit('plan:replan', task.id, { reason: error.reason, attempt: replanAttempts });
+        continue;
+      }
+      throw error;
+    }
+    } // End while loop
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       await this.progress.write(task.id, 'failed').catch(() => undefined);

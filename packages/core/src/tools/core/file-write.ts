@@ -1,16 +1,56 @@
 /**
  * file_write 工具
  *
- * 写入文件内容
+ * 写入文件内容（带文件锁 + 可选编辑后验证）
  */
 
-import { writeFile, appendFile, mkdir } from 'node:fs/promises';
+import { writeFile, appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { FileWriteInput, FileWriteOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
+import { withFileLock } from './file-lock';
+import { BuildGateService, type BuildGateResult } from '../../orchestrator/services/build-gate';
+
+// Singleton BuildGateService instance
+let buildGateService: BuildGateService | null = null;
+function getBuildGateService(): BuildGateService {
+  if (!buildGateService) {
+    buildGateService = new BuildGateService({ useLsp: true });
+  }
+  return buildGateService;
+}
+
+/**
+ * 获取锁持有者ID
+ * 优先使用 workerId，否则使用 agentId，最后使用 taskId
+ */
+function getOwnerId(context: ExecutionContext): string {
+  const ctx = context as unknown as { workerId?: string; agentId?: string };
+  return ctx.workerId ?? ctx.agentId ?? context.taskId ?? 'unknown';
+}
+
+/**
+ * Extended input with validation option
+ */
+interface FileWriteInputExtended extends FileWriteInput {
+  /** 写入后是否验证类型检查（默认 false） */
+  validateAfterEdit?: boolean;
+}
+
+/**
+ * Extended output with validation result
+ */
+interface FileWriteOutputExtended extends FileWriteOutput {
+  /** 验证结果（仅当 validateAfterEdit=true 时存在） */
+  validation?: {
+    passed: boolean;
+    summary: string;
+    errorCount: number;
+  };
+}
 
 /**
  * file_write 工具定义
@@ -21,7 +61,8 @@ export const fileWriteTool: Tool = {
   description: `写入内容到指定文件。
 - 如果文件不存在则创建
 - 父目录会自动创建
-- 路径相对于工作目录`,
+- 路径相对于工作目录
+- 可选：validateAfterEdit=true 写入后验证类型检查，失败时自动回滚`,
   inputSchema: {
     type: 'object',
     properties: {
@@ -38,6 +79,11 @@ export const fileWriteTool: Tool = {
         description: '是否追加模式（默认 false，覆盖）',
         default: false,
       },
+      validateAfterEdit: {
+        type: 'boolean',
+        description: '写入后是否验证类型检查，失败时自动回滚（默认 false）',
+        default: false,
+      },
     },
     required: ['path', 'content'],
   },
@@ -50,6 +96,14 @@ export const fileWriteTool: Tool = {
         properties: {
           path: { type: 'string' },
           bytesWritten: { type: 'number' },
+          validation: {
+            type: 'object',
+            properties: {
+              passed: { type: 'boolean' },
+              summary: { type: 'string' },
+              errorCount: { type: 'number' },
+            },
+          },
         },
       },
       error: { type: 'string' },
@@ -66,7 +120,7 @@ export const fileWriteTool: Tool = {
   layer: ToolLayer.Atomic,
   category: ToolCategory.FileSystem,
 
-  async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<FileWriteOutput>> {
+  async execute(input: unknown, context: ExecutionContext): Promise<ToolResult<FileWriteOutputExtended>> {
     // 检测格式错误的输入（LLM 生成的 JSON 解析失败时可能出现 raw 字段）
     const rawInput = input as Record<string, unknown>;
     if ('raw' in rawInput) {
@@ -78,7 +132,7 @@ export const fileWriteTool: Tool = {
       };
     }
 
-    const { path: filePath, content, append = false } = input as FileWriteInput;
+    const { path: filePath, content, append = false, validateAfterEdit = false } = input as FileWriteInputExtended;
 
     // 验证必填字段
     if (!filePath || typeof filePath !== 'string') {
@@ -111,7 +165,6 @@ export const fileWriteTool: Tool = {
       const parentDir = dirname(absolutePath);
       await mkdir(parentDir, { recursive: true });
 
-      // 应用资源限制检查（使用统一默认值）
       const maxFileSize = context.resourceLimits?.maxFileSize || DEFAULT_RESOURCE_LIMITS.maxFileSize;
       const buffer = Buffer.from(content, 'utf-8');
       
@@ -122,21 +175,96 @@ export const fileWriteTool: Tool = {
         };
       }
 
-      // 写入文件
+      // 使用文件锁防止并发编辑冲突
+      const ownerId = getOwnerId(context);
+      
+      // Validation state (use object to allow mutation inside async closure)
+      const state: {
+        originalContent: string | null;
+        validationResult: BuildGateResult | null;
+        rolledBack: boolean;
+      } = {
+        originalContent: null,
+        validationResult: null,
+        rolledBack: false,
+      };
 
-      if (append) {
-        await appendFile(absolutePath, buffer);
-      } else {
-        await writeFile(absolutePath, buffer);
+      await withFileLock(absolutePath, ownerId, async () => {
+        // 读取原始内容用于回滚
+        if (validateAfterEdit) {
+          try {
+            state.originalContent = await readFile(absolutePath, 'utf-8');
+          } catch {
+            // 文件可能不存在，回滚时删除
+            state.originalContent = null;
+          }
+        }
+
+        // 写入新内容
+        if (append) {
+          await appendFile(absolutePath, buffer);
+        } else {
+          await writeFile(absolutePath, buffer);
+        }
+
+        // 验证类型检查
+        if (validateAfterEdit) {
+          const buildGate = getBuildGateService();
+          state.validationResult = await buildGate.check(context.workDir);
+
+          // 如果验证失败，回滚
+          if (!state.validationResult.passed) {
+            if (state.originalContent !== null) {
+              await writeFile(absolutePath, state.originalContent);
+            } else {
+              // 文件原本不存在，删除新创建的文件
+              const { unlink } = await import('node:fs/promises');
+              await unlink(absolutePath).catch(() => undefined);
+            }
+            state.rolledBack = true;
+          }
+        }
+      });
+
+      // 如果验证失败并已回滚，返回失败
+      if (state.validationResult && !state.validationResult.passed && state.rolledBack) {
+        const errorSummary = BuildGateService.formatErrorsForWorker(state.validationResult);
+        return {
+          success: false,
+          error: `Validation failed after edit (rolled back). ${state.validationResult.summary}\n${errorSummary}`,
+          data: {
+            path: filePath,
+            bytesWritten: 0,
+            validation: {
+              passed: false,
+              summary: state.validationResult.summary,
+              errorCount: state.validationResult.errors.length,
+            },
+          },
+        };
       }
 
-      return {
+      // 成功
+      const result: ToolResult<FileWriteOutputExtended> = {
         success: true,
         data: {
           path: filePath,
           bytesWritten: buffer.length,
         },
       };
+
+      if (state.validationResult) {
+        result.data = {
+          ...result.data!,
+          validation: {
+            passed: state.validationResult.passed,
+            summary: state.validationResult.summary,
+            errorCount: state.validationResult.errors.length,
+          },
+        };
+      }
+
+      return result;
     } catch (error) {
       const err = error as Error;
       return {
@@ -146,3 +274,4 @@ export const fileWriteTool: Tool = {
     }
   },
 };
+

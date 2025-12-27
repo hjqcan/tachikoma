@@ -13,6 +13,15 @@ import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
+import { withFileLock } from './file-lock';
+
+/**
+ * 获取锁持有者ID
+ */
+function getOwnerId(context: ExecutionContext): string {
+  const ctx = context as unknown as { workerId?: string; agentId?: string };
+  return ctx.workerId ?? ctx.agentId ?? context.taskId ?? 'unknown';
+}
 
 // =============================================================================
 // 类型定义
@@ -515,8 +524,15 @@ Freeform 语法（非标准 unified diff）：
       const baseDir = context.effectiveCwd ?? context.workDir;
       const absolutePath = validatePath(filePath, baseDir);
 
-      // 读取原始内容
-      let content: string;
+      // 确保父目录存在
+      const parentDir = dirname(absolutePath);
+      await mkdir(parentDir, { recursive: true });
+
+      // 使用文件锁包裹整个读-写操作，防止并发读改写冲突
+      const ownerId = getOwnerId(context);
+      return await withFileLock(absolutePath, ownerId, async () => {
+        // 读取原始内容
+        let content: string;
       try {
         content = await readFile(absolutePath, 'utf-8');
       } catch (err) {
@@ -588,12 +604,7 @@ Freeform 语法（非标准 unified diff）：
         };
       }
 
-      // 确保父目录存在
-      const parentDir = dirname(absolutePath);
-      await mkdir(parentDir, { recursive: true });
-
-      // 写回文件
-      await writeFile(absolutePath, content);
+        await writeFile(absolutePath, content);
 
       const newBytes = Buffer.from(content, 'utf-8').length;
       const newLines = content.split('\n').length;
@@ -616,10 +627,11 @@ Freeform 语法（非标准 unified diff）：
         output.errors = errors;
       }
 
-      return {
-        success: true,
-        data: output,
-      };
+        return {
+          success: true as const,
+          data: output,
+        };
+      }); // end withFileLock
     } catch (error) {
       const err = error as Error;
       return {

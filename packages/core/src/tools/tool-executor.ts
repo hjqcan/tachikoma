@@ -7,7 +7,7 @@
 import type { Tool, ExecutionContext } from '../types';
 import type { ToolResult } from './types';
 import { PermissionValidator } from './permission-validator';
-import { PermissionDeniedError } from './registry';
+import { PermissionDeniedError } from './errors';
 
 /**
  * 工具执行配置

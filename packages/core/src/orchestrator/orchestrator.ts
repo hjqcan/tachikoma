@@ -26,6 +26,7 @@ import { TaskMasterPlanEngine } from './engines/taskmaster-plan-engine';
 import { CheckpointResumeEngine } from './engines/checkpoint-resume-engine';
 import { TaskMasterAdapter } from './adapters/taskmaster-adapter';
 import { ApprovalArbitrationService } from './services/approval-arbitration';
+import { VerificationGateService } from './services/verification-gate';
 
 import type { EmitFn, ResumeFromOptions } from './runner/types';
 import { ProgressReporter } from './runner/progress-reporter';
@@ -88,6 +89,7 @@ export class Orchestrator extends BaseAgent {
 
   // 运行期对象
   private approvalService: ApprovalArbitrationService | null = null;
+  private readonly verificationGateService: VerificationGateService;
 
   constructor(id: string, options: OrchestratorOptions = {}) {
     const orchestratorConfig = createOrchestratorConfig(options.config);
@@ -172,6 +174,12 @@ export class Orchestrator extends BaseAgent {
       () => this.session.getCollaborationService()
     );
 
+    // Initialize Verification Gate for multi-layer verification
+    this.verificationGateService = new VerificationGateService({
+      timeout: orchestratorConfig.delegation.timeout,
+      useLsp: true, // Use LSP for faster diagnostics
+    });
+
     this.execution = new ExecutionLoop({
       orchestratorConfig,
       state: this.orchestratorState,
@@ -187,6 +195,7 @@ export class Orchestrator extends BaseAgent {
       workers: this.workers,
       getApprovalService: () => this.approvalService,
       getIntegrationService: () => this.session.getIntegrationService(),
+      verificationGateService: this.verificationGateService,
     });
 
     this.runService = new RunService(

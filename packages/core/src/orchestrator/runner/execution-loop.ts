@@ -4,15 +4,16 @@ import type { OrchestratorConfig, OrchestratorTask, PlannerOutput, SubTask, Exec
 import type { OrchestratorState } from '../state';
 import { generateTimestampId } from '../session';
 import { resolveRetryPolicy, calculateRetryDelay, shouldRetry } from '../config';
-import { AggregationEngine } from '../engines/aggregation-engine';
+import type { AggregationEngine } from '../engines/aggregation-engine';
 import { ExecutionEngine } from '../engines/execution-engine';
 import { TaskMasterPlanEngine } from '../engines/taskmaster-plan-engine';
 import { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
 import type { ApprovalArbitrationService } from '../services/approval-arbitration';
 import type { IntegrationContextService } from '../services/integration-context';
+import { VerificationGateService, type VerificationResult } from '../services/verification-gate';
 import type { EmitFn } from './types';
-import { ProgressReporter } from './progress-reporter';
-import { CheckpointService } from './checkpoint-service';
+import type { ProgressReporter } from './progress-reporter';
+import type { CheckpointService } from './checkpoint-service';
 import { WorkerManager } from './worker-manager';
 
 export interface ExecutionLoopDeps {
@@ -30,6 +31,117 @@ export interface ExecutionLoopDeps {
   workers: WorkerManager;
   getApprovalService: () => ApprovalArbitrationService | null;
   getIntegrationService: () => IntegrationContextService | null;
+  verificationGateService?: VerificationGateService;
+}
+
+
+
+export class ReplanNeededError extends Error {
+  constructor(
+    public readonly subtaskId: string,
+    public readonly reason: string,
+    public readonly errorSummary: string
+  ) {
+    super(`Replan needed for subtask ${subtaskId}: ${reason}`);
+    this.name = 'ReplanNeededError';
+  }
+}
+
+/**
+ * Critical tool names that should trigger replan on failure
+ */
+const CRITICAL_TOOLS = new Set([
+  'package_install',
+  'shell_run',
+  'npm_install',
+  'dev_server',
+]);
+
+/**
+ * Error patterns that indicate critical failures
+ */
+const CRITICAL_ERROR_PATTERNS = [
+  /EACCES/i,
+  /ENOENT.*node_modules/i,
+  /command not found/i,
+  /permission denied/i,
+  /npm ERR!/i,
+  /pnpm ERR!/i,
+  /error installing/i,
+];
+
+interface CriticalToolFailure {
+  toolName: string;
+  error: string;
+}
+
+/**
+ * Check for critical tool failures in task result
+ * 
+ * Examines trace events and output for failed tool calls that should
+ * prevent the subtask from being marked as successful.
+ */
+function checkCriticalToolFailures(result: TaskResult): CriticalToolFailure[] {
+  const failures: CriticalToolFailure[] = [];
+
+  // Check trace events for tool call failures
+  if (result.trace?.events) {
+    for (const event of result.trace.events) {
+      const attrs = event.attributes as Record<string, unknown> | undefined;
+      if (!attrs) continue;
+
+      const toolName = attrs.toolName as string | undefined;
+      const success = attrs.success as boolean | undefined;
+      const error = attrs.error as string | undefined;
+      const output = attrs.output as string | undefined;
+
+      // Check if this is a critical tool with failure
+      if (toolName && CRITICAL_TOOLS.has(toolName)) {
+        if (success === false && error) {
+          failures.push({ toolName, error });
+        }
+        // Also check output for error patterns
+        if (output) {
+          for (const pattern of CRITICAL_ERROR_PATTERNS) {
+            if (pattern.test(output)) {
+              failures.push({ toolName, error: `Detected error pattern in output: ${output.slice(0, 200)}` });
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Check output for error indicators
+  const outputObj = result.output as Record<string, unknown> | undefined;
+  if (outputObj && typeof outputObj === 'object') {
+    // Check for direct error field
+    if (outputObj.error && typeof outputObj.error === 'string') {
+      for (const pattern of CRITICAL_ERROR_PATTERNS) {
+        if (pattern.test(outputObj.error)) {
+          failures.push({ toolName: 'unknown', error: outputObj.error });
+          break;
+        }
+      }
+    }
+
+    // Check for toolResults array (some agents track this)
+    const toolResults = outputObj.toolResults as Record<string, unknown>[] | undefined;
+    if (Array.isArray(toolResults)) {
+      for (const tr of toolResults) {
+        const toolName = tr.name as string || tr.toolName as string;
+        const success = tr.success as boolean;
+        const error = tr.error as string;
+
+        if (toolName && CRITICAL_TOOLS.has(toolName) && success === false && error) {
+          failures.push({ toolName, error });
+        }
+      }
+    }
+  }
+
+  return failures;
 }
 
 export class ExecutionLoop {
@@ -47,6 +159,7 @@ export class ExecutionLoop {
   private readonly workers: WorkerManager;
   private readonly getApprovalService: () => ApprovalArbitrationService | null;
   private readonly getIntegrationService: () => IntegrationContextService | null;
+  private readonly verificationGateService: VerificationGateService | undefined;
 
   constructor(deps: ExecutionLoopDeps) {
     this.orchestratorConfig = deps.orchestratorConfig;
@@ -63,6 +176,7 @@ export class ExecutionLoop {
     this.workers = deps.workers;
     this.getApprovalService = deps.getApprovalService;
     this.getIntegrationService = deps.getIntegrationService;
+    this.verificationGateService = deps.verificationGateService;
   }
 
   async runPlan(
@@ -71,7 +185,7 @@ export class ExecutionLoop {
     workDir: string,
     planOutput: PlannerOutput,
     signal: AbortSignal
-  ): Promise<{ aggregated: ReturnType<AggregationEngine['aggregate']> }> {
+  ): Promise<{ aggregated: ReturnType<AggregationEngine['aggregate']>; verificationResult?: VerificationResult }> {
     const subtaskMap = new Map<string, SubTask>();
     const mergeSubtasks = (subs: SubTask[]): void => {
       for (const st of subs) subtaskMap.set(st.id, st);
@@ -161,7 +275,37 @@ export class ExecutionLoop {
     const failed = this.state.executionState?.failedSubtasks ?? new Map();
     const aggregated = this.aggregationEngine.aggregate(subtaskMap, completed, failed);
     this.emit('aggregate:complete', taskId, { result: aggregated });
-    return { aggregated };
+    
+    // Run Verification Gate check after plan completion - HARD GATE
+    let verificationResult: VerificationResult | undefined;
+    if (this.verificationGateService) {
+      verificationResult = await this.verificationGateService.verify(workDir, {
+        preset: 'full',
+      });
+      if (!verificationResult.passed) {
+        const errorSummary = VerificationGateService.formatErrorsForWorker(verificationResult);
+        console.error(`[VerificationGate] FINAL CHECK FAILED with errors`);
+        console.error(errorSummary);
+        
+        // Update TaskMaster statuses to reflect failure (undo 'done' status)
+        for (const [subtaskId, subtask] of subtaskMap) {
+          if (subtask.status === 'success') {
+            subtask.status = 'failure';
+            this.state.markSubtaskFailed(subtaskId, `Final Verification Gate failed`);
+            await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
+          }
+        }
+        
+        // Trigger replan so the planner can repair the failed verification
+        throw new ReplanNeededError(
+          taskId,
+          `Final Verification Gate FAILED: ${verificationResult.summary}`,
+          errorSummary
+        );
+      }
+    }
+    
+    return { aggregated, ...(verificationResult && { verificationResult }) };
   }
 
   private async executeStep(
@@ -173,12 +317,46 @@ export class ExecutionLoop {
     signal: AbortSignal
   ): Promise<void> {
     if (step.parallel) {
-      await Promise.all(step.subtaskIds.map((id) => this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal)));
+      // Parallel execution: run all subtasks then do ONE verification gate check
+      await Promise.all(step.subtaskIds.map((id) => this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal, true)));
+      
+      // Step-level Verification Gate check after ALL parallel subtasks complete
+      // NOTE: This is a HARD GATE - parallel step FAILS if verification errors found
+      if (this.verificationGateService) {
+        const runWorkDir = (this.state.currentRunMetadata as Record<string, unknown> | undefined)?.workDir;
+        const effectiveWorkDir = typeof runWorkDir === 'string' ? runWorkDir : (this.orchestratorConfig.workDir ?? process.cwd());
+        
+        const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
+          preset: 'fast',
+        });
+        if (!verifyResult.passed) {
+          const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+          console.error(`[VerificationGate] PARALLEL STEP FAILED`);
+          console.error(errorSummary);
+          
+          // HARD GATE: Fail the parallel step - mark all subtasks as failed
+          for (const subtaskId of step.subtaskIds) {
+            const subtask = subtaskMap.get(subtaskId);
+            if (subtask) {
+              subtask.status = 'failure';
+              this.state.markSubtaskFailed(subtaskId, `Verification Gate failed after parallel step`);
+              await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
+            }
+          }
+          
+          throw new ReplanNeededError(
+            step.subtaskIds.join(','),
+            `Parallel step Verification Gate FAILED: ${verifyResult.summary}. Consider running these subtasks sequentially.`,
+            errorSummary
+          );
+        }
+      }
       return;
     }
+    // Sequential execution: each subtask gets its own build gate check
     for (const id of step.subtaskIds) {
       if (signal.aborted) break;
-      await this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal);
+      await this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal, false);
     }
   }
 
@@ -188,7 +366,8 @@ export class ExecutionLoop {
     subtaskMap: Map<string, SubTask>,
     timeout: number,
     retryPolicy: RetryPolicy,
-    signal: AbortSignal
+    signal: AbortSignal,
+    isParallelStep = false
   ): Promise<void> {
     const subtask = subtaskMap.get(subtaskId);
     if (!subtask) {
@@ -263,6 +442,8 @@ export class ExecutionLoop {
 
     let retryCount = 0;
     let lastError: string | undefined;
+    let buildGateFixAttempts = 0;
+    const MAX_BUILD_GATE_FIX_ATTEMPTS = 3;
 
     while (true) {
       if (signal.aborted) {
@@ -392,6 +573,70 @@ export class ExecutionLoop {
           throw new Error(errMsg);
         }
 
+        // Check for critical tool failures even if subtask status is 'success'
+        // This catches cases like npm install EACCES where agent continues despite failure
+        const criticalFailures = checkCriticalToolFailures(result);
+        if (criticalFailures.length > 0) {
+          const failureMessages = criticalFailures.map(f => `${f.toolName}: ${f.error}`).join('; ');
+          console.error(`[ExecutionLoop] Critical tool failures detected: ${failureMessages}`);
+          throw new ReplanNeededError(
+            subtaskId,
+            `Critical tool failures: ${failureMessages}`,
+            criticalFailures.map(f => `❌ ${f.toolName}: ${f.error}`).join('\n')
+          );
+        }
+
+        // Verification Gate: check for errors before marking complete
+        // NOTE: For parallel steps, this is SKIPPED - gate runs at step level instead
+        // NOTE: This is a HARD GATE - subtask will FAIL if max fix attempts reached
+        // NOTE: Uses inner loop to avoid re-running entire subtask on fix
+        if (this.verificationGateService && !isParallelStep) {
+          const runWorkDir = (this.state.currentRunMetadata as Record<string, unknown> | undefined)?.workDir;
+          const effectiveWorkDir = typeof runWorkDir === 'string' ? runWorkDir : (this.orchestratorConfig.workDir ?? process.cwd());
+          
+          // Inner fix-verify loop: only runs fix tasks, doesn't re-run original subtask
+          while (buildGateFixAttempts <= MAX_BUILD_GATE_FIX_ATTEMPTS) {
+            const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
+              preset: 'fast',
+            });
+            
+            if (verifyResult.passed) {
+              break; // Verification passed, exit fix loop
+            }
+            
+            if (buildGateFixAttempts >= MAX_BUILD_GATE_FIX_ATTEMPTS) {
+              const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+              const failureMessage = `Verification Gate FAILED after ${MAX_BUILD_GATE_FIX_ATTEMPTS} fix attempts. ${verifyResult.summary}`;
+              console.error(`[VerificationGate] REPLAN NEEDED: ${failureMessage}`);
+              
+              throw new ReplanNeededError(subtaskId, failureMessage, errorSummary);
+            }
+            
+            buildGateFixAttempts++;
+            const failedLayer = verifyResult.layers.find(l => !l.passed);
+            console.warn(
+              `[VerificationGate] Subtask ${subtaskId} failed ${failedLayer?.layer ?? 'check'} (fix attempt ${buildGateFixAttempts}/${MAX_BUILD_GATE_FIX_ATTEMPTS})`
+            );
+            
+            // Create fix task with error details and proper verification command
+            const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+            const verifyCommand = this.mapToShellCommand(failedLayer?.command);
+            const fixTask = this.createBuildFixTask(workerTask, errorSummary, verifyCommand);
+            
+            // Run ONLY the fix task (not re-running original subtask)
+            try {
+              const fixResult = await agent.run(fixTask);
+              if (fixResult.status !== 'success') {
+                console.warn(`[VerificationGate] Fix task failed with status: ${fixResult.status}`);
+              }
+              // Continue inner loop to re-check
+            } catch (fixError) {
+              console.warn(`[VerificationGate] Fix attempt threw error: ${(fixError as Error).message}`);
+              // Continue inner loop to re-check
+            }
+          }
+        }
+
         this.state.markSubtaskCompleted(subtaskId, result);
         activeSubtask.status = 'success';
         console.info(`[ExecutionLoop] Subtask ${subtaskId} completed successfully`);
@@ -407,6 +652,17 @@ export class ExecutionLoop {
         await this.checkpoints.saveSnapshot(taskId, 'executing', 'subtask-complete').catch(() => undefined);
         return;
       } catch (error) {
+        if (error instanceof ReplanNeededError) {
+          lastError = error.reason;
+          this.state.markSubtaskFailed(subtaskId, lastError);
+          activeSubtask.status = 'failure';
+          await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
+          await this.getApprovalService()?.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
+          this.emit('subtask:failed', taskId, { subtask: activeSubtask, error: lastError, retryCount }, subtaskId);
+          await this.progress.write(taskId, 'executing').catch(() => undefined);
+          await this.checkpoints.saveSnapshot(taskId, 'executing', 'subtask-failed').catch(() => undefined);
+          throw error;
+        }
         lastError = error instanceof Error ? error.message : String(error);
         if (shouldRetry(retryPolicy, retryCount)) {
           retryCount++;
@@ -502,6 +758,38 @@ export class ExecutionLoop {
     
     return constraints;
   }
+
+  /**
+   * Create a fix task from build errors
+   * 
+   * Generates a new task that instructs the Worker to fix the build errors
+   * from the previous execution. Uses the actual command for verification.
+   */
+  private createBuildFixTask(originalTask: Task, errorSummary: string, command?: string): Task {
+    // Determine verification command based on what was used
+    const verifyCommand = command ?? 'npx tsc --noEmit';
+    
+    return {
+      ...originalTask,
+      id: `${originalTask.id}-fix-${Date.now()}`,
+      objective: `Fix the following build/type errors from your previous code changes:\n\n${errorSummary}\n\nRequirements:\n1. Analyze each error carefully\n2. Fix ALL errors - do not introduce new ones\n3. Run verification command to confirm fixes`,
+      constraints: [
+        ...(originalTask.constraints ?? []),
+        'Fix all listed errors without introducing new ones',
+        `Verify fixes by running: ${verifyCommand}`,
+      ],
+    };
+  }
+
+  /**
+   * Map build gate command to actual shell command
+   * 
+   * Converts internal commands (like 'lsp_diagnostics') to real shell commands
+   * that workers can run for verification.
+   */
+  private mapToShellCommand(command?: string): string {
+    if (!command) return 'npx tsc --noEmit';
+    if (command === 'lsp_diagnostics') return 'npx tsc --noEmit';
+    return command;
+  }
 }
-
-
