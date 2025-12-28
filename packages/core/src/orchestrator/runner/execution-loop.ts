@@ -321,34 +321,57 @@ export class ExecutionLoop {
       await Promise.all(step.subtaskIds.map((id) => this.executeSubtask(taskId, id, subtaskMap, timeout, retryPolicy, signal, true)));
       
       // Step-level Verification Gate check after ALL parallel subtasks complete
-      // NOTE: This is a HARD GATE - parallel step FAILS if verification errors found
+      // NOTE: Uses fix loop just like sequential subtasks
       if (this.verificationGateService) {
         const runWorkDir = (this.state.currentRunMetadata as Record<string, unknown> | undefined)?.workDir;
         const effectiveWorkDir = typeof runWorkDir === 'string' ? runWorkDir : (this.orchestratorConfig.workDir ?? process.cwd());
         
-        const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
-          preset: 'fast',
-        });
-        if (!verifyResult.passed) {
-          const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
-          console.error(`[VerificationGate] PARALLEL STEP FAILED`);
-          console.error(errorSummary);
+        let fixAttempts = 0;
+        const MAX_PARALLEL_FIX_ATTEMPTS = 2;
+        
+        while (fixAttempts <= MAX_PARALLEL_FIX_ATTEMPTS) {
+          const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
+            preset: 'fast',
+          });
           
-          // HARD GATE: Fail the parallel step - mark all subtasks as failed
-          for (const subtaskId of step.subtaskIds) {
-            const subtask = subtaskMap.get(subtaskId);
-            if (subtask) {
-              subtask.status = 'failure';
-              this.state.markSubtaskFailed(subtaskId, `Verification Gate failed after parallel step`);
-              await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
-            }
+          if (verifyResult.passed) {
+            break; // Verification passed
           }
           
-          throw new ReplanNeededError(
-            step.subtaskIds.join(','),
-            `Parallel step Verification Gate FAILED: ${verifyResult.summary}. Consider running these subtasks sequentially.`,
-            errorSummary
-          );
+          if (fixAttempts >= MAX_PARALLEL_FIX_ATTEMPTS) {
+            const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+            console.error(`[VerificationGate] PARALLEL STEP FAILED after ${MAX_PARALLEL_FIX_ATTEMPTS} fix attempts`);
+            
+            // Mark all subtasks as failed
+            for (const subtaskId of step.subtaskIds) {
+              const subtask = subtaskMap.get(subtaskId);
+              if (subtask) {
+                subtask.status = 'failure';
+                this.state.markSubtaskFailed(subtaskId, `Verification Gate failed after parallel step`);
+                await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
+              }
+            }
+            
+            throw new ReplanNeededError(
+              step.subtaskIds.join(','),
+              `Parallel step Verification Gate FAILED: ${verifyResult.summary}. Consider running these subtasks sequentially.`,
+              errorSummary
+            );
+          }
+          
+          fixAttempts++;
+          const _errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+          console.warn(`[VerificationGate] Parallel step failed verification (fix attempt ${fixAttempts}/${MAX_PARALLEL_FIX_ATTEMPTS}). Errors:\n${_errorSummary}`);
+          
+          // Try auto-fix first
+          const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
+          if (autoFixResult.fixed > 0) {
+            console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues`);
+            continue; // Re-verify
+          }
+          
+          // Auto-fix didn't work, log errors for next retry
+          console.warn(`[VerificationGate] Auto-fix unsuccessful, will retry verification`);
         }
       }
       return;
@@ -621,6 +644,15 @@ export class ExecutionLoop {
             // Create fix task with error details and proper verification command
             const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
             const verifyCommand = this.mapToShellCommand(failedLayer?.command);
+            
+            // Phase 2: Try auto-fix for common patterns (unused imports) before LLM retry
+            const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
+            if (autoFixResult.fixed > 0) {
+              console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues via eslint --fix`);
+              // Re-verify after auto-fix - might resolve all issues
+              continue;
+            }
+            
             const fixTask = this.createBuildFixTask(workerTask, errorSummary, verifyCommand);
             
             // Run ONLY the fix task (not re-running original subtask)
@@ -769,14 +801,61 @@ export class ExecutionLoop {
     // Determine verification command based on what was used
     const verifyCommand = command ?? 'npx tsc --noEmit';
     
+    // Parse error patterns to provide targeted fix instructions
+    const fixInstructions: string[] = [];
+    
+    // Detect common error patterns and add specific instructions
+    if (errorSummary.includes('is declared but its value is never read') ||
+        errorSummary.includes('is declared but never used')) {
+      fixInstructions.push('UNUSED IMPORTS: Remove the unused import statements. For React 17+, you do NOT need `import React`.');
+    }
+    
+    if (errorSummary.includes('Cannot find name') || 
+        errorSummary.includes('is not defined')) {
+      fixInstructions.push('MISSING TYPE/VARIABLE: Define or import the missing type/variable. Check if you need to create an interface or import from another file.');
+    }
+    
+    if (errorSummary.includes('is not assignable to type') ||
+        errorSummary.includes('Type mismatch')) {
+      fixInstructions.push('TYPE MISMATCH: Ensure function parameters and return types match. Consider using `typeof` to infer types from existing values.');
+    }
+    
+    if (errorSummary.includes('Module') || 
+        errorSummary.includes('module')) {
+      fixInstructions.push('MODULE ERROR: Check import paths. Use relative paths for local files, ensure package is installed for external modules.');
+    }
+    
+    // Build the enhanced objective
+    const patternGuidance = fixInstructions.length > 0
+      ? `\n\n## Fix Strategies\n${fixInstructions.map((inst, i) => `${i + 1}. ${inst}`).join('\n')}`
+      : '';
+    
     return {
       ...originalTask,
       id: `${originalTask.id}-fix-${Date.now()}`,
-      objective: `Fix the following build/type errors from your previous code changes:\n\n${errorSummary}\n\nRequirements:\n1. Analyze each error carefully\n2. Fix ALL errors - do not introduce new ones\n3. Run verification command to confirm fixes`,
+      objective: `## FIX REQUIRED: TypeScript/Build Errors
+
+The following errors MUST be fixed before proceeding:
+
+${errorSummary}
+${patternGuidance}
+
+## Instructions
+1. Fix ALL errors listed above - do not skip any
+2. For each error, identify the root cause and apply the appropriate fix
+3. Do NOT add new features or refactor - ONLY fix the listed errors
+4. After fixing, run \`${verifyCommand}\` to confirm no errors remain
+
+## CRITICAL
+- Focus ONLY on the files mentioned in the errors
+- Do NOT modify unrelated files
+- Each fix should be minimal and targeted`,
       constraints: [
-        ...(originalTask.constraints ?? []),
         'Fix all listed errors without introducing new ones',
+        'Do NOT add new features or refactor code',
+        'Focus only on files with errors',
         `Verify fixes by running: ${verifyCommand}`,
+        ...(originalTask.constraints ?? []).filter(c => !c.includes('Verify fixes')),
       ],
     };
   }
@@ -791,5 +870,116 @@ export class ExecutionLoop {
     if (!command) return 'npx tsc --noEmit';
     if (command === 'lsp_diagnostics') return 'npx tsc --noEmit';
     return command;
+  }
+
+  /**
+   * Try to auto-fix common issues before LLM retry
+   * 
+   * Runs eslint --fix on files with errors to automatically resolve:
+   * - Unused imports (very common LLM pattern)
+   * - Formatting issues
+   * - Simple code style errors
+   * 
+   * Guards:
+   * - Only runs if ESLint config exists in project
+   * - Proper timeout with process kill
+   * - Only counts exit code 0 as successful fix
+   */
+  private async tryAutoFix(
+    workDir: string,
+    verifyResult: VerificationResult
+  ): Promise<{ fixed: number; errors: string[] }> {
+    const { spawn } = await import('node:child_process');
+    const { existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    
+    // Gate: Only run if ESLint config exists in project
+    const eslintConfigFiles = [
+      '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', '.eslintrc.yaml',
+      'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs',
+    ];
+    const hasEslintConfig = eslintConfigFiles.some(f => existsSync(join(workDir, f)));
+    if (!hasEslintConfig) {
+      console.debug('[AutoFix] Skipping - no ESLint config found');
+      return { fixed: 0, errors: [] };
+    }
+    
+    // Extract unique file paths from errors
+    const errorFiles = new Set<string>();
+    for (const layer of verifyResult.layers) {
+      if (layer.errors) {
+        for (const error of layer.errors) {
+          if (error.file && (error.file.endsWith('.tsx') || error.file.endsWith('.ts'))) {
+            errorFiles.add(error.file);
+          }
+        }
+      }
+    }
+
+    if (errorFiles.size === 0) {
+      return { fixed: 0, errors: [] };
+    }
+
+    const filesArray = Array.from(errorFiles);
+    console.info(`[AutoFix] Running eslint --fix on ${filesArray.length} files`);
+
+    const TIMEOUT_MS = 30000;
+
+    try {
+      const result = await new Promise<{ fixed: number; errors: string[] }>((resolve) => {
+        const eslintProcess = spawn('npx', ['eslint', '--fix', ...filesArray], {
+          cwd: workDir,
+          shell: true,
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let killed = false;
+        
+        // Manual timeout with process kill
+        const timeoutId = setTimeout(() => {
+          killed = true;
+          eslintProcess.kill('SIGTERM');
+          console.warn('[AutoFix] Timeout - killing eslint process');
+          resolve({ fixed: 0, errors: ['ESLint timed out after 30s'] });
+        }, TIMEOUT_MS);
+
+        eslintProcess.stdout?.on('data', (data: Buffer) => {
+          stdout += data.toString();
+        });
+        
+        eslintProcess.stderr?.on('data', (data: Buffer) => {
+          stderr += data.toString();
+        });
+
+        eslintProcess.on('close', (code) => {
+          clearTimeout(timeoutId);
+          if (killed) return; // Already resolved by timeout
+          
+          // Only exit code 0 means all issues were fixed
+          // Exit code 1 means eslint ran but errors remain - NOT a fix
+          if (code === 0) {
+            console.info('[AutoFix] ESLint completed successfully');
+            resolve({ fixed: filesArray.length, errors: [] });
+          } else {
+            // Exit code 1 or higher = eslint found issues it couldn't fix
+            console.debug(`[AutoFix] ESLint exited with code ${code} - no auto-fix applied`);
+            resolve({ fixed: 0, errors: [] });
+          }
+        });
+
+        eslintProcess.on('error', (err) => {
+          clearTimeout(timeoutId);
+          if (killed) return;
+          console.warn(`[AutoFix] eslint not available: ${err.message}`);
+          resolve({ fixed: 0, errors: [err.message] });
+        });
+      });
+
+      return result;
+    } catch (error) {
+      console.warn(`[AutoFix] Auto-fix failed: ${(error as Error).message}`);
+      return { fixed: 0, errors: [(error as Error).message] };
+    }
   }
 }

@@ -1,5 +1,5 @@
 Goal (incl. success criteria):
-- Re-review updated staged changes and report remaining issues/risks with file references.
+- Review staged changes in execution-loop.ts and report issues/risks with file references.
 
 Constraints/Assumptions:
 - Follow AGENTS/CONTINUITY rules; keep edits ASCII unless existing file uses Unicode.
@@ -9,21 +9,21 @@ Key decisions:
 - Focus on staged diff and provide code-review style findings (bugs/risks/tests).
 
 State:
-- Reviewed updated staged diff; assessing remaining issues.
+- Found execution-loop.ts changes are unstaged; reviewing working tree diff.
 
 Done:
 - Loaded CONTINUITY.md per instructions.
-- Reviewed staged changes and spot-checked key fixes.
+- Checked staged diff for execution-loop.ts (none staged); inspected unstaged diff instead.
 
 Now:
-- Summarize remaining review findings for staged changes.
+- Inspect unstaged changes in execution-loop.ts and identify issues/risks.
 
 Next:
-- Share review findings and discuss fixes if requested.
+- Provide execution-loop review findings and test guidance.
 
 Open questions (UNCONFIRMED if needed):
-- UNCONFIRMED: Which staged changes are in scope for this review (all staged or specific intent)?
+- UNCONFIRMED: Should review scope include unstaged execution-loop.ts changes (current diff)?
 
 Working set (files/ids/commands):
 - CONTINUITY.md
-- git staged diff
+- packages/core/src/orchestrator/runner/execution-loop.ts
