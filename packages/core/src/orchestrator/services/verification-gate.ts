@@ -14,7 +14,7 @@ import { SmokeGateService, type SmokeTestConfig } from './smoke-gate';
 import { runBrowserVerify } from './browser-verify-runner';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, relative, isAbsolute } from 'node:path';
 
 // =============================================================================
 // Types
@@ -84,6 +84,9 @@ export interface VerificationOptions {
   
   /** Whether to fail on warnings */
   failOnWarnings?: boolean;
+
+  /** P9: Whether to verify ALL detected projects regardless of changedFiles (default: false) */
+  verifyAllProjects?: boolean;
 }
 
 export interface VerificationResult {
@@ -223,19 +226,39 @@ export class VerificationGateService {
       ? allProjects 
       : [{ path: workDir, config: await this.projectDetector.detect(workDir) }];
 
-    // Determine relevant projects based on changedFiles (if provided)
+    // P9: Multi-project verification is opt-in
+    // Only verify multiple projects if:
+    // 1. verifyAllProjects is explicitly true, OR
+    // 2. changedFiles is provided (scoped verification)
+    // Otherwise, only verify the root project
     const changedFiles = options.changedFiles;
-    const relevantProjects = changedFiles 
-      ? detectedProjects.filter((p: { path: string, config: ProjectConfig }) => 
-          // Root project is always relevant if it's the only one
-          (detectedProjects.length === 1 && p.path === workDir) ||
-          // Otherwise, only if files in its directory changed
-          changedFiles.some(f => {
-            const absoluteFile = f.startsWith('/') ? f : join(workDir, f);
-            return absoluteFile.startsWith(p.path);
-          })
-        )
-      : detectedProjects;
+    let relevantProjects: { path: string, config: ProjectConfig }[];
+    
+    if (options.verifyAllProjects) {
+      // Explicit opt-in: verify all detected projects
+      relevantProjects = detectedProjects;
+    } else if (changedFiles && changedFiles.length > 0) {
+      // Scoped verification: only projects affected by changed files
+      relevantProjects = detectedProjects.filter((p: { path: string, config: ProjectConfig }) => 
+        // Root project is always relevant if it's the only one
+        (detectedProjects.length === 1 && p.path === workDir) ||
+        // P9 Fix: Use proper path boundary check to avoid /app matching /app2
+        changedFiles.some(f => {
+          const absoluteFile = isAbsolute(f) ? resolve(f) : resolve(workDir, f);
+          const projectRoot = resolve(p.path);
+          const rel = relative(projectRoot, absoluteFile);
+          return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+        })
+      );
+    } else {
+      // Default: only verify root project to avoid "unrelated package failure" regression
+      relevantProjects = detectedProjects.filter(p => p.path === workDir);
+      // If root is not in detected projects (e.g., only sub-projects found), use first detected
+      if (relevantProjects.length === 0 && detectedProjects.length > 0) {
+        // Safe to assert since we checked length > 0
+        relevantProjects = [detectedProjects[0]!];
+      }
+    }
 
     console.info(`[VerificationGate] Found ${detectedProjects.length} projects, verifying ${relevantProjects.length} affected projects`);
 
@@ -341,9 +364,9 @@ export class VerificationGateService {
       passed,
       layers: allLayerResults,
       duration: Date.now() - startTime,
-      projectConfig: relevantProjects.length > 0 
-        ? relevantProjects[0].config 
-        : (detectedProjects.length > 0 ? detectedProjects[0].config : ({} as ProjectConfig)),
+      projectConfig: (relevantProjects.length > 0 
+        ? relevantProjects[0]?.config 
+        : (detectedProjects.length > 0 ? detectedProjects[0]?.config : undefined)) ?? ({} as ProjectConfig),
       summary: passed 
         ? (allLayerResults.length > 0 ? 'All verifications passed' : 'No verification layers configured')
         : (failedLayer ? failedLayer.summary : 'Verification failed'),
@@ -587,61 +610,100 @@ export class VerificationGateService {
   }
 
   /**
-   * P6: Check for file extension conflicts (e.g., App.js and App.tsx both exist)
+   * P6/P9: Check for file extension conflicts (e.g., App.js and App.tsx both exist)
    * This causes module resolution confusion in CRA/Vite
+   * 
+   * P9: Extended to scan app/, pages/, lib/, components/ directories (Next.js support)
+   * Added performance guards: max file count and depth limits
    */
   private async checkFileConflicts(workDir: string): Promise<VerificationError[]> {
     const errors: VerificationError[] = [];
-    const srcDir = join(workDir, 'src');
     
-    // Only check if src directory exists
-    if (!existsSync(srcDir)) {
-      return errors;
-    }
+    // P9: Scan multiple common source directories
+    const sourceDirs = ['src', 'app', 'pages', 'lib', 'components'];
+    const MAX_FILES_PER_DIR = 500; // Performance guard
     
-    try {
-      const files = readdirSync(srcDir, { recursive: true }) as string[];
+    for (const dirName of sourceDirs) {
+      const dir = join(workDir, dirName);
+      if (!existsSync(dir)) continue;
       
-      // Group files by basename (without extension)
-      const fileGroups = new Map<string, string[]>();
-      
-      for (const file of files) {
-        const filePath = typeof file === 'string' ? file : '';
-        // Only check .js, .jsx, .ts, .tsx files
-        if (!/\.(js|jsx|ts|tsx)$/.test(filePath)) continue;
+      try {
+        // P9: Use sync readdir with limited depth (3 levels max)
+        const files = this.scanDirForConflicts(dir, 3, MAX_FILES_PER_DIR);
         
-        const basename = filePath.replace(/\.(js|jsx|ts|tsx)$/, '');
-        const existing = fileGroups.get(basename) ?? [];
-        existing.push(filePath);
-        fileGroups.set(basename, existing);
-      }
-      
-      // Find conflicts: same basename with both .js/.jsx and .ts/.tsx
-      for (const [_basename, fileList] of fileGroups) {
-        if (fileList.length < 2) continue;
+        // Group files by basename (without extension)
+        const fileGroups = new Map<string, string[]>();
         
-        const hasJs = fileList.some(f => /\.(js|jsx)$/.test(f));
-        const hasTs = fileList.some(f => /\.(ts|tsx)$/.test(f));
+        for (const file of files) {
+          // Only check .js, .jsx, .ts, .tsx files
+          if (!/\.(js|jsx|ts|tsx)$/.test(file)) continue;
+          
+          const basename = file.replace(/\.(js|jsx|ts|tsx)$/, '');
+          const existing = fileGroups.get(basename) ?? [];
+          existing.push(file);
+          fileGroups.set(basename, existing);
+        }
         
-        if (hasJs && hasTs) {
-          const jsFile = fileList.find(f => /\.(js|jsx)$/.test(f));
-          const tsFile = fileList.find(f => /\.(ts|tsx)$/.test(f));
-          if (jsFile && tsFile) {
-            errors.push({
-              file: join(srcDir, jsFile),
-              message: `FILE CONFLICT: Both '${jsFile}' and '${tsFile}' exist. ` +
-                `CRA/Vite will load '${jsFile}' and ignore '${tsFile}'. ` +
-                `DELETE the .js file if you want to use TypeScript, or delete the .tsx file if using JavaScript.`,
-              severity: 'error',
-            });
+        // Find conflicts: same basename with both .js/.jsx and .ts/.tsx
+        for (const [_basename, fileList] of fileGroups) {
+          if (fileList.length < 2) continue;
+          
+          const hasJs = fileList.some(f => /\.(js|jsx)$/.test(f));
+          const hasTs = fileList.some(f => /\.(ts|tsx)$/.test(f));
+          
+          if (hasJs && hasTs) {
+            const jsFile = fileList.find(f => /\.(js|jsx)$/.test(f));
+            const tsFile = fileList.find(f => /\.(ts|tsx)$/.test(f));
+            if (jsFile && tsFile) {
+              errors.push({
+                file: join(dir, jsFile),
+                message: `FILE CONFLICT: Both '${jsFile}' and '${tsFile}' exist in ${dirName}/. ` +
+                  `CRA/Vite will load '${jsFile}' and ignore '${tsFile}'. ` +
+                  `DELETE the .js file if you want to use TypeScript, or delete the .tsx file if using JavaScript.`,
+                severity: 'error',
+              });
+            }
           }
         }
+      } catch {
+        // P9: Silent skip on error to avoid blocking verification
       }
-    } catch {
-      // Ignore errors (e.g., directory not readable)
     }
     
     return errors;
+  }
+
+  /**
+   * P9: Scan directory for file conflicts with depth and count limits
+   */
+  private scanDirForConflicts(dir: string, maxDepth: number, maxFiles: number): string[] {
+    const results: string[] = [];
+    
+    const scan = (currentDir: string, depth: number, basePath: string) => {
+      if (depth <= 0 || results.length >= maxFiles) return;
+      
+      try {
+        const entries = readdirSync(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (results.length >= maxFiles) break;
+          
+          const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
+          
+          if (entry.isDirectory()) {
+            // Skip node_modules and hidden directories
+            if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+            scan(join(currentDir, entry.name), depth - 1, relativePath);
+          } else {
+            results.push(relativePath);
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+    
+    scan(dir, maxDepth, '');
+    return results;
   }
 
   /**

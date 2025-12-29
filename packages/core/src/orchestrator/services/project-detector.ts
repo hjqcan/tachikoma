@@ -5,7 +5,7 @@
  * based on project files and package.json configuration.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -101,7 +101,7 @@ export class ProjectDetector {
     
     // Check root first
     const rootConfig = await this.detect(workDir);
-    if (rootConfig.projectType !== 'unknown') {
+    if (rootConfig.projectType !== 'unknown' || this.isProjectRoot(workDir)) {
       results.push({ path: workDir, config: rootConfig });
     }
     
@@ -118,25 +118,26 @@ export class ProjectDetector {
           const fullPath = join(dir, entry.name);
           if (this.isProjectRoot(fullPath)) {
             const config = await this.detect(fullPath);
-            if (config.projectType !== 'unknown') {
-              return [{ path: fullPath, config }];
-            }
-            return [];
+            return [{ path: fullPath, config }];
           } else {
             // Recurse into subdirectories
             return scan(fullPath, depth + 1);
           }
         }));
         
+        const flatResults: { path: string, config: ProjectConfig }[] = [];
         for (const subresults of subdirectoryResults) {
-          results.push(...subresults);
+          flatResults.push(...subresults);
         }
+        return flatResults;
       } catch {
         // Ignore errors
+        return [];
       }
     };
     
-    await scan(workDir, 1);
+    const scannedResults = await scan(workDir, 1);
+    results.push(...scannedResults);
     
     return results;
   }
@@ -187,16 +188,53 @@ export class ProjectDetector {
   }
 
   /**
-   * P7: Check if a directory looks like a project root
+   * P7/P9: Check if a directory looks like a project root
+   * Supports: Node, Python, Go, Rust, Java, .NET, PHP, Dart
    */
   private isProjectRoot(dir: string): boolean {
-    return (
-      existsSync(join(dir, 'package.json')) ||
-      existsSync(join(dir, 'tsconfig.json')) ||
-      existsSync(join(dir, 'requirements.txt')) ||
-      existsSync(join(dir, 'pyproject.toml')) ||
-      existsSync(join(dir, 'setup.py'))
-    );
+    const markers = [
+      // Node/JS/TS
+      'package.json',
+      'tsconfig.json',
+      // Python
+      'requirements.txt',
+      'pyproject.toml',
+      'setup.py',
+      // Go
+      'go.mod',
+      // Rust
+      'Cargo.toml',
+      // Java/Kotlin
+      'pom.xml',
+      'build.gradle',
+      'build.gradle.kts',
+      // .NET
+      // Check for .csproj/.fsproj/.sln separately
+      // PHP
+      'composer.json',
+      // Dart/Flutter
+      'pubspec.yaml',
+    ];
+    
+    for (const marker of markers) {
+      if (existsSync(join(dir, marker))) {
+        return true;
+      }
+    }
+    
+    // .NET: check for any .csproj, .fsproj, or .sln file
+    try {
+      const entries = readdirSync(dir);
+      for (const entry of entries) {
+        if (entry.endsWith('.csproj') || entry.endsWith('.fsproj') || entry.endsWith('.sln')) {
+          return true;
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+    
+    return false;
   }
 
   /**
