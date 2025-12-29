@@ -12,6 +12,7 @@ import type {
   PlannerOutput,
   PlannerConfig,
   ExecutionPlan,
+  PlannerRole,
 } from '../orchestrator';
 import type { LLMClient, LLMRequest, ParseRetryConfig, ParseResult } from './types';
 import {
@@ -1039,6 +1040,20 @@ export class Planner {
       delegation.workerCount = Math.max(1, roles.length);
     }
 
+    // P4: 生成项目目录结构约束，防止多 Worker 创建重复目录
+    const projectStructure = this.inferProjectStructure(task, subtasks, roles);
+    
+    // 注入目录约束到所有子任务
+    if (projectStructure) {
+      subtasks = subtasks.map(st => ({
+        ...st,
+        constraints: [
+          ...(st.constraints ?? []),
+          ...this.generateDirectoryConstraints(projectStructure),
+        ],
+      }));
+    }
+
     return {
       taskId: task.id,
       subtasks,
@@ -1046,10 +1061,93 @@ export class Planner {
       executionPlan,
       ...(intake && { intake: { ...intake, ...(roles && { roles }) } }),
       ...(roles && { roles }),
+      ...(projectStructure && { projectStructure }),
       reasoning: this.config.enableReasoning ? (planningOutput.reasoning || '') : undefined,
       estimatedTotalDuration: planningOutput.estimatedTotalMinutes * 60 * 1000,
       estimatedTokens: this.estimateTokenUsage(subtasks),
     };
+  }
+
+  /**
+   * P4: 推断项目目录结构
+   * 根据任务目标和角色推断标准目录名称
+   */
+  private inferProjectStructure(
+    task: OrchestratorTask,
+    _subtasks: SubTask[],
+    roles?: PlannerRole[]
+  ): PlannerOutput['projectStructure'] | undefined {
+    const objective = task.objective.toLowerCase();
+    const hasRoles = roles && roles.length > 0;
+    
+    // 检测是否是全栈项目（前端+后端）
+    const hasFrontendRole = hasRoles && roles.some(r => 
+      r.capabilities?.some((c: string) => /react|vue|angular|frontend|ui/i.test(c))
+    );
+    const hasBackendRole = hasRoles && roles.some(r =>
+      r.capabilities?.some((c: string) => /python|fastapi|node|express|backend|api/i.test(c))
+    );
+    
+    // 检测任务描述中的技术栈
+    const mentionsFrontend = /react|vue|angular|前端|frontend/i.test(objective);
+    const mentionsBackend = /python|fastapi|django|flask|node|express|后端|backend|api/i.test(objective);
+    
+    // 只有多角色或明确的前后端分离项目才需要目录约束
+    if ((hasFrontendRole && hasBackendRole) || (mentionsFrontend && mentionsBackend)) {
+      return {
+        frontend: 'frontend',
+        backend: 'backend',
+        shared: 'shared',
+        tests: 'tests',
+      };
+    }
+    
+    // 单纯前端项目
+    if (hasFrontendRole || mentionsFrontend) {
+      return {
+        frontend: 'src',
+        tests: 'tests',
+      };
+    }
+    
+    // 单纯后端项目
+    if (hasBackendRole || mentionsBackend) {
+      return {
+        backend: 'src',
+        tests: 'tests',
+      };
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * P4: 生成目录约束字符串
+   */
+  private generateDirectoryConstraints(
+    structure: NonNullable<PlannerOutput['projectStructure']>
+  ): string[] {
+    const constraints: string[] = [];
+    
+    if (structure.frontend && structure.backend) {
+      constraints.push(
+        `CRITICAL: Use consistent directory names - Frontend code in '${structure.frontend}/', Backend code in '${structure.backend}/'. Do NOT create alternative names like 'fastapi_backend' or 'react_frontend'.`
+      );
+    } else if (structure.frontend) {
+      constraints.push(
+        `Use '${structure.frontend}/' as the main source directory.`
+      );
+    } else if (structure.backend) {
+      constraints.push(
+        `Use '${structure.backend}/' as the main source directory.`
+      );
+    }
+    
+    if (structure.tests) {
+      constraints.push(`Place tests in '${structure.tests}/' directory.`);
+    }
+    
+    return constraints;
   }
 
   /**

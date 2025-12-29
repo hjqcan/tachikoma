@@ -293,7 +293,14 @@ export class VerificationGateService {
     const layers: VerificationOptions['layers'] = [];
     if (config.typeCheckCommand) {
       layers.push('type');
-    } else if (config.lintCommand) {
+    }
+    // Add build layer to catch export mismatches that tsc misses
+    // Vite/esbuild will fail on: export default X with import { X }
+    if (config.buildCommand) {
+      layers.push('build');
+    }
+    // Fall back to lint if no type or build
+    if (layers.length === 0 && config.lintCommand) {
       layers.push('lint');
     }
     return layers;
@@ -483,7 +490,7 @@ export class VerificationGateService {
     
     const result = await this.runCommand(projectConfig.buildCommand, workDir);
     const errors: VerificationError[] = result.exitCode !== 0
-      ? [{ message: result.output, severity: 'error' }]
+      ? this.parseBuildErrors(result.output, workDir)
       : [];
     
     return {
@@ -498,6 +505,66 @@ export class VerificationGateService {
         ? 'Build passed'
         : `Build failed with exit code ${result.exitCode}`,
     };
+  }
+
+  /**
+   * P5: Parse BUILD errors to extract file paths and structured error info
+   * Supports CRA/Webpack, Vite/esbuild error formats
+   */
+  private parseBuildErrors(output: string, workDir: string): VerificationError[] {
+    const errors: VerificationError[] = [];
+    
+    // CRA/Webpack: "Module not found: Error: Can't resolve './App' in '/path/to/dir'"
+    const moduleNotFound = /Module not found.*Can't resolve '([^']+)' in '([^']+)'/g;
+    for (const match of output.matchAll(moduleNotFound)) {
+      const importPath = match[1] ?? '';
+      const directory = match[2] ?? workDir;
+      // Construct likely file path
+      const likelyFile = importPath.startsWith('.') 
+        ? `${directory}/${importPath.replace(/^\.\//, '')}.tsx`
+        : directory;
+      errors.push({
+        file: likelyFile,
+        message: `Cannot import '${importPath}'. Check: 1) File exists, 2) Export name matches import (e.g., if file has 'export default AppContent', import should be 'import AppContent' not 'import App')`,
+        severity: 'error',
+      });
+    }
+    
+    // Vite/esbuild: "✘ [ERROR] No matching export in "file.tsx" for import "Name""
+    const exportMismatch = /No matching export in "([^"]+)" for import "([^"]+)"/g;
+    for (const match of output.matchAll(exportMismatch)) {
+      const filePath = match[1] ?? workDir;
+      const importName = match[2] ?? 'unknown';
+      errors.push({
+        file: filePath,
+        message: `Export mismatch: '${importName}' is not exported from this file. Check the actual export name.`,
+        severity: 'error',
+      });
+    }
+    
+    // CRA: "Failed to compile" with file path on next line
+    const failedCompile = /Failed to compile\.\s*\n\s*([^\n]+\.tsx?)/g;
+    for (const match of output.matchAll(failedCompile)) {
+      const filePath = match[1] ?? workDir;
+      if (!errors.some(e => e.file === filePath)) {
+        errors.push({
+          file: filePath,
+          message: 'Compilation failed. Check syntax and imports.',
+          severity: 'error',
+        });
+      }
+    }
+    
+    // Fallback: if no pattern matched, return raw output with workDir hint
+    if (errors.length === 0) {
+      errors.push({ 
+        file: workDir,
+        message: output.slice(0, 2000), // Truncate to avoid token explosion
+        severity: 'error',
+      });
+    }
+    
+    return errors;
   }
 
   /**

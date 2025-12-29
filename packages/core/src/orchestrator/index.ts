@@ -23,6 +23,8 @@ export type {
   PlannerPreferences,
   ExecutionPlan,
   ExecutionStep,
+  PlannerRole,
+  ProjectStructure,
   // Worker 池类型
   WorkerInfo,
   WorkerStatus,

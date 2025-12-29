@@ -820,6 +820,25 @@ export class ExecutionLoop {
       fixInstructions.push('TYPE MISMATCH: Ensure function parameters and return types match. Consider using `typeof` to infer types from existing values.');
     }
     
+    // P5: BUILD layer specific errors
+    if (errorSummary.includes("Can't resolve") || 
+        errorSummary.includes('Cannot import')) {
+      fixInstructions.push(
+        "BUILD ERROR - Can't resolve: This usually means export name doesn't match import. " +
+        "Example: if file has `export default AppContent` but you import with `import App from './App'`, " +
+        "you need to EITHER rename export to `export default App` OR change import to `import AppContent from './App'`."
+      );
+    }
+    
+    if (errorSummary.includes('Export mismatch') || 
+        errorSummary.includes('No matching export')) {
+      fixInstructions.push(
+        "EXPORT MISMATCH: The imported name doesn't exist in the source file. " +
+        "Check the actual export in the file. If it uses `export default X`, import as `import X`. " +
+        "If it uses `export { X }`, import as `import { X }`."
+      );
+    }
+    
     if (errorSummary.includes('Module') || 
         errorSummary.includes('module')) {
       fixInstructions.push('MODULE ERROR: Check import paths. Use relative paths for local files, ensure package is installed for external modules.');

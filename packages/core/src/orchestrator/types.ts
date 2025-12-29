@@ -203,12 +203,37 @@ export interface PlannerOutput {
   intake?: TaskIntakeAssessment;
   /** 角色列表（可选：每个角色对应一个 Worker） */
   roles?: PlannerRole[];
+  /** 
+   * 项目目录结构约束（可选）
+   * 用于约束所有 Workers 使用统一的目录命名
+   * 防止出现 backend/ 和 fastapi_backend/ 同时存在的情况
+   */
+  projectStructure?: ProjectStructure;
   /** 规划依据（简要说明） */
   reasoning?: string | undefined;
   /** 预估总执行时间 */
   estimatedTotalDuration?: number | undefined;
   /** 预估 Token 消耗 */
   estimatedTokens?: number | undefined;
+}
+
+/**
+ * 项目目录结构约束
+ * 用于多 Worker 协调，确保使用统一的目录命名
+ */
+export interface ProjectStructure {
+  /** 前端目录路径（相对于 workDir） */
+  frontend?: string;
+  /** 后端目录路径 */
+  backend?: string;
+  /** 共享代码目录 */
+  shared?: string;
+  /** 文档目录 */
+  docs?: string;
+  /** 测试目录 */
+  tests?: string;
+  /** 其他自定义目录 */
+  custom?: Record<string, string>;
 }
 
 /**
