@@ -4,6 +4,9 @@
  * 负责将高层任务分解为子任务，并生成委托配置
  */
 
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
 import type { DelegationConfig, DelegationMode, RetryPolicy } from '../types';
 import type {
   OrchestratorTask,
@@ -13,6 +16,7 @@ import type {
   PlannerConfig,
   ExecutionPlan,
   PlannerRole,
+  ProjectStructure,
 } from '../orchestrator';
 import type { LLMClient, LLMRequest, ParseRetryConfig, ParseResult } from './types';
 import {
@@ -1077,6 +1081,22 @@ export class Planner {
     _subtasks: SubTask[],
     roles?: PlannerRole[]
   ): PlannerOutput['projectStructure'] | undefined {
+    const projectConfig = this.config.projectStructure;
+    if (!projectConfig?.enabled) {
+      return undefined;
+    }
+
+    const preferExisting = projectConfig.preferExisting !== false;
+    const existing = preferExisting ? this.detectExistingStructure() : undefined;
+    if (existing) {
+      return existing;
+    }
+
+    const defaults = this.normalizeProjectStructure(projectConfig.defaults);
+    if (defaults) {
+      return defaults;
+    }
+
     const objective = task.objective.toLowerCase();
     const hasRoles = roles && roles.length > 0;
     
@@ -1119,6 +1139,93 @@ export class Planner {
     }
     
     return undefined;
+  }
+
+  private normalizeProjectStructure(
+    structure: ProjectStructure | undefined
+  ): PlannerOutput['projectStructure'] | undefined {
+    if (!structure) return undefined;
+    const normalized: ProjectStructure = {};
+    const normalizeValue = (value?: string): string | undefined => {
+      if (!value) return undefined;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    };
+
+    const frontend = normalizeValue(structure.frontend);
+    if (frontend) normalized.frontend = frontend;
+    const backend = normalizeValue(structure.backend);
+    if (backend) normalized.backend = backend;
+    const shared = normalizeValue(structure.shared);
+    if (shared) normalized.shared = shared;
+    const docs = normalizeValue(structure.docs);
+    if (docs) normalized.docs = docs;
+    const tests = normalizeValue(structure.tests);
+    if (tests) normalized.tests = tests;
+
+    if (structure.custom && typeof structure.custom === 'object') {
+      const customEntries = Object.entries(structure.custom)
+        .map(([key, value]) => [key, normalizeValue(value)] as const)
+        .filter(([, value]) => Boolean(value));
+      if (customEntries.length > 0) {
+        normalized.custom = Object.fromEntries(customEntries) as Record<string, string>;
+      }
+    }
+
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  private detectExistingStructure(): PlannerOutput['projectStructure'] | undefined {
+    const root = this.cwd;
+    if (!root) return undefined;
+
+    const isDirectory = (relativePath: string): boolean => {
+      const target = join(root, relativePath);
+      if (!existsSync(target)) return false;
+      try {
+        return statSync(target).isDirectory();
+      } catch {
+        return false;
+      }
+    };
+
+    const pickFirst = (candidates: string[]): string | undefined =>
+      candidates.find((candidate) => isDirectory(candidate));
+
+    const structure: ProjectStructure = {};
+    const frontend = pickFirst([
+      'frontend',
+      'client',
+      'web',
+      'app',
+      'ui',
+      'apps/web',
+      'apps/frontend',
+      'packages/web',
+      'packages/frontend',
+    ]);
+    if (frontend) structure.frontend = frontend;
+
+    const backend = pickFirst([
+      'backend',
+      'server',
+      'api',
+      'services/api',
+      'services/backend',
+      'packages/api',
+    ]);
+    if (backend) structure.backend = backend;
+
+    const shared = pickFirst(['shared', 'common', 'packages/shared', 'packages/common']);
+    if (shared) structure.shared = shared;
+
+    const docs = pickFirst(['docs', 'documentation']);
+    if (docs) structure.docs = docs;
+
+    const tests = pickFirst(['tests', 'test']);
+    if (tests) structure.tests = tests;
+
+    return Object.keys(structure).length > 0 ? structure : undefined;
   }
 
   /**

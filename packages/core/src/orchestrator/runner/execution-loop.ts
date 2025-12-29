@@ -839,6 +839,15 @@ export class ExecutionLoop {
       );
     }
     
+    // P6: File extension conflicts
+    if (errorSummary.includes('FILE CONFLICT')) {
+      fixInstructions.push(
+        "FILE CONFLICT: Both .js and .tsx files exist for the same component. " +
+        "DELETE the .js file if you're using TypeScript. " +
+        "For example, if both App.js and App.tsx exist, DELETE App.js."
+      );
+    }
+    
     if (errorSummary.includes('Module') || 
         errorSummary.includes('module')) {
       fixInstructions.push('MODULE ERROR: Check import paths. Use relative paths for local files, ensure package is installed for external modules.');

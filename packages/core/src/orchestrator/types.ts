@@ -237,6 +237,19 @@ export interface ProjectStructure {
 }
 
 /**
+ * 项目目录结构约束配置
+ * 默认关闭，仅在显式启用时生效
+ */
+export interface ProjectStructureConfig {
+  /** 是否启用目录约束推断 */
+  enabled?: boolean;
+  /** 是否优先使用现有目录结构（默认 true） */
+  preferExisting?: boolean;
+  /** 显式指定默认结构（在未检测到现有结构时使用） */
+  defaults?: ProjectStructure;
+}
+
+/**
  * 执行计划 - 定义子任务的执行顺序和并行关系
  */
 export interface ExecutionPlan {
@@ -786,6 +799,10 @@ export interface PlannerConfig {
    * 作为规划上下文
    */
   memoryConfig?: MemoryConfig;
+  /**
+   * 项目目录结构约束配置（默认关闭）
+   */
+  projectStructure?: ProjectStructureConfig;
 }
 
 /**

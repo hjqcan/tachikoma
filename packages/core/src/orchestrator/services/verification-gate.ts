@@ -13,7 +13,7 @@ import { BuildGateService, type BuildError } from './build-gate';
 import { SmokeGateService, type SmokeTestConfig } from './smoke-gate';
 import { runBrowserVerify } from './browser-verify-runner';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 // =============================================================================
@@ -122,6 +122,9 @@ export interface VerificationGateConfig {
   /** Override layer set for full preset */
   fullLayers?: VerificationOptions['layers'];
 
+  /** Include build layer in fast preset when available */
+  fastIncludeBuild?: boolean;
+
   /** Auto-install dependencies when missing */
   autoInstallDeps?: boolean;
 
@@ -190,6 +193,7 @@ export class VerificationGateService {
       defaultPreset: config.defaultPreset ?? 'fast',
       fastLayers: config.fastLayers,
       fullLayers: config.fullLayers,
+      fastIncludeBuild: config.fastIncludeBuild ?? false,
       autoInstallDeps: config.autoInstallDeps ?? true,
       installDepsTimeout: config.installDepsTimeout ?? 300000,
     };
@@ -205,72 +209,144 @@ export class VerificationGateService {
   /**
    * Run multi-layer verification
    */
+  /**
+   * Run multi-layer verification
+   */
   async verify(workDir: string, options: VerificationOptions = {}): Promise<VerificationResult> {
     const startTime = Date.now();
     
-    // Detect project configuration
-    const projectConfig = await this.projectDetector.detect(workDir);
-    console.info(`[VerificationGate] Detected project: ${projectConfig.projectType}`);
+    // P7: Detect all projects in the workspace (Monorepo support)
+    const allProjects = await this.projectDetector.detectAll(workDir);
     
-    // Determine which layers to run
-    const layers = options.layers ?? this.getLayersForPreset(projectConfig, options);
-    const results: VerificationLayerResult[] = [];
+    // If no projects found, fallback to root context
+    const detectedProjects = allProjects.length > 0 
+      ? allProjects 
+      : [{ path: workDir, config: await this.projectDetector.detect(workDir) }];
 
-    const depsResult = await this.ensureDependencies(workDir, projectConfig, options);
-    if (depsResult) {
-      results.push(depsResult);
-      if (!depsResult.passed) {
+    // Determine relevant projects based on changedFiles (if provided)
+    const changedFiles = options.changedFiles;
+    const relevantProjects = changedFiles 
+      ? detectedProjects.filter((p: { path: string, config: ProjectConfig }) => 
+          // Root project is always relevant if it's the only one
+          (detectedProjects.length === 1 && p.path === workDir) ||
+          // Otherwise, only if files in its directory changed
+          changedFiles.some(f => {
+            const absoluteFile = f.startsWith('/') ? f : join(workDir, f);
+            return absoluteFile.startsWith(p.path);
+          })
+        )
+      : detectedProjects;
+
+    console.info(`[VerificationGate] Found ${detectedProjects.length} projects, verifying ${relevantProjects.length} affected projects`);
+
+    const allLayerResults: VerificationLayerResult[] = [];
+    
+    // P6: Check for file extension conflicts at the root/project level before anything else
+    for (const project of relevantProjects) {
+      const conflictErrors = await this.checkFileConflicts(project.path);
+      if (conflictErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: conflictErrors,
+          warnings: [],
+          command: 'file-conflict-check',
+          duration: 0,
+          summary: `Found ${conflictErrors.length} file extension conflicts in ${project.path}`,
+        });
+        
+        // Fail fast if conflicts found
         return {
           passed: false,
-          layers: results,
+          layers: allLayerResults,
           duration: Date.now() - startTime,
-          projectConfig,
-          summary: depsResult.summary,
+          projectConfig: project.config,
+          summary: `File extension conflict in ${project.path}`,
         };
       }
-    }
-    
-    // Run each layer
-    if (!layers || layers.length === 0) {
-      return {
-        passed: results.every((r) => r.passed),
-        layers: results,
-        duration: Date.now() - startTime,
-        projectConfig,
-        summary: results.length > 0 ? 'Verification completed' : 'No verification layers configured',
-      };
-    }
-    
-    for (const layer of layers) {
-      const layerResult = await this.runLayer(workDir, layer, projectConfig, options);
-      results.push(layerResult);
-      
-      // Log result
-      if (layerResult.passed) {
-        console.info(`[VerificationGate] ${layer.toUpperCase()} PASSED in ${layerResult.duration}ms`);
-      } else {
-        console.warn(`[VerificationGate] ${layer.toUpperCase()} FAILED with ${layerResult.errors.length} errors`);
+      // P8: Fail if infrastructure is incomplete (e.g. TS files but no tsconfig)
+      if (project.config.incompleteInfra.length > 0) {
+        const infraErrors: VerificationError[] = project.config.incompleteInfra.map(msg => ({
+          message: `INCOMPLETE INFRASTRUCTURE: ${msg}`,
+          severity: 'error',
+        }));
+
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: infraErrors,
+          warnings: [],
+          command: 'infra-check',
+          duration: 0,
+          summary: `Missing mandatory infrastructure in ${project.path}`,
+        });
+
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Project at ${project.path} is missing required infrastructure`,
+        };
       }
+
+      console.info(`[VerificationGate] Verifying project at ${project.path} (${project.config.projectType})`);
       
-      // Stop on first failure (fail fast)
-      if (!layerResult.passed) {
-        break;
+      const layers = options.layers ?? this.getLayersForPreset(project.config, options);
+      
+      // Ensure dependencies for this project
+      const depsResult = await this.ensureDependencies(project.path, project.config, options);
+      if (depsResult) {
+        allLayerResults.push(depsResult);
+        if (!depsResult.passed) {
+          return {
+            passed: false,
+            layers: allLayerResults,
+            duration: Date.now() - startTime,
+            projectConfig: project.config,
+            summary: `[${project.path}] ${depsResult.summary}`,
+          };
+        }
+      }
+
+      // Run layers for this project
+      const activeLayers = layers ?? [];
+      for (const layer of activeLayers) {
+        const layerResult = await this.runLayer(project.path, layer, project.config, options);
+        allLayerResults.push(layerResult);
+        
+        if (layerResult.passed) {
+          console.info(`[VerificationGate] [${project.path}] ${layer.toUpperCase()} PASSED in ${layerResult.duration}ms`);
+        } else {
+          console.error(`[VerificationGate] [${project.path}] ${layer.toUpperCase()} FAILED: ${layerResult.summary}`);
+          
+          // If a critical layer fails, we might want to stop early
+          if (['type', 'build'].includes(layer)) {
+            return {
+              passed: false,
+              layers: allLayerResults,
+              duration: Date.now() - startTime,
+              projectConfig: project.config,
+              summary: `[${project.path}] ${layerResult.summary}`,
+            };
+          }
+        }
       }
     }
-    
-    // Compute overall result
-    const passed = results.every(r => r.passed);
-    const duration = Date.now() - startTime;
-    const failedLayers = results.filter(r => !r.passed);
+
+    const passed = allLayerResults.every(r => r.passed);
+    const failedLayer = allLayerResults.find(r => !r.passed);
     
     return {
       passed,
-      layers: results,
-      duration,
-      projectConfig,
+      layers: allLayerResults,
+      duration: Date.now() - startTime,
+      projectConfig: relevantProjects.length > 0 
+        ? relevantProjects[0].config 
+        : (detectedProjects.length > 0 ? detectedProjects[0].config : ({} as ProjectConfig)),
       summary: passed 
-        ? `All ${results.length} verification layers passed`
-        : `Verification failed at ${failedLayers[0]?.layer} layer with ${failedLayers[0]?.errors.length} errors`,
+        ? (allLayerResults.length > 0 ? 'All verifications passed' : 'No verification layers configured')
+        : (failedLayer ? failedLayer.summary : 'Verification failed'),
     };
   }
 
@@ -294,14 +370,17 @@ export class VerificationGateService {
     if (config.typeCheckCommand) {
       layers.push('type');
     }
-    // Add build layer to catch export mismatches that tsc misses
-    // Vite/esbuild will fail on: export default X with import { X }
-    if (config.buildCommand) {
+    // Optional build layer for fast preset (opt-in)
+    if (this.config.fastIncludeBuild && config.buildCommand) {
       layers.push('build');
     }
-    // Fall back to lint if no type or build
-    if (layers.length === 0 && config.lintCommand) {
-      layers.push('lint');
+    // Fall back to lint (or build if that's the only signal)
+    if (layers.length === 0) {
+      if (config.lintCommand) {
+        layers.push('lint');
+      } else if (config.buildCommand) {
+        layers.push('build');
+      }
     }
     return layers;
   }
@@ -406,7 +485,7 @@ export class VerificationGateService {
   ): Promise<VerificationLayerResult> {
     const command = projectConfig.installCommand ?? 'npm install';
     const result = await this.runCommand(command, workDir, {
-      timeout: options.timeout ?? this.config.installDepsTimeout,
+      timeout: options.timeout ?? (this.config.installDepsTimeout || 300000),
     });
 
     const passed = result.exitCode === 0;
@@ -505,6 +584,64 @@ export class VerificationGateService {
         ? 'Build passed'
         : `Build failed with exit code ${result.exitCode}`,
     };
+  }
+
+  /**
+   * P6: Check for file extension conflicts (e.g., App.js and App.tsx both exist)
+   * This causes module resolution confusion in CRA/Vite
+   */
+  private async checkFileConflicts(workDir: string): Promise<VerificationError[]> {
+    const errors: VerificationError[] = [];
+    const srcDir = join(workDir, 'src');
+    
+    // Only check if src directory exists
+    if (!existsSync(srcDir)) {
+      return errors;
+    }
+    
+    try {
+      const files = readdirSync(srcDir, { recursive: true }) as string[];
+      
+      // Group files by basename (without extension)
+      const fileGroups = new Map<string, string[]>();
+      
+      for (const file of files) {
+        const filePath = typeof file === 'string' ? file : '';
+        // Only check .js, .jsx, .ts, .tsx files
+        if (!/\.(js|jsx|ts|tsx)$/.test(filePath)) continue;
+        
+        const basename = filePath.replace(/\.(js|jsx|ts|tsx)$/, '');
+        const existing = fileGroups.get(basename) ?? [];
+        existing.push(filePath);
+        fileGroups.set(basename, existing);
+      }
+      
+      // Find conflicts: same basename with both .js/.jsx and .ts/.tsx
+      for (const [_basename, fileList] of fileGroups) {
+        if (fileList.length < 2) continue;
+        
+        const hasJs = fileList.some(f => /\.(js|jsx)$/.test(f));
+        const hasTs = fileList.some(f => /\.(ts|tsx)$/.test(f));
+        
+        if (hasJs && hasTs) {
+          const jsFile = fileList.find(f => /\.(js|jsx)$/.test(f));
+          const tsFile = fileList.find(f => /\.(ts|tsx)$/.test(f));
+          if (jsFile && tsFile) {
+            errors.push({
+              file: join(srcDir, jsFile),
+              message: `FILE CONFLICT: Both '${jsFile}' and '${tsFile}' exist. ` +
+                `CRA/Vite will load '${jsFile}' and ignore '${tsFile}'. ` +
+                `DELETE the .js file if you want to use TypeScript, or delete the .tsx file if using JavaScript.`,
+              severity: 'error',
+            });
+          }
+        }
+      }
+    } catch {
+      // Ignore errors (e.g., directory not readable)
+    }
+    
+    return errors;
   }
 
   /**
@@ -674,10 +811,10 @@ export class VerificationGateService {
     const browserResult = await runBrowserVerify({
       workDir,
       url: options.devServerUrl,
-      requiredSelectors: options.requiredSelectors,
+      requiredSelectors: options.requiredSelectors ?? [],
       screenshotPath: options.screenshotPath ?? 'e2e-screenshot.png',
       checkConsoleErrors: true,
-      timeout: 30000,
+      timeout: options.timeout ?? 30000,
     });
 
     if (!browserResult.passed) {

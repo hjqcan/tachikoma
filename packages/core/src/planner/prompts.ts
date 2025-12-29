@@ -132,6 +132,11 @@ export const PLANNING_SYSTEM_PROMPT = `You are a task planning expert. Your resp
 - If build/test commands are unknown, include a subtask to discover them (README, package.json, scripts, etc.) before running.
 - Do not declare the plan complete without a verification step.
 
+## Infrastructure First (Agnostic Alignment)
+- Always ensure that manifest files (package.json, tsconfig.json, requirements.txt, pyproject.toml) and entry points (index.tsx, main.py) match the language features used in the code.
+- If a project is being migrated (e.g., JS to TS), the very first subtasks must include infrastructure setup (creating tsconfig.json, updating entry points, installing types).
+- Verification Gate will FAIL if language features (like TypeScript) are used without corresponding infrastructure. Do not proceed to complex business logic until infrastructure is aligned.
+
 ## Large File Creation Strategy (Important)
 When tasks involve creating large code files (>80 lines), use a phased approach:
 
@@ -213,6 +218,10 @@ export const PATCH_PLANNING_SYSTEM_PROMPT = `You are an incremental modification
 - Default DoD for runnable apps/services: build + smoke (start the app/service and confirm it stays up without errors).
 - If build/test commands are unknown, include a subtask to discover them before running.
 - Keep verification steps close to the change they validate.
+
+## Infrastructure Alignment
+- Every modification that introduces new language features (e.g. adding a .tsx file to a JS project) MUST include subtasks to align the infrastructure (tsconfig.json, dependencies).
+- Failure to align infrastructure will block all subsequent verification steps.
 
 ## Output Requirements
 You must output in JSON format with the following fields:

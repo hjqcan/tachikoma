@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // =============================================================================
@@ -46,6 +46,9 @@ export interface ProjectConfig {
   
   /** Package manager detected */
   packageManager: 'npm' | 'yarn' | 'pnpm' | 'bun' | null;
+
+  /** P8: List of detected language features that are missing infrastructure (e.g. "TypeScript (missing tsconfig.json)") */
+  incompleteInfra: string[];
 }
 
 interface PackageJson {
@@ -61,6 +64,7 @@ interface PackageJson {
 // =============================================================================
 
 export class ProjectDetector {
+
   /**
    * Detect project configuration from the given directory
    */
@@ -71,6 +75,7 @@ export class ProjectDetector {
     const packageManager = this.detectPackageManager(workDir, packageJson);
     const hasTypeScript = existsSync(join(workDir, 'tsconfig.json'));
     const hasEslint = this.detectEslint(workDir, packageJson);
+    const incompleteInfra = await this.detectIncompleteInfra(workDir);
     
     return {
       projectType,
@@ -84,7 +89,114 @@ export class ProjectDetector {
       hasTypeScript,
       hasEslint,
       packageManager,
+      incompleteInfra,
     };
+  }
+
+  /**
+   * P7: Recursively detect all projects in the workspace
+   */
+  async detectAll(workDir: string, maxDepth = 2): Promise<{ path: string, config: ProjectConfig }[]> {
+    const results: { path: string, config: ProjectConfig }[] = [];
+    
+    // Check root first
+    const rootConfig = await this.detect(workDir);
+    if (rootConfig.projectType !== 'unknown') {
+      results.push({ path: workDir, config: rootConfig });
+    }
+    
+    // Helper for recursive scan
+    const scan = async (dir: string, depth: number): Promise<{ path: string, config: ProjectConfig }[]> => {
+      if (depth > maxDepth) return [];
+      
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        const subdirectoryResults = await Promise.all(entries.map(async (entry) => {
+          if (!entry.isDirectory()) return [];
+          if (['node_modules', '.git', '.taskmaster', '.tachikoma', 'build', 'dist'].includes(entry.name)) return [];
+          
+          const fullPath = join(dir, entry.name);
+          if (this.isProjectRoot(fullPath)) {
+            const config = await this.detect(fullPath);
+            if (config.projectType !== 'unknown') {
+              return [{ path: fullPath, config }];
+            }
+            return [];
+          } else {
+            // Recurse into subdirectories
+            return scan(fullPath, depth + 1);
+          }
+        }));
+        
+        for (const subresults of subdirectoryResults) {
+          results.push(...subresults);
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+    
+    await scan(workDir, 1);
+    
+    return results;
+  }
+
+  /**
+   * P8: Detect language features that are missing corresponding infrastructure
+   */
+  private async detectIncompleteInfra(workDir: string): Promise<string[]> {
+    const issues: string[] = [];
+    const srcDir = join(workDir, 'src');
+    
+    if (!existsSync(srcDir)) {
+      return issues;
+    }
+
+    try {
+      const files = await readdir(srcDir, { recursive: true });
+      let hasTs = false;
+      let hasJsx = false;
+      let hasPy = false;
+
+      for (const file of files) {
+        const filePath = typeof file === 'string' ? file : '';
+        if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) hasTs = true;
+        if (filePath.endsWith('.jsx') || filePath.endsWith('.tsx')) hasJsx = true;
+        if (filePath.endsWith('.py')) hasPy = true;
+      }
+
+      // Check TS infrastructure
+      if (hasTs && !existsSync(join(workDir, 'tsconfig.json'))) {
+        issues.push('TypeScript/TSX files detected but tsconfig.json is missing');
+      }
+
+      // Check React/JS infrastructure
+      if (hasJsx && !existsSync(join(workDir, 'package.json'))) {
+        issues.push('JSX/TSX files detected but package.json is missing');
+      }
+
+      // Check Python infrastructure
+      if (hasPy && !existsSync(join(workDir, 'requirements.txt')) && !existsSync(join(workDir, 'pyproject.toml'))) {
+        issues.push('Python files detected but no manifest (requirements.txt or pyproject.toml) found');
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return issues;
+  }
+
+  /**
+   * P7: Check if a directory looks like a project root
+   */
+  private isProjectRoot(dir: string): boolean {
+    return (
+      existsSync(join(dir, 'package.json')) ||
+      existsSync(join(dir, 'tsconfig.json')) ||
+      existsSync(join(dir, 'requirements.txt')) ||
+      existsSync(join(dir, 'pyproject.toml')) ||
+      existsSync(join(dir, 'setup.py'))
+    );
   }
 
   /**

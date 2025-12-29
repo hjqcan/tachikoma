@@ -270,6 +270,7 @@ interface PartialPlannerConfig {
   maxParseRetries?: number;
   enableReasoning?: boolean;
   memoryConfig?: MemoryConfig;
+  projectStructure?: PlannerConfig['projectStructure'];
 }
 
 /**
