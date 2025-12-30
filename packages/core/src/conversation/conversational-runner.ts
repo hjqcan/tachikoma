@@ -1108,6 +1108,7 @@ All other messages are sent to the AI for processing.`,
         `Current working directory: ${resolve(this.config.workDir)}`,
         'All file operations must use relative paths.',
         'Definition of Done (default): build + smoke for runnable apps/services.',
+        'For frontend apps with data backends, smoke includes browser verification: page renders and data fetch succeeds.',
         'Verification: run the smallest relevant build/test/smoke commands when available; do not claim success without verification.',
         ...(contextText
           ? [`Conversation context (for reference only; do not quote verbatim):\n${contextText}`]

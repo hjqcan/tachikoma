@@ -39,6 +39,7 @@ const TESTING_GUIDE = `## Progressive Testing
 const STRICT_EXECUTION_DISCIPLINE = `## Completion & Verification Discipline
 - Do not stop until the task meets its definition of done.
 - Default DoD for runnable software: build + smoke (start the app/service and confirm it stays up without errors).
+- For frontend apps with data backends, smoke includes browser verification: page renders and at least one data fetch succeeds.
 - Always attempt the smallest relevant build/test/smoke command when available.
 - If verification fails, keep iterating until it passes or you are blocked.
 - If you cannot run a command (missing script, permissions, time), state it explicitly and provide the exact command the user should run.

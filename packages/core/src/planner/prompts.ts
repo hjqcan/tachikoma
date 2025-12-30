@@ -137,6 +137,42 @@ export const PLANNING_SYSTEM_PROMPT = `You are a task planning expert. Your resp
 - If a project is being migrated (e.g., JS to TS), the very first subtasks must include infrastructure setup (creating tsconfig.json, updating entry points, installing types).
 - Verification Gate will FAIL if language features (like TypeScript) are used without corresponding infrastructure. Do not proceed to complex business logic until infrastructure is aligned.
 
+## Testing Strategy (CRITICAL - DO NOT IGNORE)
+**ABSOLUTE RULE - NO EXCEPTIONS**:
+- Tests MUST be co-located: \`Header.test.tsx\` next to \`Header.tsx\`. 
+- **NEVER create \`__tests__\` folders** - this ALWAYS breaks import paths and causes "Failed to resolve import" errors.
+- If you create \`__tests__/Header.test.tsx\`, the import \`import Header from '../Header'\` will FAIL.
+
+**Vitest Setup Requirements** (BOTH are required):
+1. **vitest.config.js**: MUST have \`globals: true\` in test options
+2. **ESLint Configuration**: MUST configure vitest globals to avoid "'describe' is not defined" errors:
+   - For ESLint 9 flat config: \`languageOptions: { globals: { describe: 'readonly', it: 'readonly', expect: 'readonly', vi: 'readonly', beforeEach: 'readonly', afterEach: 'readonly' } }\`
+   - OR install \`@vitest/eslint-plugin\` and extend its config
+   - WITHOUT this, ESLint will report "'describe' is not defined", "'it' is not defined", "'expect' is not defined" for EVERY test file
+
+**Required Dependencies**: vitest, @testing-library/react, @testing-library/jest-dom, jsdom.
+
+## Code Consistency (CRITICAL - Causes Runtime Errors)
+**Export/Import Style**: Pick ONE style and use it EVERYWHERE in the project.
+- ✅ CORRECT: \`export const Header = () => {...}\` with \`import { Header } from './Header'\`
+- ✅ CORRECT: \`export default Header\` with \`import Header from './Header'\`
+- ❌ WRONG: \`export default Header\` with \`import { Header }\` - RUNTIME ERROR (no matching export)
+- ❌ WRONG: \`export const Header\` with \`import Header\` - RUNTIME ERROR (not a default export)
+
+**Contract-First Rule**: Never reference a function/component in File A that doesn't exist in File B.
+- If \`App.tsx\` imports \`{ useSongs, ApiProvider }\` from \`useApi.ts\`, then useApi.ts MUST export BOTH.
+- If a file references imports that don't exist, the build WILL FAIL with "No matching export" errors.
+
+**Subtask Dependency Rule**: Files that import from other files MUST be created AFTER the imported files, OR in the same subtask to ensure consistency.
+
+## React Best Practices (CRITICAL - Causes Runtime Crash)
+**Router Placement - ONLY ONE BrowserRouter**:
+- BrowserRouter MUST exist in ONLY ONE place: either \`main.jsx/index.tsx\` OR \`App.tsx\`, **NEVER BOTH**.
+- ❌ WRONG: \`main.jsx\` has \`<BrowserRouter><App/></BrowserRouter>\` AND \`App.tsx\` also has \`<BrowserRouter>...</BrowserRouter>\` inside it.
+- This causes: "You cannot render a <Router> inside another <Router>" - **IMMEDIATE CRASH**.
+- ✅ CORRECT: Put \`<BrowserRouter>\` ONLY in \`main.jsx\`, keep \`App.tsx\` without any Router wrapper.
+
+
 ## Large File Creation Strategy (Important)
 When tasks involve creating large code files (>80 lines), use a phased approach:
 

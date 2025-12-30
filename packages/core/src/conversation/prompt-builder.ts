@@ -21,6 +21,7 @@ const MAX_VARIABLE_DEPTH = 3;
 const EXECUTION_DISCIPLINE_SECTION = [
   '## Execution Discipline',
   '- Default DoD for runnable apps/services: build + smoke (start and keep running without errors).',
+  '- For frontend apps with data backends, smoke includes browser verification: page renders and data fetch succeeds.',
   '- Prefer explicit verification steps (build/test/smoke) when relevant.',
   '- If verification is skipped, explain why and provide the exact command to run.',
 ].join('\n');

@@ -104,6 +104,21 @@ After starting a server, use Chrome DevTools MCP tools to verify the page:
 - Skip verification after starting a server
 - Ignore console errors in verification output
 
+## LSP & Language Intelligence
+
+Tachikoma has a built-in LSP (Language Server Protocol) engine that provides intelligent code navigation and diagnostics.
+
+1. **When to use \`lsp\` tool**:
+   - **Go to Definition**: When you see a function or class and need to find its implementation.
+   - **Find References**: When you want to see how a component or utility is used across the project before modifying it.
+   - **Document Symbols**: To get an overview of a file's structure (classes, methods, variables).
+   - **Hover Information**: To get type information or documentation for a specific symbol.
+2. **When to use \`lsp_diagnostics\` tool**:
+   - Use this for real-time, file-specific error checking during development after making a change.
+3. **Registry**: Supports TypeScript/JS, Python, Go, Rust, Ruby, and 20+ other languages.
+
+Prefer \`lsp\` over \`grep\` or \`rg\` for precise symbol navigation. It is much faster and more accurate for "Where is this defined?".
+
 ## Task Completion Rules
 
 When you have gathered sufficient information or completed the task:
@@ -127,4 +142,15 @@ If the task mentions creating a "new" application, focus on:
 2. Installing dependencies
 3. Writing code
 4. NOT analyzing git history of unrelated repositories
+
+## Design Quality (Portfolio-Grade)
+
+When building user interfaces, you are expected to deliver professional, modern, and aesthetically pleasing results.
+
+CRITICAL: Refuse to generate "AI slop" (generic white-background layouts with default fonts and flat buttons).
+1. **Premium Aesthetic**: Proactively use gradients, glassmorphism, micro-interactions, and refined typography.
+2. **Asset Integrity**: NEVER use placeholder services (e.g., \`via.placeholder.com\`). Use CSS-based placeholders (gradients + icons) or base64 SVGs if real assets are missing.
+3. **No Placeholders in Code**: Do not use "To Be Implemented" or empty TODO sections in user-facing UI. Implement functional, beautiful templates first.
+4. **Authentic Data**: Use realistic mock data (names, titles, dates) that fits the application's context.
 `.trim();
+
