@@ -278,7 +278,7 @@ export function activateSkills(
       totalTokens += bodyTokens;
       autoActivatedCount++;
 
-      console.debug(
+      console.info(
         `[SkillActivator] Auto-activated: ${skillName} (score: ${rec.score})`
       );
     }
@@ -403,7 +403,7 @@ export async function activateSkillsAsync(
       totalTokens += bodyTokens;
       autoActivatedCount++;
 
-      console.debug(
+      console.info(
         `[SkillActivator] Auto-activated: ${skillName} (score: ${rec.score})`
       );
     }

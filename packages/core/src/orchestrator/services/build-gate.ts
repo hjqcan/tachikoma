@@ -56,6 +56,10 @@ export interface BuildGateCheckOptions {
   projectType?: ProjectType;
   /** Override type check command */
   typeCheckCommand?: string;
+  /** Changed files to trigger LSP diagnostics */
+  changedFiles?: string[] | undefined;
+  /** Environment variables */
+  env?: Record<string, string>;
 }
 
 const DEFAULT_CONFIG: Required<BuildGateConfig> = {
@@ -91,7 +95,7 @@ export class BuildGateService {
       case 'typescript': {
         // Try LSP first for faster diagnostics
         if (this.config.useLsp) {
-          const lspResult = await this.checkWithLSP(workDir);
+          const lspResult = await this.checkWithLSP(workDir, options.changedFiles, options.env);
           if (lspResult !== null) {
             result = lspResult;
             break;
@@ -141,13 +145,15 @@ export class BuildGateService {
 
       // Touch changed files to trigger diagnostics
       if (changedFiles && changedFiles.length > 0) {
-        for (const file of changedFiles.slice(0, 20)) {
-          try {
-            await LSP.touchFile(file, workDir, env, true);
-          } catch {
-            // Skip files that can't be opened
-          }
-        }
+        await Promise.all(
+          changedFiles.slice(0, 20).map(async (file) => {
+            try {
+              await LSP.touchFile(file, workDir, env, true);
+            } catch {
+              // Skip files that can't be opened
+            }
+          })
+        );
       }
 
       // Get all diagnostics

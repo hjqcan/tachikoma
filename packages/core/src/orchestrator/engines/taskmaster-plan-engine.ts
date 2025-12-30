@@ -451,10 +451,13 @@ export class TaskMasterPlanEngine {
         visited.add(id);
       }
 
+      // Check if we should force sequential execution for inter-dependent tasks
+      const forceSequential = this.shouldForceSequentialExecution(layer, byId);
+
       steps.push({
         order: steps.length + 1,
         subtaskIds: layer,
-        parallel: layer.length > 1,
+        parallel: layer.length > 1 && !forceSequential,
       });
 
       const nextSet = new Set<string>();
@@ -490,6 +493,59 @@ export class TaskMasterPlanEngine {
       steps,
       isParallel: steps.some((s) => s.parallel),
     };
+  }
+
+  /**
+   * Detect if subtasks in the same layer should be forced to run sequentially.
+   *
+   * Heuristic: If multiple subtasks involve creating React components, hooks, stores,
+   * or other inter-dependent frontend modules, they likely import from each other.
+   * Running them in parallel causes "Cannot find name" errors.
+   *
+   * @param subtaskIds - IDs of subtasks in the same execution layer
+   * @param subtaskMap - Map of subtask ID to SubTask object
+   * @returns true if sequential execution should be forced
+   */
+  private shouldForceSequentialExecution(
+    subtaskIds: string[],
+    subtaskMap: Map<string, SubTask>
+  ): boolean {
+    if (subtaskIds.length < 2) return false;
+
+    // Patterns that indicate React/frontend component creation
+    const componentPatterns = [
+      /\.(tsx|jsx)\b/i,              // File extensions
+      /\bcomponent\b/i,              // "Create component"
+      /创建.*组件/i,                  // Chinese: "Create component"
+      /实现.*组件/i,                  // Chinese: "Implement component"
+      /\bstore\b/i,                  // State stores (zustand, redux)
+      /\bhook\b/i,                   // Custom hooks
+      /\bcontext\b/i,                // React contexts
+      /\bprovider\b/i,               // Context providers
+      /MainPlayer|AudioPlayer|Playlist|SongList/i, // Common component names
+    ];
+
+    let componentTaskCount = 0;
+    for (const id of subtaskIds) {
+      const subtask = subtaskMap.get(id);
+      if (!subtask) continue;
+
+      const objective = subtask.objective ?? '';
+      const constraints = (subtask.constraints ?? []).join(' ');
+      const text = `${objective} ${constraints}`;
+
+      if (componentPatterns.some(pattern => pattern.test(text))) {
+        componentTaskCount++;
+      }
+    }
+
+    // If 2+ tasks in the same layer are component-related, assume they may import each other
+    if (componentTaskCount >= 2) {
+      console.info(`[TaskMasterPlanEngine] Forcing sequential execution for ${componentTaskCount} component-related tasks in same layer`);
+      return true;
+    }
+
+    return false;
   }
 
   /**

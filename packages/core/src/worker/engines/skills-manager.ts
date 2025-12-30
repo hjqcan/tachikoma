@@ -215,11 +215,11 @@ export class SkillsManager {
       this.lastActivatedSkills = activated;
       
       if (activated.length > 0) {
-        console.debug(
-          `[SkillsManager] Activated ${activated.length} skills: ` +
-          activated.map(a => `${a.metadata.name} (${a.reason})`).join(', ')
-        );
-      }
+      console.info(
+        `[SkillsManager] Activated ${activated.length} skills: ` +
+        activated.map(a => `${a.metadata.name} (${a.reason})`).join(', ')
+      );
+    }
       
       if (section) {
         finalPrompt += '\n\n' + section;
