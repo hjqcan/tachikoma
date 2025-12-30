@@ -34,6 +34,22 @@ interface BrowserVerifyInput {
   viewportWidth?: number;
   /** 视口高度，默认 720 */
   viewportHeight?: number;
+  /** 是否跟踪页面的 fetch/xhr 请求 */
+  trackNetwork?: boolean;
+}
+
+interface FetchFailureDetail {
+  url: string;
+  status?: number;
+  method?: string;
+  error?: string;
+}
+
+interface FetchSummary {
+  total: number;
+  success: number;
+  failed: number;
+  failures?: FetchFailureDetail[];
 }
 
 interface BrowserVerifyOutput {
@@ -55,6 +71,8 @@ interface BrowserVerifyOutput {
   foundSelectors?: string[] | undefined;
   /** 页面可见文本（前 500 字符） */
   visibleText?: string | undefined;
+  /** fetch/xhr 请求汇总（仅在启用 trackNetwork 时返回） */
+  fetchSummary?: FetchSummary | undefined;
   /** 错误信息 */
   error?: string | undefined;
 }
@@ -95,6 +113,7 @@ async function verifyPage(
     headless = true,
     viewportWidth = 1280,
     viewportHeight = 720,
+    trackNetwork = true,
   } = input;
 
   // 动态导入 Playwright
@@ -134,6 +153,40 @@ async function verifyPage(
 
       page.on('pageerror', (error) => {
         consoleErrors.push(`Page Error: ${error.message}`);
+      });
+    }
+
+    const fetchResponses: Array<{
+      url: string;
+      status: number;
+      method: string;
+    }> = [];
+    const fetchFailures: Array<{
+      url: string;
+      method: string;
+      error?: string;
+    }> = [];
+
+    if (trackNetwork) {
+      page.on('response', (response) => {
+        const request = response.request();
+        const resourceType = request.resourceType();
+        if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
+        fetchResponses.push({
+          url: response.url(),
+          status: response.status(),
+          method: request.method(),
+        });
+      });
+
+      page.on('requestfailed', (request) => {
+        const resourceType = request.resourceType();
+        if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
+        fetchFailures.push({
+          url: request.url(),
+          method: request.method(),
+          error: request.failure()?.errorText,
+        });
       });
     }
 
@@ -261,6 +314,33 @@ async function verifyPage(
     
     const success = !hasPageErrors && !hasSelectorErrors && !isBlankPage;
 
+    let fetchSummary: FetchSummary | undefined;
+    if (trackNetwork) {
+      const isSuccessStatus = (status: number) => status >= 200 && status < 400;
+      const successfulResponses = fetchResponses.filter((res) => isSuccessStatus(res.status));
+      const failedResponses = fetchResponses.filter((res) => !isSuccessStatus(res.status));
+      const failureDetails: FetchFailureDetail[] = [
+        ...failedResponses.map((res) => ({
+          url: res.url,
+          status: res.status,
+          method: res.method,
+        })),
+        ...fetchFailures.map((fail) => ({
+          url: fail.url,
+          method: fail.method,
+          error: fail.error,
+        })),
+      ];
+      fetchSummary = {
+        total: fetchResponses.length + fetchFailures.length,
+        success: successfulResponses.length,
+        failed: failedResponses.length + fetchFailures.length,
+        ...(failureDetails.length > 0
+          ? { failures: failureDetails.slice(0, 10) }
+          : {}),
+      };
+    }
+
     return {
       success,
       data: {
@@ -273,6 +353,7 @@ async function verifyPage(
         missingSelectors: missingSelectors.length > 0 ? missingSelectors : undefined,
         foundSelectors: foundSelectors.length > 0 ? foundSelectors : undefined,
         visibleText,
+        fetchSummary,
       },
     };
   } catch (error) {
@@ -352,6 +433,10 @@ bunx playwright install chromium
         type: 'number',
         description: 'Viewport height (default 720)',
       },
+      trackNetwork: {
+        type: 'boolean',
+        description: 'Track fetch/xhr network requests (default true)',
+      },
     },
     required: ['url'],
   },
@@ -381,6 +466,26 @@ bunx playwright install chromium
             items: { type: 'string' },
           },
           visibleText: { type: 'string' },
+          fetchSummary: {
+            type: 'object',
+            properties: {
+              total: { type: 'number' },
+              success: { type: 'number' },
+              failed: { type: 'number' },
+              failures: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    url: { type: 'string' },
+                    status: { type: 'number' },
+                    method: { type: 'string' },
+                    error: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       error: { type: 'string' },

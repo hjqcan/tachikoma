@@ -197,12 +197,16 @@ export class DevServerManager {
       
       // Force kill after 2 seconds
       setTimeout(() => {
-        if (!child.killed) {
-          if (pid && process.platform !== 'win32') {
-            process.kill(-pid, 'SIGKILL');
-          } else {
-            child.kill('SIGKILL');
+        try {
+          if (!child.killed) {
+            if (pid && process.platform !== 'win32') {
+              process.kill(-pid, 'SIGKILL');
+            } else {
+              child.kill('SIGKILL');
+            }
           }
+        } catch {
+          // Process may have already exited (ESRCH)
         }
       }, 2000);
     } catch {

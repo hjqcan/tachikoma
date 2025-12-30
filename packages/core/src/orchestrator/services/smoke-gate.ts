@@ -12,7 +12,7 @@
 import { DevServerManager, type DevServerHandle, type DevServerConfig } from './dev-server-manager';
 import { ProjectDetector, type ProjectConfig } from './project-detector';
 import { runBrowserVerify } from './browser-verify-runner';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // =============================================================================
@@ -49,6 +49,12 @@ export interface SmokeTestConfig {
 
   /** Whether browser verification is required (default true) */
   requireBrowser?: boolean;
+
+  /** Require at least one successful fetch/xhr during page load (auto-detected if undefined) */
+  requireDataFetch?: boolean;
+
+  /** Minimum successful fetch/xhr count when requireDataFetch is true (default 1) */
+  minSuccessfulFetches?: number;
 }
 
 export interface SmokeTestResult {
@@ -66,12 +72,28 @@ export interface SmokeTestResult {
   
   /** Browser check result */
   browserCheckPassed: boolean;
+
+  /** Data fetch check result */
+  dataFetchPassed: boolean;
   
   /** Console errors found */
   consoleErrors: string[];
   
   /** Missing selectors */
   missingSelectors: string[];
+
+  /** Fetch/xhr summary */
+  fetchSummary?: {
+    total: number;
+    success: number;
+    failed: number;
+    failures?: Array<{
+      url: string;
+      status?: number;
+      method?: string;
+      error?: string;
+    }>;
+  };
   
   /** Screenshot path (if captured) */
   screenshotPath?: string;
@@ -111,6 +133,7 @@ export class SmokeGateService {
       serverStarted: false,
       httpCheckPassed: false,
       browserCheckPassed: false,
+      dataFetchPassed: true,
       consoleErrors: [],
       missingSelectors: [],
       duration: 0,
@@ -118,8 +141,8 @@ export class SmokeGateService {
     };
 
     try {
-      // 1. Detect project config
-      const projectConfig = await this.projectDetector.detect(config.workDir);
+      // 1. Detect project config (allow fallback to nested frontend project)
+      const { targetDir, projectConfig } = await this.resolveSmokeTarget(config.workDir);
       
       if (!projectConfig.devCommand) {
         result.summary = 'No dev command found in project';
@@ -128,7 +151,7 @@ export class SmokeGateService {
       }
 
       // 1.5 Check entry file structure (Vite vs CRA)
-      const entryCheck = this.checkEntryFile(config.workDir, projectConfig);
+      const entryCheck = this.checkEntryFile(targetDir, projectConfig);
       if (!entryCheck.valid) {
         result.summary = entryCheck.error ?? 'Entry file check failed';
         result.duration = Date.now() - startTime;
@@ -136,13 +159,13 @@ export class SmokeGateService {
       }
 
       // 2. Determine port
-      const port = config.port ?? this.detectPort(projectConfig);
+      const port = config.port ?? this.detectPort(projectConfig, targetDir);
       
       // 3. Start dev server
       console.info(`[SmokeGate] Starting dev server...`);
       const serverConfig: DevServerConfig = {
         command: projectConfig.devCommand,
-        cwd: config.workDir,
+        cwd: targetDir,
         port,
         startTimeout: config.serverStartTimeout ?? 60000,
       };
@@ -166,7 +189,7 @@ export class SmokeGateService {
       // 5. Browser verification (if available)
       const screenshotPath = config.screenshotPath ?? 'smoke-test-screenshot.png';
       const browserResult = await this.checkBrowser({
-        workDir: config.workDir,
+        workDir: targetDir,
         url: this.activeServer.url,
         requiredSelectors: config.requiredSelectors ?? [],
         captureScreenshot: config.captureScreenshot ?? false,
@@ -179,17 +202,35 @@ export class SmokeGateService {
       result.browserCheckPassed = browserResult.passed;
       result.consoleErrors = browserResult.consoleErrors;
       result.missingSelectors = browserResult.missingSelectors;
+      if (browserResult.fetchSummary) {
+        result.fetchSummary = browserResult.fetchSummary;
+      }
       if (browserResult.screenshotPath) {
         result.screenshotPath = browserResult.screenshotPath;
+      }
+
+      const shouldRequireDataFetch = config.requireDataFetch ?? this.shouldRequireDataFetch(config.workDir, targetDir, projectConfig);
+      if (shouldRequireDataFetch) {
+        const minSuccessful = config.minSuccessfulFetches ?? 1;
+        const successCount = browserResult.fetchSummary?.success ?? 0;
+        result.dataFetchPassed = successCount >= minSuccessful;
+        if (!result.dataFetchPassed) {
+          result.consoleErrors.push(
+            `Data fetch check failed: expected >= ${minSuccessful} successful fetch/xhr, got ${successCount}.`
+          );
+        }
       }
 
       // 6. Determine overall result
       result.passed = result.httpCheckPassed && 
                       result.browserCheckPassed &&
+                      result.dataFetchPassed &&
                       result.consoleErrors.length === 0;
 
       if (result.passed) {
         result.summary = 'Smoke test passed';
+      } else if (!result.dataFetchPassed) {
+        result.summary = 'Data fetch check failed';
       } else if (result.consoleErrors.length > 0) {
         result.summary = `Console errors: ${result.consoleErrors.slice(0, 3).join('; ')}`;
       } else if (result.missingSelectors.length > 0) {
@@ -289,9 +330,10 @@ export class SmokeGateService {
 
   /**
    * Detect default port from project config
+   * Priority: 1) --port in command, 2) vite.config port, 3) defaults
    */
-  private detectPort(config: ProjectConfig): number {
-    // Check if dev command has a port
+  private detectPort(config: ProjectConfig, projectPath: string): number {
+    // Check if dev command has an explicit port
     if (config.devCommand) {
       const portMatch = config.devCommand.match(/--port[= ](\d+)/);
       if (portMatch?.[1]) {
@@ -299,12 +341,54 @@ export class SmokeGateService {
       }
     }
 
-    // Default ports by framework
+    // Try to read port from vite.config.ts/js (sync for simplicity, config is small)
+    const vitePort = this.readViteConfigPort(projectPath);
+    if (vitePort !== null) {
+      return vitePort;
+    }
+
+    // Check if this is a Vite project (Vite defaults to 5173)
+    if (config.devCommand) {
+      const isViteProject = 
+        config.devCommand.match(/\bvite\b/i) ||
+        config.testFramework === 'vitest';
+      if (isViteProject) {
+        return 5173;
+      }
+    }
+
+    // Default ports by test framework (vitest implies Vite)
     if (config.testFramework === 'vitest') {
-      return 5173; // Vite default port (vitest projects use Vite)
+      return 5173; // Vite default port
     }
     
-    return 3000; // Generic default
+    return 3000; // Generic default (CRA, Next.js, etc.)
+  }
+
+  /**
+   * Try to read port from vite.config.ts or vite.config.js
+   */
+  private readViteConfigPort(projectPath: string): number | null {
+    const configFiles = ['vite.config.ts', 'vite.config.js', 'vite.config.mjs'];
+    
+    for (const configFile of configFiles) {
+      const configPath = join(projectPath, configFile);
+      try {
+        if (!existsSync(configPath)) continue;
+        
+        const content = readFileSync(configPath, 'utf-8');
+        // Match patterns like: port: 3000 or port:3000 or "port": 3000
+        const portMatch = content.match(/["']?port["']?\s*:\s*(\d+)/);
+        if (portMatch?.[1]) {
+          console.info(`[SmokeGate] Found port ${portMatch[1]} in ${configFile}`);
+          return parseInt(portMatch[1], 10);
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+    
+    return null;
   }
 
   /**
@@ -346,12 +430,36 @@ export class SmokeGateService {
     consoleErrors: string[];
     missingSelectors: string[];
     screenshotPath: string;
+    fetchSummary?: {
+      total: number;
+      success: number;
+      failed: number;
+      failures?: Array<{
+        url: string;
+        status?: number;
+        method?: string;
+        error?: string;
+      }>;
+    };
   }> {
     const result = {
       passed: false,
       consoleErrors: [] as string[],
       missingSelectors: [] as string[],
       screenshotPath: options.screenshotPath,
+      fetchSummary: undefined as
+        | {
+            total: number;
+            success: number;
+            failed: number;
+            failures?: Array<{
+              url: string;
+              status?: number;
+              method?: string;
+              error?: string;
+            }>;
+          }
+        | undefined,
     };
 
     const browserResult = await runBrowserVerify({
@@ -361,6 +469,7 @@ export class SmokeGateService {
       screenshotPath: options.captureScreenshot ? options.screenshotPath : undefined,
       checkConsoleErrors: options.checkConsoleErrors,
       timeout: options.timeout,
+      trackNetwork: true,
     });
 
     if (!browserResult.passed) {
@@ -374,6 +483,7 @@ export class SmokeGateService {
     result.passed = browserResult.passed;
     result.consoleErrors = browserResult.consoleErrors;
     result.missingSelectors = browserResult.missingSelectors;
+    result.fetchSummary = browserResult.fetchSummary;
     result.screenshotPath = browserResult.screenshotPath ?? options.screenshotPath;
 
     if (!browserResult.passed && browserResult.error) {
@@ -457,6 +567,7 @@ export class SmokeGateService {
     lines.push(`- Server Started: ${result.serverStarted ? '✅' : '❌'}`);
     lines.push(`- HTTP Check: ${result.httpCheckPassed ? '✅' : '❌'}`);
     lines.push(`- Browser Check: ${result.browserCheckPassed ? '✅' : '❌'}`);
+    lines.push(`- Data Fetch: ${result.dataFetchPassed ? '✅' : '❌'}`);
     lines.push('');
     
     if (result.consoleErrors.length > 0) {
@@ -474,6 +585,23 @@ export class SmokeGateService {
       }
       lines.push('');
     }
+
+    if (result.fetchSummary) {
+      lines.push('### Fetch/XHR Summary');
+      lines.push(`- Total: ${result.fetchSummary.total}`);
+      lines.push(`- Success: ${result.fetchSummary.success}`);
+      lines.push(`- Failed: ${result.fetchSummary.failed}`);
+      if (result.fetchSummary.failures && result.fetchSummary.failures.length > 0) {
+        lines.push('### Fetch Failures (sample)');
+        for (const failure of result.fetchSummary.failures.slice(0, 5)) {
+          const status = failure.status !== undefined ? ` status=${failure.status}` : '';
+          const method = failure.method ? ` ${failure.method}` : '';
+          const error = failure.error ? ` error=${failure.error}` : '';
+          lines.push(`- ${failure.url}${method}${status}${error}`);
+        }
+      }
+      lines.push('');
+    }
     
     if (result.error) {
       lines.push(`### Error`);
@@ -481,6 +609,94 @@ export class SmokeGateService {
     }
     
     return lines.join('\n');
+  }
+
+  private async resolveSmokeTarget(workDir: string): Promise<{ targetDir: string; projectConfig: ProjectConfig }> {
+    const rootConfig = await this.projectDetector.detect(workDir);
+    if (rootConfig.devCommand) {
+      return { targetDir: workDir, projectConfig: rootConfig };
+    }
+
+    const candidates = await this.projectDetector.detectAll(workDir);
+    const frontendCandidate = candidates.find((candidate) =>
+      candidate.config.devCommand && this.looksLikeFrontend(candidate.path, candidate.config)
+    );
+    if (frontendCandidate) {
+      return { targetDir: frontendCandidate.path, projectConfig: frontendCandidate.config };
+    }
+
+    return { targetDir: workDir, projectConfig: rootConfig };
+  }
+
+  private shouldRequireDataFetch(rootDir: string, frontendDir: string, config: ProjectConfig): boolean {
+    if (!this.looksLikeFrontend(frontendDir, config)) {
+      return false;
+    }
+    return this.hasBackendSignals(rootDir);
+  }
+
+  private looksLikeFrontend(workDir: string, config: ProjectConfig): boolean {
+    if (config.devCommand?.includes('vite') || config.devCommand?.includes('next') || config.devCommand?.includes('react-scripts')) {
+      return true;
+    }
+    if (
+      existsSync(join(workDir, 'index.html')) ||
+      existsSync(join(workDir, 'public', 'index.html')) ||
+      existsSync(join(workDir, 'vite.config.ts')) ||
+      existsSync(join(workDir, 'vite.config.js')) ||
+      existsSync(join(workDir, 'next.config.js')) ||
+      existsSync(join(workDir, 'next.config.ts'))
+    ) {
+      return true;
+    }
+    return existsSync(join(workDir, 'app')) || existsSync(join(workDir, 'pages'));
+  }
+
+  private hasBackendSignals(workDir: string): boolean {
+    const markers = [
+      'requirements.txt',
+      'pyproject.toml',
+      'setup.py',
+      'Pipfile',
+      'main.py',
+      'app.py',
+      'go.mod',
+      'Cargo.toml',
+      'pom.xml',
+      'build.gradle',
+      'build.gradle.kts',
+      '*.csproj',
+      '*.fsproj',
+      '*.sln',
+    ];
+
+    for (const marker of markers) {
+      if (marker.includes('*')) {
+        const entries = readdirSync(workDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (!entry.isFile()) continue;
+          if (marker.startsWith('*.') && entry.name.endsWith(marker.slice(1))) {
+            return true;
+          }
+        }
+        continue;
+      }
+      if (existsSync(join(workDir, marker))) {
+        return true;
+      }
+    }
+
+    const nodeBackendDirs = ['backend', 'server', 'api'];
+    for (const dir of nodeBackendDirs) {
+      if (
+        existsSync(join(workDir, dir, 'package.json')) ||
+        existsSync(join(workDir, dir, 'tsconfig.json'))
+      ) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }
 

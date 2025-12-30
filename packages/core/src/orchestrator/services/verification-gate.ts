@@ -73,6 +73,12 @@ export interface VerificationOptions {
   /** Require browser verification to pass */
   requireBrowser?: boolean;
 
+  /** Require at least one successful fetch/xhr during smoke check */
+  requireDataFetch?: boolean;
+
+  /** Minimum successful fetch/xhr count for smoke check */
+  minSuccessfulFetches?: number;
+
   /** Whether to auto-install dependencies when missing (default true) */
   installDeps?: boolean;
   
@@ -451,7 +457,7 @@ export class VerificationGateService {
       case 'deps':
         return this.runDepsInstall(workDir, projectConfig, startTime, options);
       case 'type':
-        return this.runTypeCheck(workDir, projectConfig, startTime);
+        return this.runTypeCheck(workDir, projectConfig, startTime, options);
       case 'build':
         return this.runBuild(workDir, projectConfig, startTime);
       case 'test':
@@ -534,7 +540,8 @@ export class VerificationGateService {
   private async runTypeCheck(
     workDir: string,
     projectConfig: ProjectConfig,
-    startTime: number
+    startTime: number,
+    options: VerificationOptions
   ): Promise<VerificationLayerResult> {
     if (!projectConfig.typeCheckCommand) {
       return {
@@ -552,6 +559,7 @@ export class VerificationGateService {
     const result = await this.buildGateService.check(workDir, {
       projectType: projectConfig.projectType,
       typeCheckCommand: projectConfig.typeCheckCommand ?? undefined,
+      changedFiles: options.changedFiles,
     });
     
     const command =
@@ -834,6 +842,17 @@ export class VerificationGateService {
       ? this.parseEslintErrors(result.output)
       : [];
     
+    // Fallback: if lint failed but no errors parsed, include raw output as error
+    if (result.exitCode !== 0 && errors.length === 0) {
+      errors.push({
+        file: workDir,
+        line: 0,
+        column: 0,
+        message: `Lint failed with exit code ${result.exitCode}. Output: ${result.output.slice(0, 500)}`,
+        severity: 'error',
+      });
+    }
+
     return {
       layer: 'lint',
       passed: result.exitCode === 0,
@@ -983,6 +1002,8 @@ export class VerificationGateService {
       captureScreenshot: true,
       screenshotPath: options.screenshotPath ?? 'smoke-test-screenshot.png',
       requireBrowser: options.requireBrowser ?? true,
+      ...(options.requireDataFetch !== undefined ? { requireDataFetch: options.requireDataFetch } : {}),
+      ...(options.minSuccessfulFetches !== undefined ? { minSuccessfulFetches: options.minSuccessfulFetches } : {}),
       ...(options.requiredSelectors ? { requiredSelectors: options.requiredSelectors } : {}),
     };
     
@@ -995,13 +1016,24 @@ export class VerificationGateService {
     }
 
     const result = await this.smokeGateService.check(smokeConfig);
+    const fetchFailures = result.fetchSummary?.failures ?? [];
+    const fetchErrors = fetchFailures.map((failure) => {
+      const status = failure.status !== undefined ? ` status=${failure.status}` : '';
+      const method = failure.method ? ` ${failure.method}` : '';
+      const error = failure.error ? ` error=${failure.error}` : '';
+      return {
+        message: `Fetch failure: ${failure.url}${method}${status}${error}`,
+        severity: 'error' as const,
+      };
+    });
 
     return {
       layer: 'smoke',
       passed: result.passed,
-      errors: result.error ? [{ message: result.error, severity: 'error' as const }] : 
+      errors: result.error ? [{ message: result.error, severity: 'error' as const }] :
               result.consoleErrors.map(msg => ({ message: msg, severity: 'error' as const }))
-              .concat(result.missingSelectors.map(sel => ({ message: `Missing selector: ${sel}`, severity: 'error' as const }))),
+              .concat(result.missingSelectors.map(sel => ({ message: `Missing selector: ${sel}`, severity: 'error' as const })))
+              .concat(fetchErrors),
       warnings: [],
       command: result.serverUrl ? `dev-server ${result.serverUrl}` : 'smoke-test',
       duration: result.duration,

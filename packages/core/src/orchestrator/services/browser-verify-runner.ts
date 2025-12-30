@@ -18,6 +18,7 @@ export interface BrowserVerifyRunnerInput {
   headless?: boolean;
   viewportWidth?: number;
   viewportHeight?: number;
+  trackNetwork?: boolean;
   taskId?: string;
   agentId?: string;
   traceId?: string;
@@ -31,6 +32,17 @@ export interface BrowserVerifyRunnerResult {
   title?: string;
   url?: string;
   visibleText?: string;
+  fetchSummary?: {
+    total: number;
+    success: number;
+    failed: number;
+    failures?: Array<{
+      url: string;
+      status?: number;
+      method?: string;
+      error?: string;
+    }>;
+  };
   error?: string;
 }
 
@@ -69,6 +81,7 @@ export async function runBrowserVerify(
     headless: input.headless ?? true,
     viewportWidth: input.viewportWidth,
     viewportHeight: input.viewportHeight,
+    ...(input.trackNetwork !== undefined ? { trackNetwork: input.trackNetwork } : {}),
   };
 
   const result = await globalToolExecutor.execute(browserVerifyTool, toolInput, context, {
@@ -83,6 +96,17 @@ export async function runBrowserVerify(
     consoleErrors?: string[];
     missingSelectors?: string[];
     visibleText?: string;
+    fetchSummary?: {
+      total: number;
+      success: number;
+      failed: number;
+      failures?: Array<{
+        url: string;
+        status?: number;
+        method?: string;
+        error?: string;
+      }>;
+    };
     error?: string;
   };
 
@@ -97,6 +121,7 @@ export async function runBrowserVerify(
     title: typeof data.title === 'string' ? data.title : undefined,
     url: typeof data.url === 'string' ? data.url : undefined,
     visibleText: typeof data.visibleText === 'string' ? data.visibleText : undefined,
+    fetchSummary: data.fetchSummary,
     error: result.success ? data.error : result.error ?? data.error,
   };
 }
