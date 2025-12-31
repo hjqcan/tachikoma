@@ -332,28 +332,35 @@ export function createOrchestratorConfig(
     retryPolicyMode: overrideRetryPolicyMode,
     ...restDelegation
   } = overrides.delegation || {};
-  const { agent: overridePlannerAgent, memoryConfig: overridePlannerMemoryConfig, ...restPlanner } =
+  const { agent: overridePlannerAgent, memoryConfig: overridePlannerMemoryConfig, projectStructure: overrideProjectStructure, ...restPlanner } =
     overrides.planner || {};
   
   // 确定最终 memoryConfig（仅当定义时才包含）
   const plannerMemoryConfig = overridePlannerMemoryConfig ?? baseConfig.planner.memoryConfig;
   const orchestratorMemoryConfig = overrides.memoryConfig ?? baseConfig.memoryConfig;
 
+  // Build planner config incrementally to avoid spreading undefined
+  const plannerConfig: PlannerConfig = {
+    ...baseConfig.planner,
+    ...restPlanner,
+    agent: {
+      ...baseConfig.planner.agent,
+      ...overridePlannerAgent,
+    },
+  };
+  if (plannerMemoryConfig !== undefined) {
+    plannerConfig.memoryConfig = plannerMemoryConfig;
+  }
+  if (overrideProjectStructure !== undefined) {
+    plannerConfig.projectStructure = overrideProjectStructure;
+  }
+
   return {
     agent: {
       ...baseConfig.agent,
       ...overrides.agent,
     },
-    planner: {
-      ...baseConfig.planner,
-      ...restPlanner,
-      agent: {
-        ...baseConfig.planner.agent,
-        ...overridePlannerAgent,
-      },
-      // memoryConfig 仅当定义时才包含
-      ...(plannerMemoryConfig ? { memoryConfig: plannerMemoryConfig } : {}),
-    },
+    planner: plannerConfig,
     workerPool: {
       ...baseConfig.workerPool,
       ...overrides.workerPool,

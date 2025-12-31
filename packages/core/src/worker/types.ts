@@ -778,6 +778,12 @@ export interface IWorkerBackend {
    * 释放资源
    */
   dispose(): Promise<void>;
+
+  /**
+   * Get list of files modified during execution
+   * Used for VerificationGate scoping
+   */
+  getModifiedFiles?(): string[];
 }
 
 // ============================================================================

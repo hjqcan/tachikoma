@@ -113,15 +113,32 @@ export async function runBrowserVerify(
   const consoleErrors = Array.isArray(data.consoleErrors) ? data.consoleErrors : [];
   const missingSelectors = Array.isArray(data.missingSelectors) ? data.missingSelectors : [];
 
-  return {
+  const resultData: BrowserVerifyRunnerResult = {
     passed: Boolean(result.success && data.success),
     consoleErrors,
     missingSelectors,
-    screenshotPath: typeof data.screenshotPath === 'string' ? data.screenshotPath : undefined,
-    title: typeof data.title === 'string' ? data.title : undefined,
-    url: typeof data.url === 'string' ? data.url : undefined,
-    visibleText: typeof data.visibleText === 'string' ? data.visibleText : undefined,
-    fetchSummary: data.fetchSummary,
-    error: result.success ? data.error : result.error ?? data.error,
   };
+
+  if (typeof data.screenshotPath === 'string') {
+    resultData.screenshotPath = data.screenshotPath;
+  }
+  if (typeof data.title === 'string') {
+    resultData.title = data.title;
+  }
+  if (typeof data.url === 'string') {
+    resultData.url = data.url;
+  }
+  if (typeof data.visibleText === 'string') {
+    resultData.visibleText = data.visibleText;
+  }
+  if (data.fetchSummary !== undefined) {
+    resultData.fetchSummary = data.fetchSummary;
+  }
+  
+  const errorValue = result.success ? data.error : result.error ?? data.error;
+  if (errorValue !== undefined) {
+    resultData.error = errorValue;
+  }
+
+  return resultData;
 }

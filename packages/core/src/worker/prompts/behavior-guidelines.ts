@@ -104,6 +104,12 @@ After starting a server, use Chrome DevTools MCP tools to verify the page:
 - Skip verification after starting a server
 - Ignore console errors in verification output
 
+## Scaffold Hygiene (Vite/React)
+- If you switch a Vite project to React, remove the vanilla scaffold files:
+  \`src/main.ts\`, \`src/counter.ts\`, \`src/style.css\`, \`src/typescript.svg\`.
+- Ensure \`index.html\` points to the active entry (\`/src/main.tsx\`) and the root ID matches (\`#root\` vs \`#app\`).
+- Never keep both \`src/main.ts\` and \`src/main.tsx\` in a React project.
+
 ## LSP & Language Intelligence
 
 Tachikoma has a built-in LSP (Language Server Protocol) engine that provides intelligent code navigation and diagnostics.
@@ -118,6 +124,10 @@ Tachikoma has a built-in LSP (Language Server Protocol) engine that provides int
 3. **Registry**: Supports TypeScript/JS, Python, Go, Rust, Ruby, and 20+ other languages.
 
 Prefer \`lsp\` over \`grep\` or \`rg\` for precise symbol navigation. It is much faster and more accurate for "Where is this defined?".
+
+## Test Mock Hygiene
+- If you \`vi.mock\` a module, export ALL named functions used by the component under test.
+- If you only mock a subset, merge real exports via \`vi.importActual\` and override specific functions.
 
 ## Task Completion Rules
 
@@ -153,4 +163,3 @@ CRITICAL: Refuse to generate "AI slop" (generic white-background layouts with de
 3. **No Placeholders in Code**: Do not use "To Be Implemented" or empty TODO sections in user-facing UI. Implement functional, beautiful templates first.
 4. **Authentic Data**: Use realistic mock data (names, titles, dates) that fits the application's context.
 `.trim();
-

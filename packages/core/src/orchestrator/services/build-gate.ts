@@ -13,7 +13,8 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { join, extname } from 'node:path';
 import { LSP } from '../../lsp';
 
 // ============================================================================
@@ -138,39 +139,72 @@ export class BuildGateService {
     env?: Record<string, string>
   ): Promise<BuildGateResult | null> {
     const startTime = Date.now();
+    const lintSources = new Set(['eslint', 'oxlint', 'biome', 'stylelint']);
 
     try {
       // Initialize LSP state
       await LSP.init(workDir, env);
 
-      // Touch changed files to trigger diagnostics
-      if (changedFiles && changedFiles.length > 0) {
-        await Promise.all(
-          changedFiles.slice(0, 20).map(async (file) => {
-            try {
-              await LSP.touchFile(file, workDir, env, true);
-            } catch {
-              // Skip files that can't be opened
-            }
-          })
-        );
+      // Determine files to touch for LSP diagnostics
+      let filesToTouch = changedFiles ?? [];
+      
+      // If no changed files provided, discover TypeScript files to trigger LSP
+      if (filesToTouch.length === 0) {
+        filesToTouch = await this.discoverTsFiles(workDir);
+        if (filesToTouch.length === 0) {
+          console.info('[BuildGate] No TypeScript files found in project, skipping LSP');
+          return null;
+        }
+        console.info(`[BuildGate] Discovered ${filesToTouch.length} TypeScript files for LSP`);
+      }
+
+      // Touch files to trigger diagnostics (limit to 20 to avoid slowdown)
+      // Run sequentially to avoid excessive diagnostics listeners.
+      for (const file of filesToTouch.slice(0, 20)) {
+        try {
+          await LSP.touchFile(file, workDir, env, true);
+        } catch {
+          // Skip files that can't be opened
+        }
       }
 
       // Get all diagnostics
       const diagnostics = await LSP.diagnostics(workDir, env);
       const allErrors: BuildError[] = [];
       const allWarnings: BuildError[] = [];
+      const lintDiagnostics: BuildError[] = [];
+      const lintSourceCounts = new Map<string, number>();
+
+      const logDiagnostics = (label: string, items: BuildError[], limit = 10) => {
+        if (items.length === 0) return;
+        console.info(`[BuildGate] LSP ${label}: showing ${Math.min(items.length, limit)} of ${items.length}`);
+        for (const item of items.slice(0, limit)) {
+          const loc = `${item.file}:${item.line}:${item.column}`;
+          const code = item.code ? ` ${item.code}` : '';
+          console.info(`[BuildGate] ${loc}${code} ${item.message}`);
+        }
+      };
 
       for (const [file, fileDiagnostics] of Object.entries(diagnostics)) {
         for (const diag of fileDiagnostics) {
           const severity = diag.severity === 1 ? 'error' : 'warning';
+          const source = typeof diag.source === 'string' ? diag.source : undefined;
+          const sourceKey = source ? source.toLowerCase() : undefined;
+          const message = source ? `[${source}] ${diag.message}` : diag.message;
           const buildError: BuildError = {
             file,
             line: diag.range.start.line + 1,
             column: diag.range.start.character + 1,
-            message: diag.message,
+            message,
+            ...(diag.code !== undefined ? { code: String(diag.code) } : {}),
             severity,
           };
+
+          if (sourceKey && lintSources.has(sourceKey)) {
+            lintDiagnostics.push(buildError);
+            lintSourceCounts.set(sourceKey, (lintSourceCounts.get(sourceKey) ?? 0) + 1);
+            continue;
+          }
 
           if (severity === 'error') {
             allErrors.push(buildError);
@@ -178,6 +212,14 @@ export class BuildGateService {
             allWarnings.push(buildError);
           }
         }
+      }
+
+      if (lintDiagnostics.length > 0) {
+        const sources = Array.from(lintSourceCounts.entries())
+          .map(([sourceKey, count]) => `${sourceKey}:${count}`)
+          .join(', ');
+        console.info(`[BuildGate] Ignoring ${lintDiagnostics.length} lint diagnostics from LSP (${sources})`);
+        logDiagnostics('lint', lintDiagnostics);
       }
 
       if (allErrors.length === 0 && allWarnings.length === 0) {
@@ -200,6 +242,11 @@ export class BuildGateService {
       const passed = this.config.failOnWarnings
         ? errorCount === 0 && warningCount === 0
         : errorCount === 0;
+
+      if (!passed) {
+        logDiagnostics('errors', allErrors);
+        logDiagnostics('warnings', allWarnings);
+      }
 
       return {
         passed,
@@ -424,6 +471,46 @@ export class BuildGateService {
     }
 
     return errors;
+  }
+
+  /**
+   * Discover TypeScript files in a project for LSP initialization
+   * Returns up to 20 files to avoid performance issues
+   */
+  private async discoverTsFiles(workDir: string): Promise<string[]> {
+    const files: string[] = [];
+    const TS_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx'];
+    const IGNORE_DIRS = ['node_modules', 'dist', 'build', '.next', '.nuxt', 'coverage'];
+
+    const scanDir = async (dir: string, depth = 0): Promise<void> => {
+      if (depth > 4 || files.length >= 20) return;
+
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+
+        for (const entry of entries) {
+          if (files.length >= 20) break;
+
+          const fullPath = join(dir, entry.name);
+
+          if (entry.isDirectory()) {
+            if (!IGNORE_DIRS.includes(entry.name) && !entry.name.startsWith('.')) {
+              await scanDir(fullPath, depth + 1);
+            }
+          } else if (entry.isFile()) {
+            const ext = extname(entry.name);
+            if (TS_EXTENSIONS.includes(ext)) {
+              files.push(fullPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore permission errors
+      }
+    };
+
+    await scanDir(workDir);
+    return files;
   }
 
   /**

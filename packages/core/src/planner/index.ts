@@ -110,3 +110,14 @@ export {
   injectToolRecommendations,
   type SubtaskValidationResult,
 } from './subtask-validator';
+
+// ============================================================================
+// Design Task Detector 导出
+// ============================================================================
+
+export {
+  analyzeDesignTask,
+  shouldPrioritizeDesignAnalysis,
+  getRecommendedConstraints,
+  type DesignTaskAnalysis,
+} from './design-task-detector';

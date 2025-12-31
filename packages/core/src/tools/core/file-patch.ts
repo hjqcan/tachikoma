@@ -627,6 +627,9 @@ Freeform 语法（非标准 unified diff）：
         output.errors = errors;
       }
 
+        // Register modified file for VerificationGate scoping
+        context.registerModifiedFile?.(absolutePath);
+
         return {
           success: true as const,
           data: output,

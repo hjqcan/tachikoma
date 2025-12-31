@@ -132,9 +132,13 @@ export class RunService {
         return this.createNeedInputResult(task.id, startTime, planResult.tokensUsed, planResult.output.intake);
       }
 
-      // shared context
+      // shared context - ensure objective is never empty
+      // Fallback chain: orchestratorTask.objective -> planResult first subtask -> task.id
+      const effectiveObjective = orchestratorTask.objective?.trim()
+        || planResult.output?.subtasks?.[0]?.objective?.trim()
+        || `Task ${task.id}`;
       await this.session
-        .ensureSharedContext(orchestratorTask.objective, orchestratorTask.constraints, workDir)
+        .ensureSharedContext(effectiveObjective, orchestratorTask.constraints, workDir)
         .catch(() => undefined);
 
       await this.checkpoints.saveSnapshot(task.id, 'executing', 'plan-ready').catch(() => undefined);

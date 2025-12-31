@@ -10,7 +10,7 @@ import { TaskMasterPlanEngine } from '../engines/taskmaster-plan-engine';
 import { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
 import type { ApprovalArbitrationService } from '../services/approval-arbitration';
 import type { IntegrationContextService } from '../services/integration-context';
-import { VerificationGateService, type VerificationResult } from '../services/verification-gate';
+import { VerificationGateService, type VerificationLayerResult, type VerificationResult } from '../services/verification-gate';
 import type { EmitFn } from './types';
 import type { ProgressReporter } from './progress-reporter';
 import type { CheckpointService } from './checkpoint-service';
@@ -279,8 +279,10 @@ export class ExecutionLoop {
     // Run Verification Gate check after plan completion - HARD GATE
     let verificationResult: VerificationResult | undefined;
     if (this.verificationGateService) {
+      const changedFiles = this.collectModifiedFiles(completed.values());
       verificationResult = await this.verificationGateService.verify(workDir, {
         preset: 'full',
+        ...(changedFiles.length > 0 ? { changedFiles } : {}),
       });
       if (!verificationResult.passed) {
         const errorSummary = VerificationGateService.formatErrorsForWorker(verificationResult);
@@ -328,10 +330,16 @@ export class ExecutionLoop {
         
         let fixAttempts = 0;
         const MAX_PARALLEL_FIX_ATTEMPTS = 2;
+        let autoFixDisabled = false;
         
+        const changedFiles = this.collectModifiedFiles(
+          step.subtaskIds.map((id) => this.state.executionState?.completedSubtasks.get(id))
+        );
+
         while (fixAttempts <= MAX_PARALLEL_FIX_ATTEMPTS) {
           const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
             preset: 'fast',
+            ...(changedFiles.length > 0 ? { changedFiles } : {}),
           });
           
           if (verifyResult.passed) {
@@ -360,18 +368,37 @@ export class ExecutionLoop {
           }
           
           fixAttempts++;
-          const _errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
-          console.warn(`[VerificationGate] Parallel step failed verification (fix attempt ${fixAttempts}/${MAX_PARALLEL_FIX_ATTEMPTS}). Errors:\n${_errorSummary}`);
-          
-          // Try auto-fix first
-          const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
-          if (autoFixResult.fixed > 0) {
-            console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues`);
-            continue; // Re-verify
+          const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+          console.warn(`[VerificationGate] Parallel step failed verification (fix attempt ${fixAttempts}/${MAX_PARALLEL_FIX_ATTEMPTS}). Errors:\n${errorSummary}`);
+
+          const failedLayer = verifyResult.layers.find(l => !l.passed);
+          const fixSummary = VerificationGateService.formatLayerErrorsForWorker(verifyResult, failedLayer?.layer);
+          const verifyCommand = this.mapToShellCommand(failedLayer?.command);
+
+          if (!autoFixDisabled) {
+            // Try auto-fix first
+            const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
+            if (autoFixResult.fixed > 0) {
+              console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues`);
+              continue; // Re-verify
+            }
+
+            if (autoFixResult.errors.length > 0) {
+              console.warn(`[AutoFix] ${autoFixResult.errors.join('; ')}`);
+            }
+
+            if (autoFixResult.skip) {
+              autoFixDisabled = true;
+              console.warn('[AutoFix] Disabled for this step');
+            }
           }
-          
-          // Auto-fix didn't work, log errors for next retry
-          console.warn(`[VerificationGate] Auto-fix unsuccessful, will retry verification`);
+
+          // Run LLM fix task for parallel steps (industry default: auto-fix + guided fix)
+          try {
+            await this.runVerificationFixTask(taskId, fixSummary, verifyCommand, failedLayer?.layer, timeout, retryPolicy, signal);
+          } catch (error) {
+            console.warn(`[VerificationGate] Parallel fix task failed: ${(error as Error).message}`);
+          }
         }
       }
       return;
@@ -467,6 +494,7 @@ export class ExecutionLoop {
     let lastError: string | undefined;
     let buildGateFixAttempts = 0;
     const MAX_BUILD_GATE_FIX_ATTEMPTS = 3;
+    let autoFixDisabled = false;
 
     while (true) {
       if (signal.aborted) {
@@ -618,9 +646,12 @@ export class ExecutionLoop {
           const effectiveWorkDir = typeof runWorkDir === 'string' ? runWorkDir : (this.orchestratorConfig.workDir ?? process.cwd());
           
           // Inner fix-verify loop: only runs fix tasks, doesn't re-run original subtask
+          const changedFiles = this.collectModifiedFiles([result]);
+
           while (buildGateFixAttempts <= MAX_BUILD_GATE_FIX_ATTEMPTS) {
             const verifyResult = await this.verificationGateService.verify(effectiveWorkDir, {
               preset: 'fast',
+              ...(changedFiles.length > 0 ? { changedFiles } : {}),
             });
             
             if (verifyResult.passed) {
@@ -643,17 +674,27 @@ export class ExecutionLoop {
             
             // Create fix task with error details and proper verification command
             const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
+            const fixSummary = VerificationGateService.formatLayerErrorsForWorker(verifyResult, failedLayer?.layer);
             const verifyCommand = this.mapToShellCommand(failedLayer?.command);
             
             // Phase 2: Try auto-fix for common patterns (unused imports) before LLM retry
-            const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
-            if (autoFixResult.fixed > 0) {
-              console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues via eslint --fix`);
-              // Re-verify after auto-fix - might resolve all issues
-              continue;
+            if (!autoFixDisabled) {
+              const autoFixResult = await this.tryAutoFix(effectiveWorkDir, verifyResult);
+              if (autoFixResult.fixed > 0) {
+                console.info(`[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues via eslint --fix`);
+                // Re-verify after auto-fix - might resolve all issues
+                continue;
+              }
+              if (autoFixResult.errors.length > 0) {
+                console.warn(`[AutoFix] ${autoFixResult.errors.join('; ')}`);
+              }
+              if (autoFixResult.skip) {
+                autoFixDisabled = true;
+                console.warn('[AutoFix] Disabled for this subtask');
+              }
             }
             
-            const fixTask = this.createBuildFixTask(workerTask, errorSummary, verifyCommand);
+            const fixTask = this.createBuildFixTask(workerTask, fixSummary, verifyCommand, failedLayer?.layer);
             
             // Run ONLY the fix task (not re-running original subtask)
             try {
@@ -734,6 +775,18 @@ export class ExecutionLoop {
     });
   }
 
+  private collectModifiedFiles(results: Iterable<TaskResult | undefined>): string[] {
+    const files = new Set<string>();
+    for (const result of results) {
+      if (result?.modifiedFiles) {
+        for (const file of result.modifiedFiles) {
+          files.add(file);
+        }
+      }
+    }
+    return Array.from(files);
+  }
+
   /**
    * Derive language constraints from role capabilities
    * 
@@ -797,12 +850,47 @@ export class ExecutionLoop {
    * Generates a new task that instructs the Worker to fix the build errors
    * from the previous execution. Uses the actual command for verification.
    */
-  private createBuildFixTask(originalTask: Task, errorSummary: string, command?: string): Task {
-    // Determine verification command based on what was used
-    const verifyCommand = command ?? 'npx tsc --noEmit';
+  private createBuildFixTask(
+    originalTask: Task,
+    errorSummary: string,
+    command?: string,
+    failedLayer?: VerificationLayerResult['layer']
+  ): Task {
+    const layer = failedLayer ?? 'build';
+    const isSmokeOrE2e = layer === 'smoke' || layer === 'e2e';
+    const verifyCommand = isSmokeOrE2e ? undefined : (command ?? 'npx tsc --noEmit');
+
+    const titleMap: Record<VerificationLayerResult['layer'], string> = {
+      deps: 'Dependency Errors',
+      type: 'Type Errors',
+      build: 'Build Errors',
+      test: 'Test Failures',
+      lint: 'Lint Errors',
+      e2e: 'Browser Verification Failures',
+      smoke: 'Smoke Check Failures',
+    };
+    const fixTitle = titleMap[layer] ?? 'Verification Errors';
     
     // Parse error patterns to provide targeted fix instructions
     const fixInstructions: string[] = [];
+
+    if (layer === 'test') {
+      fixInstructions.push(
+        'TEST FAILURES: Fix failing tests and runtime errors. If you mock a module, ensure ALL named exports used by the component are provided (use vi.importActual to merge real exports).'
+      );
+    }
+
+    if (layer === 'lint') {
+      fixInstructions.push(
+        'LINT ERRORS: Fix lint violations or align ESLint config with the installed version (ESLint v9 requires eslint.config.js). Avoid disabling lint.'
+      );
+    }
+
+    if (layer === 'smoke' || layer === 'e2e') {
+      fixInstructions.push(
+        'SMOKE/E2E: Ensure the dev server starts and serves the app without 5xx/console errors. Verify entrypoint and API base URL.'
+      );
+    }
     
     // Detect common error patterns and add specific instructions
     if (errorSummary.includes('is declared but its value is never read') ||
@@ -842,12 +930,35 @@ export class ExecutionLoop {
     // P6: File extension conflicts
     if (errorSummary.includes('FILE CONFLICT')) {
       fixInstructions.push(
-        "FILE CONFLICT: Both .js and .tsx files exist for the same component. " +
-        "DELETE the .js file if you're using TypeScript. " +
-        "For example, if both App.js and App.tsx exist, DELETE App.js."
+        "FILE CONFLICT: Conflicting source files exist for the same module. " +
+        "Remove the unused entry so only ONE of .js/.jsx/.ts/.tsx remains."
       );
     }
     
+    if (errorSummary.includes('Cannot find module')) {
+      fixInstructions.push(
+        'MISSING MODULE: If this is a local import, create the file or fix the path. ' +
+        'If it should be removed, delete the import and related usage. Ensure export style matches (default vs named).'
+      );
+    }
+
+    if (
+      errorSummary.includes('ENTRYPOINT MISMATCH') ||
+      errorSummary.includes('ENTRYPOINT CONFLICT') ||
+      errorSummary.includes('VITE SCAFFOLD LEFTOVER') ||
+      errorSummary.includes('ROOT ID MISMATCH')
+    ) {
+      fixInstructions.push(
+        'ENTRYPOINT: Ensure index.html points to the active entry (main.tsx) and remove vanilla Vite scaffold files (main.ts, counter.ts, style.css, typescript.svg). Keep only one entry file.'
+      );
+    }
+
+    if (errorSummary.includes("Cannot destructure property 'data'") && errorSummary.includes('undefined')) {
+      fixInstructions.push(
+        'TEST MOCK: A mocked module is missing an export. Ensure withErrorHandling (and other named exports) are provided by the mock or merged via vi.importActual.'
+      );
+    }
+
     if (errorSummary.includes('Module') || 
         errorSummary.includes('module')) {
       fixInstructions.push('MODULE ERROR: Check import paths. Use relative paths for local files, ensure package is installed for external modules.');
@@ -858,10 +969,14 @@ export class ExecutionLoop {
       ? `\n\n## Fix Strategies\n${fixInstructions.map((inst, i) => `${i + 1}. ${inst}`).join('\n')}`
       : '';
     
+    const verifyStep = verifyCommand
+      ? `4. After fixing, run \`${verifyCommand}\` to confirm no errors remain`
+      : '4. After fixing, re-run the verification step (dev server + smoke/e2e) to confirm it passes';
+
     return {
       ...originalTask,
       id: `${originalTask.id}-fix-${Date.now()}`,
-      objective: `## FIX REQUIRED: TypeScript/Build Errors
+      objective: `## FIX REQUIRED: ${fixTitle}
 
 The following errors MUST be fixed before proceeding:
 
@@ -872,7 +987,7 @@ ${patternGuidance}
 1. Fix ALL errors listed above - do not skip any
 2. For each error, identify the root cause and apply the appropriate fix
 3. Do NOT add new features or refactor - ONLY fix the listed errors
-4. After fixing, run \`${verifyCommand}\` to confirm no errors remain
+${verifyStep}
 
 ## CRITICAL
 - Focus ONLY on the files mentioned in the errors
@@ -882,10 +997,105 @@ ${patternGuidance}
         'Fix all listed errors without introducing new ones',
         'Do NOT add new features or refactor code',
         'Focus only on files with errors',
-        `Verify fixes by running: ${verifyCommand}`,
+        ...(verifyCommand ? [`Verify fixes by running: ${verifyCommand}`] : []),
         ...(originalTask.constraints ?? []).filter(c => !c.includes('Verify fixes')),
       ],
     };
+  }
+
+  /**
+   * Run a fix task for verification failures outside of subtask execution.
+   *
+   * Uses WorkerPool to reserve a worker and runs a minimal fix task to address
+   * build/type errors before re-verification.
+   */
+  private async runVerificationFixTask(
+    taskId: string,
+    errorSummary: string,
+    verifyCommand: string | undefined,
+    failedLayer: VerificationLayerResult['layer'] | undefined,
+    timeout: number,
+    retryPolicy: RetryPolicy,
+    signal: AbortSignal
+  ): Promise<void> {
+    const roleId = 'generalist';
+    let preferredWorkerId: string | undefined;
+    let requiredCapabilities: string[] | undefined;
+
+    if (!this.workerPoolInjected) {
+      const foundOrCreated = await this.workers.findOrCreateWorkerForRole(roleId);
+      if (foundOrCreated) {
+        preferredWorkerId = foundOrCreated;
+        requiredCapabilities = [`role:${roleId}`];
+      }
+    }
+
+    const context: Record<string, unknown> = {};
+    if (preferredWorkerId) context.preferredWorkerId = preferredWorkerId;
+    if (requiredCapabilities && requiredCapabilities.length > 0) {
+      context.requiredCapabilities = requiredCapabilities;
+    }
+
+    const fixSubtaskId = `verification-fix-${generateTimestampId()}`;
+    const fixSubtask: SubTask = {
+      id: fixSubtaskId,
+      parentId: taskId,
+      objective: 'Fix verification errors from parallel step',
+      constraints: [],
+      status: 'pending',
+      roleId,
+      ...(requiredCapabilities ? { requiredCapabilities } : {}),
+    };
+
+    const assignment = await this.workerPool.assign(
+      fixSubtask,
+      timeout,
+      retryPolicy,
+      Object.keys(context).length > 0 ? context : undefined,
+      signal
+    );
+
+    if (!assignment.success || !assignment.workerId || !assignment.agent) {
+      if (assignment.success) {
+        this.workerPool.completeTask(fixSubtaskId);
+      }
+      throw new Error(assignment.error ?? 'No available worker/agent for verification fix');
+    }
+
+    const runMeta = this.state.currentRunMetadata;
+    const noApproval = runMeta?.noApproval === true;
+    const workerMetadata: Record<string, unknown> = {};
+    if (noApproval) workerMetadata.noApproval = true;
+    if (runMeta && typeof runMeta === 'object' && 'workDir' in runMeta) {
+      const wd = (runMeta as Record<string, unknown>).workDir;
+      if (typeof wd === 'string') workerMetadata.workDir = wd;
+    }
+
+    const baseTask: Task = {
+      id: fixSubtaskId,
+      type: 'atomic',
+      objective: fixSubtask.objective,
+      constraints: fixSubtask.constraints,
+      context: {
+        parentTaskId: taskId,
+        ...(this.state.sessionId ? { sessionId: this.state.sessionId } : {}),
+        traceId: `trace-${this.state.sessionId ?? taskId}`,
+        ...(Object.keys(workerMetadata).length > 0 ? { metadata: workerMetadata } : {}),
+      },
+    };
+
+    const fixTask = this.createBuildFixTask(baseTask, errorSummary, verifyCommand, failedLayer);
+
+    const onAbort = () => assignment.cancel?.();
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      await assignment.agent.run(fixTask);
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      this.workerPool.completeTask(fixSubtaskId);
+    }
   }
 
   /**
@@ -916,7 +1126,7 @@ ${patternGuidance}
   private async tryAutoFix(
     workDir: string,
     verifyResult: VerificationResult
-  ): Promise<{ fixed: number; errors: string[] }> {
+  ): Promise<{ fixed: number; errors: string[]; skip?: boolean }> {
     const { spawn } = await import('node:child_process');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
@@ -929,7 +1139,7 @@ ${patternGuidance}
     const hasEslintConfig = eslintConfigFiles.some(f => existsSync(join(workDir, f)));
     if (!hasEslintConfig) {
       console.debug('[AutoFix] Skipping - no ESLint config found');
-      return { fixed: 0, errors: [] };
+      return { fixed: 0, errors: ['No ESLint config found'], skip: true };
     }
     
     // Extract unique file paths from errors
@@ -954,7 +1164,7 @@ ${patternGuidance}
     const TIMEOUT_MS = 30000;
 
     try {
-      const result = await new Promise<{ fixed: number; errors: string[] }>((resolve) => {
+      const result = await new Promise<{ fixed: number; errors: string[]; skip?: boolean }>((resolve) => {
         const eslintProcess = spawn('npx', ['eslint', '--fix', ...filesArray], {
           cwd: workDir,
           shell: true,
@@ -986,9 +1196,23 @@ ${patternGuidance}
           
           // Only exit code 0 means all issues were fixed
           // Exit code 1 means eslint ran but errors remain - NOT a fix
+          const output = `${stdout}\n${stderr}`;
+          const configError =
+            /Failed to load config/i.test(output) ||
+            /ESLint couldn't find/i.test(output) ||
+            /Cannot find module '@eslint\//i.test(output) ||
+            /Cannot find package '@eslint\//i.test(output) ||
+            /Cannot find module 'eslint-/i.test(output) ||
+            /Cannot find package 'eslint-/i.test(output) ||
+            /Cannot find module 'globals'/i.test(output) ||
+            /Cannot find package 'globals'/i.test(output);
+
           if (code === 0) {
             console.info('[AutoFix] ESLint completed successfully');
             resolve({ fixed: filesArray.length, errors: [] });
+          } else if (code && code >= 2 && configError) {
+            console.warn('[AutoFix] ESLint config error detected, skipping auto-fix');
+            resolve({ fixed: 0, errors: ['ESLint config error - auto-fix skipped'], skip: true });
           } else {
             // Exit code 1 or higher = eslint found issues it couldn't fix
             console.debug(`[AutoFix] ESLint exited with code ${code} - no auto-fix applied`);

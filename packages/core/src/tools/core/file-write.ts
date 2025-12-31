@@ -13,6 +13,15 @@ import { validatePath, ensureWorkDir } from './utils';
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 import { withFileLock } from './file-lock';
 import { BuildGateService, type BuildGateResult } from '../../orchestrator/services/build-gate';
+import {
+  isTestInForbiddenLocation,
+  suggestTestLocation,
+  validateFileContent,
+  hasDuplicateTestSuffix,
+  dedupeTestSuffix,
+} from '../../worker/file-validator';
+import { LSP } from '../../lsp';
+
 
 // Singleton BuildGateService instance
 let buildGateService: BuildGateService | null = null;
@@ -50,7 +59,10 @@ interface FileWriteOutputExtended extends FileWriteOutput {
     summary: string;
     errorCount: number;
   };
+  /** LSP 诊断信息（如果有错误） */
+  diagnostics?: string;
 }
+
 
 /**
  * file_write 工具定义
@@ -175,6 +187,44 @@ export const fileWriteTool: Tool = {
         };
       }
 
+      // Pre-write validation: Block __tests__ folders
+      if (isTestInForbiddenLocation(absolutePath)) {
+        const componentName = absolutePath.match(/[/\\]([^/\\]+)\.[tj]sx?$/)?.[1]?.replace(/\.test$/, '') ?? 'Component';
+        const suggestedPath = suggestTestLocation(absolutePath.replace('/__tests__', '').replace('\\__tests__', ''));
+        return {
+          success: false,
+          error: `❌ VALIDATION ERROR: Tests must NOT be in __tests__ folders.\n\n` +
+            `File: ${absolutePath}\n\n` +
+            `Problem: __tests__ folders break import paths and cause "Failed to resolve import" errors.\n\n` +
+            `Solution: Place the test file NEXT TO the component it tests.\n` +
+            `For example: ${componentName}.test.tsx should be in the same folder as ${componentName}.tsx\n\n` +
+            `Suggested location: ${suggestedPath}`,
+        };
+      }
+
+      // Pre-write validation: Block duplicate test suffixes (e.g., .test.test.tsx)
+      if (hasDuplicateTestSuffix(absolutePath)) {
+        const suggestedPath = dedupeTestSuffix(absolutePath);
+        return {
+          success: false,
+          error: `❌ VALIDATION ERROR: Duplicate test suffix detected.\n\n` +
+            `File: ${absolutePath}\n\n` +
+            `Problem: Test filenames must NOT contain ".test.test" or ".spec.spec".\n\n` +
+            `Solution: Use a single suffix (e.g., Component.test.tsx).\n\n` +
+            `Suggested location: ${suggestedPath}`,
+        };
+      }
+
+      // Pre-write validation: Check content quality (e.g. imports)
+      const violations = validateFileContent(absolutePath, content);
+      if (violations.length > 0) {
+        const errorMsg = violations.map(v => `❌ ${v.message}`).join('\n\n');
+        return {
+          success: false,
+          error: `VALIDATION FAILED:\n\n${errorMsg}\n\nPlease correct the content and try again.`,
+        };
+      }
+
       // 使用文件锁防止并发编辑冲突
       const ownerId = getOwnerId(context);
       
@@ -244,27 +294,62 @@ export const fileWriteTool: Tool = {
         };
       }
 
-      // 成功
-      const result: ToolResult<FileWriteOutputExtended> = {
-        success: true,
-        data: {
-          path: filePath,
-          bytesWritten: buffer.length,
-        },
+      // 成功 - build result data object before assigning to result
+      const resultData: FileWriteOutputExtended = {
+        path: filePath,
+        bytesWritten: buffer.length,
       };
 
       if (state.validationResult) {
-        result.data = {
-          ...result.data!,
-          validation: {
-            passed: state.validationResult.passed,
-            summary: state.validationResult.summary,
-            errorCount: state.validationResult.errors.length,
-          },
+        resultData.validation = {
+          passed: state.validationResult.passed,
+          summary: state.validationResult.summary,
+          errorCount: state.validationResult.errors.length,
         };
       }
 
+      const result: ToolResult<FileWriteOutputExtended> = {
+        success: true,
+        data: resultData,
+      };
+
+      // Register modified file for VerificationGate scoping
+      context.registerModifiedFile?.(absolutePath);
+
+      // OpenCode-style: Run LSP diagnostics and return errors to agent
+      try {
+        await LSP.touchFile(absolutePath, context.workDir, undefined, true);
+        const diagnostics = await LSP.diagnostics(context.workDir);
+        const fileErrors = diagnostics[absolutePath]?.filter(d => d.severity === 1) ?? [];
+        
+        if (fileErrors.length > 0) {
+          const MAX_ERRORS = 10;
+          const limitedErrors = fileErrors.slice(0, MAX_ERRORS);
+          const hasMore = fileErrors.length > MAX_ERRORS;
+          
+          const errorMessages = limitedErrors.map(d => 
+            `  Line ${d.range?.start?.line ?? 0}: ${d.message}`
+          ).join('\n');
+          
+          const diagnosticsMsg = 
+            `\n⚠️ This file has ${fileErrors.length} error(s). Please fix:\n` +
+            `<file_diagnostics>\n${errorMessages}${hasMore ? `\n  ... and ${fileErrors.length - MAX_ERRORS} more` : ''}\n</file_diagnostics>\n` +
+            `\nCommon fixes:\n` +
+            `- If JSX syntax error: Rename .js to .jsx\n` +
+            `- If "is not defined": Add missing import or configure globals\n` +
+            `- If type error: Check function signatures and props`;
+          
+          result.data = {
+            ...result.data!,
+            diagnostics: diagnosticsMsg,
+          };
+        }
+      } catch {
+        // LSP not available, skip diagnostics
+      }
+
       return result;
+
     } catch (error) {
       const err = error as Error;
       return {
@@ -274,4 +359,3 @@ export const fileWriteTool: Tool = {
     }
   },
 };
-

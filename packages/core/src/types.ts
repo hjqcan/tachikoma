@@ -247,6 +247,11 @@ export interface TaskResult {
   metrics: TaskMetrics;
   /** 追踪数据 */
   trace: TraceData;
+  /** 
+   * 任务执行期间修改的文件列表 (用于 VerificationGate 范围限定)
+   * File paths modified during task execution (for VerificationGate scoping)
+   */
+  modifiedFiles?: string[];
 }
 
 // ============================================================================
@@ -281,6 +286,13 @@ export interface ExecutionContext {
    * 工具在成功执行带 cwd 参数的命令后调用此回调。
    */
   updateCwd?: (newCwd: string) => void;
+  /**
+   * 注册修改的文件路径回调
+   * 
+   * 文件工具 (file_write, apply_patch 等) 在成功写入文件后调用此回调。
+   * 收集的路径用于限定 VerificationGate 的检查范围。
+   */
+  registerModifiedFile?: (filePath: string) => void;
   /** 环境变量 */
   env: Record<string, string>;
 

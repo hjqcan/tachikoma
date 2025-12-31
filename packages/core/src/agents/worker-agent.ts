@@ -208,6 +208,9 @@ export class WorkerAgent extends BaseAgent {
         toolCallCount: result.metrics.toolCallCount,
         retryCount: result.metrics.retryCount,
       },
+      ...(result.modifiedFiles && result.modifiedFiles.length > 0
+        ? { modifiedFiles: result.modifiedFiles }
+        : {}),
       trace: {
         ...baseTrace,
         traceId: task.context?.traceId ?? baseTrace.traceId,

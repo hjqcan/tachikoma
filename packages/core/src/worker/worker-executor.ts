@@ -71,6 +71,11 @@ export interface ExecutionResult {
   messages: WorkerMessage[];
   /** 错误信息 */
   error?: string | undefined;
+  /** 
+   * 任务执行期间修改的文件列表 (用于 VerificationGate 范围限定)
+   * File paths modified during task execution (for VerificationGate scoping)
+   */
+  modifiedFiles?: string[] | undefined;
 }
 
 // ============================================================================
@@ -632,6 +637,9 @@ export class WorkerExecutor {
 
     const endTime = Date.now();
 
+    // Get modified files from backend (if supported)
+    const modifiedFiles = this.backend?.getModifiedFiles?.() ?? [];
+
     const result: ExecutionResult = {
       success: !errorMsg,
       output,
@@ -647,6 +655,7 @@ export class WorkerExecutor {
         tokensUsed,
         thinkingRounds,
       },
+      modifiedFiles: modifiedFiles.length > 0 ? modifiedFiles : undefined,
     };
 
     if (errorMsg) {

@@ -13,7 +13,7 @@ import { BuildGateService, type BuildError } from './build-gate';
 import { SmokeGateService, type SmokeTestConfig } from './smoke-gate';
 import { runBrowserVerify } from './browser-verify-runner';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, relative, isAbsolute } from 'node:path';
 
 // =============================================================================
@@ -184,6 +184,40 @@ export class VerificationGateService {
     return lines.join('\n');
   }
 
+  /**
+   * Format errors for a specific layer (used to generate targeted fix tasks).
+   */
+  static formatLayerErrorsForWorker(
+    result: VerificationResult,
+    layer?: VerificationLayerResult['layer']
+  ): string {
+    if (!layer) return VerificationGateService.formatErrorsForWorker(result);
+    const target = result.layers.find((entry) => entry.layer === layer);
+    if (!target) return VerificationGateService.formatErrorsForWorker(result);
+
+    const lines: string[] = [];
+    lines.push(`❌ Verification Failed: ${target.summary || result.summary}`);
+    lines.push('');
+    lines.push(`### ${target.layer.toUpperCase()} Layer Failed`);
+    if (target.summary) lines.push(`Summary: ${target.summary}`);
+    lines.push('');
+
+    if (target.errors.length > 0) {
+      lines.push('Errors:');
+      const shownErrors = target.errors.slice(0, 20);
+      for (const error of shownErrors) {
+        const loc = error.file ? `${error.file}:${error.line ?? 0}:${error.column ?? 0}` : '';
+        lines.push(`- ${loc ? `[${loc}] ` : ''}${error.message}`);
+      }
+      if (target.errors.length > 20) {
+        lines.push(`... and ${target.errors.length - 20} more errors`);
+      }
+    }
+    lines.push('');
+
+    return lines.join('\n');
+  }
+
   private readonly projectDetector: ProjectDetector;
   private readonly buildGateService: BuildGateService;
   private readonly smokeGateService: SmokeGateService;
@@ -291,6 +325,63 @@ export class VerificationGateService {
           duration: Date.now() - startTime,
           projectConfig: project.config,
           summary: `File extension conflict in ${project.path}`,
+        };
+      }
+      const entrypointErrors = this.checkEntrypointConsistency(project.path);
+      if (entrypointErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: entrypointErrors,
+          warnings: [],
+          command: 'entrypoint-check',
+          duration: 0,
+          summary: `Entrypoint mismatch detected in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Entrypoint mismatch detected in ${project.path}`,
+        };
+      }
+      const forbiddenTestDirErrors = this.checkForbiddenTestDirs(project.path);
+      if (forbiddenTestDirErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: forbiddenTestDirErrors,
+          warnings: [],
+          command: 'forbidden-tests-dir-check',
+          duration: 0,
+          summary: `Forbidden __tests__ directory found in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Forbidden __tests__ directory found in ${project.path}`,
+        };
+      }
+      const duplicateTestSuffixErrors = this.checkDuplicateTestSuffixes(project.path);
+      if (duplicateTestSuffixErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: duplicateTestSuffixErrors,
+          warnings: [],
+          command: 'test-file-naming-check',
+          duration: 0,
+          summary: `Duplicate test suffix detected in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Duplicate test suffix detected in ${project.path}`,
         };
       }
       // P8: Fail if infrastructure is incomplete (e.g. TS files but no tsconfig)
@@ -656,10 +747,12 @@ export class VerificationGateService {
         for (const [_basename, fileList] of fileGroups) {
           if (fileList.length < 2) continue;
           
-          const hasJs = fileList.some(f => /\.(js|jsx)$/.test(f));
-          const hasTs = fileList.some(f => /\.(ts|tsx)$/.test(f));
+          const hasJs = fileList.some(f => /\.js$/.test(f));
+          const hasJsx = fileList.some(f => /\.jsx$/.test(f));
+          const hasTs = fileList.some(f => /\.ts$/.test(f));
+          const hasTsx = fileList.some(f => /\.tsx$/.test(f));
           
-          if (hasJs && hasTs) {
+          if ((hasJs || hasJsx) && (hasTs || hasTsx)) {
             const jsFile = fileList.find(f => /\.(js|jsx)$/.test(f));
             const tsFile = fileList.find(f => /\.(ts|tsx)$/.test(f));
             if (jsFile && tsFile) {
@@ -668,6 +761,19 @@ export class VerificationGateService {
                 message: `FILE CONFLICT: Both '${jsFile}' and '${tsFile}' exist in ${dirName}/. ` +
                   `CRA/Vite will load '${jsFile}' and ignore '${tsFile}'. ` +
                   `DELETE the .js file if you want to use TypeScript, or delete the .tsx file if using JavaScript.`,
+                severity: 'error',
+              });
+            }
+          }
+          if (hasTs && hasTsx) {
+            const tsFile = fileList.find(f => /\.ts$/.test(f));
+            const tsxFile = fileList.find(f => /\.tsx$/.test(f));
+            if (tsFile && tsxFile) {
+              errors.push({
+                file: join(dir, tsFile),
+                message: `FILE CONFLICT: Both '${tsFile}' and '${tsxFile}' exist in ${dirName}/. ` +
+                  `TypeScript module resolution may pick the wrong entry. ` +
+                  `DELETE the unused file so only one entry remains.`,
                 severity: 'error',
               });
             }
@@ -712,6 +818,184 @@ export class VerificationGateService {
     
     scan(dir, maxDepth, '');
     return results;
+  }
+
+  /**
+   * P11: Entrypoint consistency checks for Vite/React projects
+   * - index.html must reference the correct entry file
+   * - React projects should not keep vanilla Vite scaffold (main.ts + counter.ts)
+   */
+  private checkEntrypointConsistency(workDir: string): VerificationError[] {
+    const errors: VerificationError[] = [];
+    const indexPath = join(workDir, 'index.html');
+    if (!existsSync(indexPath)) return errors;
+
+    let indexHtml = '';
+    try {
+      indexHtml = readFileSync(indexPath, 'utf-8');
+    } catch {
+      return errors;
+    }
+
+    const entryMatch = indexHtml.match(/<script[^>]+src=["']\/src\/(main\.(?:ts|tsx|js|jsx))["'][^>]*><\/script>/i);
+    const rootMatch = indexHtml.match(/<div[^>]+id=["']([^"']+)["']/i);
+    const entryFile = entryMatch?.[1];
+    const rootId = rootMatch?.[1];
+
+    const mainTsPath = join(workDir, 'src', 'main.ts');
+    const mainTsxPath = join(workDir, 'src', 'main.tsx');
+    const hasMainTs = existsSync(mainTsPath);
+    const hasMainTsx = existsSync(mainTsxPath);
+    const counterTsPath = join(workDir, 'src', 'counter.ts');
+    const hasCounterTs = existsSync(counterTsPath);
+
+    const pkgPath = join(workDir, 'package.json');
+    let isReactProject = false;
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        isReactProject = Boolean(deps?.react || deps?.['react-dom']);
+      } catch {
+        // ignore
+      }
+    }
+
+    let mainTsContent = '';
+    if (hasMainTs) {
+      try {
+        mainTsContent = readFileSync(mainTsPath, 'utf-8');
+      } catch {
+        // ignore
+      }
+    }
+    const looksLikeViteScaffold =
+      mainTsContent.includes('setupCounter') ||
+      mainTsContent.includes('Vite + TypeScript') ||
+      mainTsContent.includes('#app');
+
+    if (entryFile && entryFile.endsWith('.ts') && hasMainTsx) {
+      errors.push({
+        file: indexPath,
+        message: `ENTRYPOINT MISMATCH: index.html references ${entryFile} but src/main.tsx exists. ` +
+          `Update index.html to use main.tsx or remove the unused entry file.`,
+        severity: 'error',
+      });
+    }
+
+    if (isReactProject && hasMainTs && hasMainTsx) {
+      errors.push({
+        file: mainTsPath,
+        message: 'ENTRYPOINT CONFLICT: React project has both src/main.ts and src/main.tsx. ' +
+          'Remove the unused vanilla Vite entry (main.ts) to avoid confusion.',
+        severity: 'error',
+      });
+    }
+
+    if (isReactProject && (looksLikeViteScaffold || hasCounterTs)) {
+      errors.push({
+        file: mainTsPath,
+        message: 'VITE SCAFFOLD LEFTOVER: React project still contains vanilla Vite scaffold (main.ts/counter.ts). ' +
+          'Delete the scaffold files and keep the React entry only.',
+        severity: 'error',
+      });
+    }
+
+    if (rootId === 'root' && looksLikeViteScaffold) {
+      errors.push({
+        file: mainTsPath,
+        message: 'ROOT ID MISMATCH: index.html uses #root but src/main.ts still targets #app. ' +
+          'Remove the unused Vite scaffold or align the entry file.',
+        severity: 'error',
+      });
+    }
+
+    return errors;
+  }
+
+  /**
+   * P10: Fail if forbidden __tests__ directories exist (even empty)
+   */
+  private checkForbiddenTestDirs(workDir: string): VerificationError[] {
+    const errors: VerificationError[] = [];
+    const sourceDirs = ['src', 'app', 'pages', 'lib', 'components'];
+    const MAX_DIRS_PER_DIR = 200;
+    const MAX_DEPTH = 4;
+
+    const record = (dirPath: string) => {
+      errors.push({
+        file: dirPath,
+        message: `FORBIDDEN DIRECTORY: "__tests__" is not allowed. Tests must be co-located with source files.`,
+        severity: 'error',
+      });
+    };
+
+    const scan = (currentDir: string, depth: number, visited: { count: number }) => {
+      if (depth <= 0 || visited.count >= MAX_DIRS_PER_DIR) return;
+      try {
+        const entries = readdirSync(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (visited.count >= MAX_DIRS_PER_DIR) break;
+          if (!entry.isDirectory()) continue;
+          if (entry.name.startsWith('.')) continue;
+          const fullPath = join(currentDir, entry.name);
+          visited.count += 1;
+          if (entry.name === '__tests__') {
+            record(fullPath);
+            continue;
+          }
+          scan(fullPath, depth - 1, visited);
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+
+    // Check root-level __tests__
+    const rootTestsDir = join(workDir, '__tests__');
+    if (existsSync(rootTestsDir)) {
+      record(rootTestsDir);
+    }
+
+    for (const dirName of sourceDirs) {
+      const dir = join(workDir, dirName);
+      if (!existsSync(dir)) continue;
+      scan(dir, MAX_DEPTH, { count: 0 });
+    }
+
+    return errors;
+  }
+
+  /**
+   * P10: Detect duplicate test suffixes (e.g., .test.test.tsx)
+   */
+  private checkDuplicateTestSuffixes(workDir: string): VerificationError[] {
+    const errors: VerificationError[] = [];
+    const sourceDirs = ['src', 'app', 'pages', 'lib', 'components'];
+    const MAX_FILES_PER_DIR = 500;
+    const duplicatePattern = /(?:\.test|\.spec){2}(\.|$)/i;
+
+    for (const dirName of sourceDirs) {
+      const dir = join(workDir, dirName);
+      if (!existsSync(dir)) continue;
+
+      try {
+        const files = this.scanDirForConflicts(dir, 3, MAX_FILES_PER_DIR);
+        for (const file of files) {
+          if (!/\.(ts|tsx|js|jsx)$/.test(file)) continue;
+          if (!duplicatePattern.test(file)) continue;
+          errors.push({
+            file: join(dir, file),
+            message: `DUPLICATE TEST SUFFIX: "${file}" contains repeated ".test"/".spec". Use a single suffix (e.g., Component.test.tsx).`,
+            severity: 'error',
+          });
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    return errors;
   }
 
   /**
@@ -838,6 +1122,25 @@ export class VerificationGateService {
     }
     
     const result = await this.runCommand(projectConfig.lintCommand, workDir);
+    if (result.exitCode !== 0 && this.isEslintConfigError(result.output)) {
+      return {
+        layer: 'lint',
+        passed: true,
+        errors: [],
+        warnings: [{
+          file: workDir,
+          line: 0,
+          column: 0,
+          message: 'Lint skipped: ESLint configuration not found or incompatible with version.',
+          severity: 'warning',
+        }],
+        command: projectConfig.lintCommand,
+        duration: Date.now() - startTime,
+        output: result.output,
+        summary: 'Lint skipped due to missing/incompatible ESLint config',
+      };
+    }
+
     const errors = result.exitCode !== 0
       ? this.parseEslintErrors(result.output)
       : [];
@@ -1180,6 +1483,16 @@ export class VerificationGateService {
     }
     
     return errors.slice(0, 50); // Limit to 50 errors
+  }
+
+  private isEslintConfigError(output: string): boolean {
+    const normalized = output.toLowerCase();
+    return (
+      normalized.includes("eslint couldn't find a configuration file") ||
+      normalized.includes("eslint couldn't find an eslint.config") ||
+      normalized.includes('failed to load config') ||
+      normalized.includes('configuration file')
+    );
   }
 
 

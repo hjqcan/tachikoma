@@ -442,35 +442,41 @@ export class SmokeGateService {
       }>;
     };
   }> {
-    const result = {
+    const result: {
+      passed: boolean;
+      consoleErrors: string[];
+      missingSelectors: string[];
+      screenshotPath: string;
+      fetchSummary?: {
+        total: number;
+        success: number;
+        failed: number;
+        failures?: {
+          url: string;
+          status?: number;
+          method?: string;
+          error?: string;
+        }[];
+      };
+    } = {
       passed: false,
-      consoleErrors: [] as string[],
-      missingSelectors: [] as string[],
+      consoleErrors: [],
+      missingSelectors: [],
       screenshotPath: options.screenshotPath,
-      fetchSummary: undefined as
-        | {
-            total: number;
-            success: number;
-            failed: number;
-            failures?: Array<{
-              url: string;
-              status?: number;
-              method?: string;
-              error?: string;
-            }>;
-          }
-        | undefined,
     };
 
-    const browserResult = await runBrowserVerify({
+    const browserVerifyInput: Parameters<typeof runBrowserVerify>[0] = {
       workDir: options.workDir,
       url: options.url,
       requiredSelectors: options.requiredSelectors,
-      screenshotPath: options.captureScreenshot ? options.screenshotPath : undefined,
       checkConsoleErrors: options.checkConsoleErrors,
       timeout: options.timeout,
       trackNetwork: true,
-    });
+    };
+    if (options.captureScreenshot && options.screenshotPath) {
+      browserVerifyInput.screenshotPath = options.screenshotPath;
+    }
+    const browserResult = await runBrowserVerify(browserVerifyInput);
 
     if (!browserResult.passed) {
       const errorMsg = browserResult.error ?? 'Browser verification failed';
@@ -483,7 +489,9 @@ export class SmokeGateService {
     result.passed = browserResult.passed;
     result.consoleErrors = browserResult.consoleErrors;
     result.missingSelectors = browserResult.missingSelectors;
-    result.fetchSummary = browserResult.fetchSummary;
+    if (browserResult.fetchSummary !== undefined) {
+      result.fetchSummary = browserResult.fetchSummary;
+    }
     result.screenshotPath = browserResult.screenshotPath ?? options.screenshotPath;
 
     if (!browserResult.passed && browserResult.error) {

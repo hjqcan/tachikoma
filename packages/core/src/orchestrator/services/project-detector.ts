@@ -355,19 +355,41 @@ export class ProjectDetector {
    * Detect ESLint presence
    */
   private detectEslint(workDir: string, packageJson: PackageJson | null): boolean {
-    if (
+    const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
+    const eslintVersion = typeof deps?.eslint === 'string' ? deps.eslint : undefined;
+    if (!eslintVersion) return false;
+
+    const major = this.parseMajorVersion(eslintVersion);
+    const requireFlatConfig = major !== null && major >= 9;
+
+    return this.hasEslintConfig(workDir, requireFlatConfig);
+  }
+
+  private hasEslintConfig(workDir: string, requireFlatConfig: boolean): boolean {
+    const hasFlat =
+      existsSync(join(workDir, 'eslint.config.js')) ||
+      existsSync(join(workDir, 'eslint.config.mjs')) ||
+      existsSync(join(workDir, 'eslint.config.cjs'));
+
+    if (requireFlatConfig) {
+      return hasFlat;
+    }
+
+    const hasLegacy =
       existsSync(join(workDir, '.eslintrc.json')) ||
       existsSync(join(workDir, '.eslintrc.js')) ||
       existsSync(join(workDir, '.eslintrc.cjs')) ||
       existsSync(join(workDir, '.eslintrc.yaml')) ||
-      existsSync(join(workDir, 'eslint.config.js')) ||
-      existsSync(join(workDir, 'eslint.config.mjs'))
-    ) {
-      return true;
-    }
-    
-    const deps = { ...packageJson?.dependencies, ...packageJson?.devDependencies };
-    return Boolean(deps?.eslint);
+      existsSync(join(workDir, '.eslintrc.yml'));
+
+    return hasFlat || hasLegacy;
+  }
+
+  private parseMajorVersion(version: string): number | null {
+    const match = version.match(/\d+/);
+    if (!match) return null;
+    const parsed = Number(match[0]);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 
   /**

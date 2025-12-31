@@ -182,10 +182,11 @@ async function verifyPage(
       page.on('requestfailed', (request) => {
         const resourceType = request.resourceType();
         if (resourceType !== 'xhr' && resourceType !== 'fetch') return;
+        const errorText = request.failure()?.errorText;
         fetchFailures.push({
           url: request.url(),
           method: request.method(),
-          error: request.failure()?.errorText,
+          ...(errorText !== undefined ? { error: errorText } : {}),
         });
       });
     }
@@ -328,7 +329,7 @@ async function verifyPage(
         ...fetchFailures.map((fail) => ({
           url: fail.url,
           method: fail.method,
-          error: fail.error,
+          ...(fail.error !== undefined ? { error: fail.error } : {}),
         })),
       ];
       fetchSummary = {

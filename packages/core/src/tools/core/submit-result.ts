@@ -860,6 +860,7 @@ export const submitResultTool: Tool = {
 
 执行门槛（Step 4）：
 - 当 isFinal=true 且 status!=failed 时，自动运行 build + smoke（支持 node/python/go/rust/java/.NET）
+- 前端联调 smoke 由 VerificationGate 的 smoke 层执行（页面渲染 + 数据 fetch 成功）
 - 未识别到构建/测试信号时会跳过（auto 模式）
 - 可通过环境变量配置：TACHIKOMA_EXECUTION_GATE / TACHIKOMA_EXECUTION_GATE_MODE
 

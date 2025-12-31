@@ -439,6 +439,10 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   // P1-A: 当前有效工作目录状态
   protected effectiveCwd = '';
 
+  // File modification tracking for VerificationGate scoping
+  private _modifiedFiles: string[] = [];
+
+
   // Detect repeated calls to identical tool+input combinations.
   private static readonly TOOL_CALL_REPEAT_LIMIT = 6;
   private static readonly TOOL_CALL_REPEAT_LIMIT_RELAXED = 10;
@@ -473,6 +477,22 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   async dispose(): Promise<void> {
     await this.memoryManager.close();
   }
+
+  /**
+   * Get the list of files modified during execution
+   * Used by WorkerExecutor to populate ExecutionResult.modifiedFiles
+   */
+  getModifiedFiles(): string[] {
+    return [...this._modifiedFiles];
+  }
+
+  /**
+   * Reset modified files list (called at start of each execution)
+   */
+  protected resetModifiedFiles(): void {
+    this._modifiedFiles = [];
+  }
+
 
   // ============================================================================
   // Tool call de-duplication guard
@@ -575,7 +595,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   protected buildExecutionContext(
     task: WorkerTask,
     options: WorkerExecutionOptions
-  ): ExecutionContext {
+  ): ExecutionContext & { modifiedFiles: string[] } {
     // P1-A: 每个任务强制重置 effectiveCwd 到 workDir，防止跨任务污染
     const initialCwd = options.workDir ?? process.cwd();
     this.effectiveCwd = initialCwd;
@@ -583,6 +603,9 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
     // P1-A Fix: 使用可变状态容器，让 updateCwd 和工具读取同一引用
     // 这样 updateCwd 的改动能即时反映到 context.effectiveCwd
     const cwdState = { current: initialCwd };
+
+    // Reset modified files list at start of each execution
+    this.resetModifiedFiles();
 
     return {
       taskId: task.id,
@@ -597,6 +620,14 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
         this.effectiveCwd = newCwd;
         cwdState.current = newCwd;
       },
+      // Register modified file for VerificationGate scoping
+      registerModifiedFile: (filePath: string) => {
+        if (!this._modifiedFiles.includes(filePath)) {
+          this._modifiedFiles.push(filePath);
+        }
+      },
+      // Expose modifiedFiles for result collection (reference to instance array)
+      modifiedFiles: this._modifiedFiles,
       env: options.env ?? {},
       permissions: {
         allowed: [],
