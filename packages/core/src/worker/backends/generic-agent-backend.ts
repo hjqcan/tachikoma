@@ -505,7 +505,11 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(
       baseSystemPrompt,
       task.objective,
-      { autoActivate: true, ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }) }
+      {
+        autoActivate: true,
+        availableToolNames: tools.map(tool => tool.name),
+        ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }),
+      }
     );
 
 	    let finalStatus: WorkerStatus = 'failed';

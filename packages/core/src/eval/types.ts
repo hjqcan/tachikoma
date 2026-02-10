@@ -4,6 +4,19 @@ export interface EvalExpected {
   notContains?: string[];
   regex?: string[];
   minScore?: number;
+  /**
+   * Natural language criteria for LLM-as-Judge evaluation.
+   * If provided, an LLM will be used to score the result/trajectory.
+   */
+  llmCriteria?: string;
+  /**
+   * Constraints on the execution trajectory.
+   */
+  trajectory?: {
+    forbiddenTools?: string[];
+    requiredTools?: string[];
+    maxSteps?: number;
+  };
 }
 
 export interface EvalCase {
@@ -24,7 +37,19 @@ export interface EvalSet {
 export interface EvalCheckResult {
   type: string;
   passed: boolean;
+  score?: number;
   detail?: string;
+  reasoning?: string;
+}
+
+export interface TrajectoryStep {
+  type: 'thinking' | 'tool_call' | 'tool_result' | 'subtask_output' | 'error';
+  content?: string;
+  tool?: string;
+  input?: unknown;
+  result?: unknown;
+  success?: boolean;
+  timestamp: number;
 }
 
 export interface EvalCaseResult {
@@ -38,6 +63,7 @@ export interface EvalCaseResult {
   durationMs: number;
   expected?: EvalExpected;
   checks: EvalCheckResult[];
+  trajectory: TrajectoryStep[];
 }
 
 export interface EvalReport {
@@ -60,6 +86,7 @@ export interface EvalRunOptions {
     apiKey: string;
     baseUrl?: string;
     model?: string;
+    provider?: 'openai' | 'anthropic';
   };
   verbose?: boolean;
   maxHistoryMessages?: number;

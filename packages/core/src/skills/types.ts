@@ -63,6 +63,12 @@ export interface SkillMetadata {
    * 用于更细粒度的检索和匹配，如 ['python', 'pandas', 'csv']
    */
   tags?: string[];
+
+  /**
+   * 依赖的工具（可选）
+   * 当所需工具不可用时，Skills 注入应被跳过
+   */
+  requiresTools?: string[];
 }
 
 // ============================================================================
@@ -279,6 +285,11 @@ export interface SkillRenderOptions extends SkillActivationOptions {
    * Skills section 最大 token 预算（元数据列表）
    */
   maxSkillTokens?: number;
+
+  /**
+   * 当前可用工具名称（用于过滤需要特定工具的 Skills）
+   */
+  availableToolNames?: string[];
 }
 
 /** 激活 skills 默认最大 token 预算 */

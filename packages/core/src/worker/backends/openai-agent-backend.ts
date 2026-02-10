@@ -618,6 +618,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             { 
               autoActivate: true,
               includeProjectContext: true,
+              availableToolNames: tools.map(tool => tool.name),
               ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }),
             }
           );

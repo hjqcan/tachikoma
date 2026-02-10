@@ -673,7 +673,6 @@ export class ExecutionLoop {
             );
             
             // Create fix task with error details and proper verification command
-            const errorSummary = VerificationGateService.formatErrorsForWorker(verifyResult);
             const fixSummary = VerificationGateService.formatLayerErrorsForWorker(verifyResult, failedLayer?.layer);
             const verifyCommand = this.mapToShellCommand(failedLayer?.command);
             
@@ -934,6 +933,26 @@ export class ExecutionLoop {
         "Remove the unused entry so only ONE of .js/.jsx/.ts/.tsx remains."
       );
     }
+
+    if (errorSummary.includes('PROJECT BOUNDARY')) {
+      fixInstructions.push(
+        'PROJECT BOUNDARY: Files were written at the workspace root outside any detected project. ' +
+        'Move these files under the correct project folder (frontend/backend) and avoid writing to root src/app/pages/components/lib.'
+      );
+    }
+
+    if (errorSummary.includes('FORBIDDEN DIRECTORY') || errorSummary.includes('DUPLICATE TEST SUFFIX')) {
+      fixInstructions.push(
+        'TEST FILE LOCATION: Do NOT use __tests__ folders or duplicate .test.test suffixes. ' +
+        'Co-locate tests next to components with a single .test.tsx suffix.'
+      );
+    }
+
+    if (errorSummary.includes('TEST FRAMEWORK CONFLICT')) {
+      fixInstructions.push(
+        'TEST FRAMEWORK: Use ONE framework only (Vitest). Remove Jest config/scripts/deps when using Vite/Vitest.'
+      );
+    }
     
     if (errorSummary.includes('Cannot find module')) {
       fixInstructions.push(
@@ -956,6 +975,31 @@ export class ExecutionLoop {
     if (errorSummary.includes("Cannot destructure property 'data'") && errorSummary.includes('undefined')) {
       fixInstructions.push(
         'TEST MOCK: A mocked module is missing an export. Ensure withErrorHandling (and other named exports) are provided by the mock or merged via vi.importActual.'
+      );
+    }
+
+    if (errorSummary.includes('toBeInTheDocument')) {
+      fixInstructions.push(
+        'TEST SETUP: Add `@testing-library/jest-dom` to tsconfig.json compilerOptions.types and import it in `src/test-setup.ts`. Ensure vitest config includes setupFiles.'
+      );
+    }
+
+    if (
+      errorSummary.includes('.eslintrc.cjs') &&
+      (errorSummary.includes('Unexpected token') || errorSummary.includes('export default'))
+    ) {
+      fixInstructions.push(
+        'ESLINT CONFIG: `.eslintrc.cjs` must use CommonJS (`module.exports = {}`), or switch to `eslint.config.js` for ESLint v9.'
+      );
+    }
+
+    if (
+      errorSummary.includes('CommonJS module') ||
+      errorSummary.includes('TS80001') ||
+      errorSummary.includes('80001')
+    ) {
+      fixInstructions.push(
+        'ESM/CJS CONFIG: If package.json has `"type": "module"`, CommonJS config files (module.exports/require) must be renamed to `.cjs` or converted to ESM (`export default`). Avoid adding Jest config unless explicitly requested.'
       );
     }
 

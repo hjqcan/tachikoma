@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 import { ConversationalRunner } from '../conversation/conversational-runner';
-import type { EvalCase, EvalReport, EvalRunOptions, EvalSet } from './types';
+import type { EvalCase, EvalReport, EvalRunOptions, EvalSet, TrajectoryStep } from './types';
 import { scoreEvalCase } from './scorer';
 
 function normalizeCaseIds(caseIds?: string[]): Set<string> | undefined {
@@ -91,14 +91,36 @@ export async function runEvalSet(
     let success = false;
     let sawCompletion = false;
     const errors: string[] = [];
+    const trajectory: TrajectoryStep[] = [];
 
     for await (const evt of runner.handleMessage(session.sessionId, evalCase.objective)) {
+      const timestamp = Date.now();
+
       switch (evt.type) {
         case 'thinking':
+          trajectory.push({ type: 'thinking', content: evt.content, timestamp });
           if (!lastOutput && evt.content) lastOutput = evt.content;
           break;
         case 'subtask_output':
+          trajectory.push({ type: 'subtask_output', content: evt.content, timestamp });
           lastOutput = evt.content || lastOutput;
+          break;
+        case 'tool_call':
+          trajectory.push({
+            type: 'tool_call',
+            tool: evt.tool,
+            input: evt.input,
+            timestamp
+          });
+          break;
+        case 'tool_result':
+          trajectory.push({
+            type: 'tool_result',
+            tool: evt.tool,
+            result: evt.result,
+            success: evt.success,
+            timestamp
+          });
           break;
         case 'complete':
           summary = evt.summary;
@@ -107,10 +129,12 @@ export async function runEvalSet(
           break;
         case 'need_user_input':
           errors.push(`need_user_input: ${evt.question}`);
+          trajectory.push({ type: 'error', content: `Need user input: ${evt.question}`, timestamp });
           success = false;
           break;
         case 'error':
           errors.push(evt.error);
+          trajectory.push({ type: 'error', content: evt.error, timestamp });
           success = false;
           break;
         default:
@@ -126,7 +150,8 @@ export async function runEvalSet(
       success = false;
     }
 
-    const scored = scoreEvalCase(summary, success, evalCase.expected);
+    // Pass LLM config for LLM-as-Judge
+    const scored = await scoreEvalCase(summary, success, trajectory, evalCase.expected, options.llm);
 
     results.push({
       caseId: evalCase.id,
@@ -139,6 +164,7 @@ export async function runEvalSet(
       durationMs: Date.now() - caseStart,
       ...(evalCase.expected !== undefined ? { expected: evalCase.expected } : {}),
       checks: scored.checks,
+      trajectory,
     });
   }
 

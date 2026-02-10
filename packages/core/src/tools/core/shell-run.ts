@@ -5,6 +5,8 @@
  */
 
 import { spawn } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Tool, ExecutionContext } from '../../types';
 import type { ShellRunInput, ShellRunOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
@@ -52,6 +54,80 @@ const LONG_RUNNING_COMMANDS: { pattern: RegExp; timeout: number; description: st
   { pattern: /^cargo\s+test\b/i, timeout: 300_000, description: 'cargo test' },
   { pattern: /^go\s+test\b/i, timeout: 300_000, description: 'go test' },
 ];
+
+const DUPLICATE_TEST_SUFFIX_PATTERN = /(?:\.test|\.spec){2}(\.|$)/i;
+const TEST_SCAN_DIRS = ['src', 'app', 'pages', 'lib', 'components'];
+const MAX_TEST_SCAN_DEPTH = 4;
+const MAX_TEST_SCAN_ENTRIES = 600;
+
+function scanForTestViolations(rootDir: string): string[] {
+  const violations: string[] = [];
+  const record = (path: string, message: string) => {
+    violations.push(`${path}: ${message}`);
+  };
+
+  if (existsSync(join(rootDir, '__tests__'))) {
+    record(join(rootDir, '__tests__'), '__tests__ directories are forbidden');
+  }
+
+  const scan = (dir: string, depth: number, visited: { count: number }) => {
+    if (depth <= 0 || visited.count >= MAX_TEST_SCAN_ENTRIES) return;
+    try {
+      const entries = readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (visited.count >= MAX_TEST_SCAN_ENTRIES) break;
+        if (entry.name.startsWith('.')) continue;
+        const fullPath = join(dir, entry.name);
+        visited.count += 1;
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__') {
+            record(fullPath, '__tests__ directories are forbidden');
+            continue;
+          }
+          scan(fullPath, depth - 1, visited);
+          continue;
+        }
+        if (DUPLICATE_TEST_SUFFIX_PATTERN.test(entry.name)) {
+          record(fullPath, 'duplicate .test/.spec suffix detected');
+        }
+      }
+    } catch {
+      // ignore scan errors
+    }
+  };
+
+  for (const dirName of TEST_SCAN_DIRS) {
+    const target = join(rootDir, dirName);
+    if (!existsSync(target)) continue;
+    scan(target, MAX_TEST_SCAN_DEPTH, { count: 0 });
+  }
+
+  return violations;
+}
+
+function isMutatingCommand(command: string | undefined): boolean {
+  if (!command) return true;
+  const trimmedCmd = command.trim();
+  const dangerousOperators = [
+    '>', '>>', '|', '&&', '||', ';',
+    '$(', '`',
+    'xargs',
+    'eval',
+  ];
+  for (const op of dangerousOperators) {
+    if (trimmedCmd.includes(op)) {
+      return true;
+    }
+  }
+
+  const lowerCmd = trimmedCmd.toLowerCase();
+  for (const safeCmd of KNOWN_SAFE_COMMANDS) {
+    if (lowerCmd === safeCmd || lowerCmd.startsWith(safeCmd + ' ')) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * Get smart timeout based on command pattern matching
@@ -701,6 +777,21 @@ export const shellRunTool: Tool = {
           if (result.exitCode === 0 && cwd && context.updateCwd) {
             context.updateCwd(workingDir);
           }
+
+          if (result.exitCode === 0 && isMutatingCommand(command)) {
+            const violations = scanForTestViolations(workingDir);
+            if (violations.length > 0) {
+              const details = violations.slice(0, 8).map(v => `- ${v}`).join('\n');
+              const suffix = violations.length > 8 ? `\n... and ${violations.length - 8} more` : '';
+              return {
+                success: false,
+                error:
+                  `VALIDATION FAILED: Forbidden test paths detected after shell_run.\n` +
+                  `${details}${suffix}\n\n` +
+                  `Fix: remove __tests__ folders and duplicate .test/.spec suffixes.`,
+              };
+            }
+          }
           
           return {
             success: result.exitCode === 0,
@@ -729,6 +820,21 @@ export const shellRunTool: Tool = {
       // P1-A: 成功执行后更新 effectiveCwd
       if (result.exitCode === 0 && cwd && context.updateCwd) {
         context.updateCwd(workingDir);
+      }
+
+      if (result.exitCode === 0 && isMutatingCommand(command)) {
+        const violations = scanForTestViolations(workingDir);
+        if (violations.length > 0) {
+          const details = violations.slice(0, 8).map(v => `- ${v}`).join('\n');
+          const suffix = violations.length > 8 ? `\n... and ${violations.length - 8} more` : '';
+          return {
+            success: false,
+            error:
+              `VALIDATION FAILED: Forbidden test paths detected after shell_run.\n` +
+              `${details}${suffix}\n\n` +
+              `Fix: remove __tests__ folders and duplicate .test/.spec suffixes.`,
+          };
+        }
       }
 
       return {
@@ -760,34 +866,6 @@ export const shellRunTool: Tool = {
    */
   isMutating(input: unknown): boolean {
     const { command } = input as ExtendedShellRunInput;
-    if (!command) return true; // 无命令时保守处理
-    
-    const trimmedCmd = command.trim();
-    
-    // ⚠️ 检测危险的 shell 操作符（可能绕过安全命令检测）
-    // 这些操作符可能导致写入文件或执行多个命令
-    const DANGEROUS_OPERATORS = [
-      '>', '>>', '|', '&&', '||', ';',
-      '$(', '`',    // 命令替换
-      'xargs',      // 可执行任意命令
-      'eval',       // 动态执行
-    ];
-    
-    for (const op of DANGEROUS_OPERATORS) {
-      if (trimmedCmd.includes(op)) {
-        return true; // 有危险操作符，保守处理
-      }
-    }
-    
-    const lowerCmd = trimmedCmd.toLowerCase();
-    
-    // 检查是否匹配已知安全命令
-    for (const safeCmd of KNOWN_SAFE_COMMANDS) {
-      if (lowerCmd === safeCmd || lowerCmd.startsWith(safeCmd + ' ')) {
-        return false; // 无副作用
-      }
-    }
-    
-    return true; // 默认有副作用
+    return isMutatingCommand(command);
   },
 };

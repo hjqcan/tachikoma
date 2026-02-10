@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { join, extname, isAbsolute, resolve, relative } from 'node:path';
 import { LSP } from '../../lsp';
 
 // ============================================================================
@@ -69,6 +69,12 @@ const DEFAULT_CONFIG: Required<BuildGateConfig> = {
   maxErrors: 50,
   useLsp: true,
 };
+
+const COMMONJS_MODULE_HINT = 'File is a CommonJS module; it may be converted to an ES module.';
+const DOWNGRADE_LSP_DIAGNOSTIC_CODES = new Set(['80001']);
+const MAX_FALLBACK_OUTPUT_CHARS = 4000;
+const MAX_CHANGED_FILES_TOUCH = 80;
+const LSP_TOUCH_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx']);
 
 // ============================================================================
 // BuildGateService
@@ -147,7 +153,17 @@ export class BuildGateService {
 
       // Determine files to touch for LSP diagnostics
       let filesToTouch = changedFiles ?? [];
-      
+
+      if (filesToTouch.length > 0) {
+        filesToTouch = this.normalizeChangedFiles(filesToTouch, workDir);
+        if (filesToTouch.length > MAX_CHANGED_FILES_TOUCH) {
+          console.info(
+            `[BuildGate] Limiting LSP touch to ${MAX_CHANGED_FILES_TOUCH} of ${filesToTouch.length} changed files`
+          );
+          filesToTouch = filesToTouch.slice(0, MAX_CHANGED_FILES_TOUCH);
+        }
+      }
+
       // If no changed files provided, discover TypeScript files to trigger LSP
       if (filesToTouch.length === 0) {
         filesToTouch = await this.discoverTsFiles(workDir);
@@ -169,7 +185,12 @@ export class BuildGateService {
       }
 
       // Get all diagnostics
-      const diagnostics = await LSP.diagnostics(workDir, env);
+      const rawDiagnostics = await LSP.diagnostics(workDir, env);
+      const diagnostics = this.filterDiagnostics(rawDiagnostics, workDir);
+      const droppedDiagnostics = Object.keys(rawDiagnostics).length - Object.keys(diagnostics).length;
+      if (droppedDiagnostics > 0) {
+        console.info(`[BuildGate] Ignored ${droppedDiagnostics} stale diagnostics for missing/out-of-scope files`);
+      }
       const allErrors: BuildError[] = [];
       const allWarnings: BuildError[] = [];
       const lintDiagnostics: BuildError[] = [];
@@ -187,7 +208,13 @@ export class BuildGateService {
 
       for (const [file, fileDiagnostics] of Object.entries(diagnostics)) {
         for (const diag of fileDiagnostics) {
-          const severity = diag.severity === 1 ? 'error' : 'warning';
+          const codeValue = diag.code !== undefined ? String(diag.code) : undefined;
+          const isCommonJsModuleHint =
+            codeValue === '80001' ||
+            DOWNGRADE_LSP_DIAGNOSTIC_CODES.has(codeValue ?? '') ||
+            diag.message.includes(COMMONJS_MODULE_HINT);
+          const baseSeverity = diag.severity === 1 ? 'error' : 'warning';
+          const severity = isCommonJsModuleHint ? 'warning' : baseSeverity;
           const source = typeof diag.source === 'string' ? diag.source : undefined;
           const sourceKey = source ? source.toLowerCase() : undefined;
           const message = source ? `[${source}] ${diag.message}` : diag.message;
@@ -196,9 +223,13 @@ export class BuildGateService {
             line: diag.range.start.line + 1,
             column: diag.range.start.character + 1,
             message,
-            ...(diag.code !== undefined ? { code: String(diag.code) } : {}),
+            ...(codeValue ? { code: codeValue } : {}),
             severity,
           };
+
+          if (isCommonJsModuleHint && baseSeverity === 'error') {
+            console.info(`[BuildGate] Downgraded TS${codeValue ?? ''} to warning for ${file}`);
+          }
 
           if (sourceKey && lintSources.has(sourceKey)) {
             lintDiagnostics.push(buildError);
@@ -298,7 +329,8 @@ export class BuildGateService {
 
     try {
       const output = await this.runCommand(command, workDir);
-      const errors = this.parseTypeScriptErrors(output, workDir);
+      const parsedErrors = this.parseTypeScriptErrors(output, workDir);
+      const errors = this.ensureErrorsFromOutput(parsedErrors, output, workDir, 'TypeScript');
 
       const errorCount = errors.filter(e => e.severity === 'error').length;
       const warningCount = errors.filter(e => e.severity === 'warning').length;
@@ -306,6 +338,10 @@ export class BuildGateService {
       const passed = this.config.failOnWarnings 
         ? errors.length === 0 
         : errorCount === 0;
+
+      if (!passed) {
+        this.logParsedDiagnostics('TypeScript', errors);
+      }
 
       return {
         passed,
@@ -321,7 +357,10 @@ export class BuildGateService {
       const output = error instanceof Error && 'stdout' in error 
         ? String((error as { stdout: string }).stdout) 
         : String(error);
-      const errors = this.parseTypeScriptErrors(output, workDir);
+      const parsedErrors = this.parseTypeScriptErrors(output, workDir);
+      const errors = this.ensureErrorsFromOutput(parsedErrors, output, workDir, 'TypeScript');
+
+      this.logParsedDiagnostics('TypeScript', errors);
 
       return {
         passed: false,
@@ -391,6 +430,7 @@ export class BuildGateService {
 
     // TypeScript error format: src/file.ts(10,5): error TS2345: message
     const errorRegex = /^(.+?)\((\d+),(\d+)\):\s*(error|warning)\s+(TS\d+):\s*(.+)$/;
+    const globalErrorRegex = /^(error|warning)\s+(TS\d+):\s*(.+)$/;
 
     for (const line of lines) {
       const match = line.match(errorRegex);
@@ -403,6 +443,21 @@ export class BuildGateService {
           column: parseInt(col, 10),
           message: message.trim(),
           ...(code && { code }),
+          severity: severity as 'error' | 'warning',
+        });
+        continue;
+      }
+
+      const globalMatch = line.match(globalErrorRegex);
+      if (globalMatch) {
+        const [, severity, code, message] = globalMatch;
+        if (!severity || !code || !message) continue;
+        errors.push({
+          file: workDir,
+          line: 0,
+          column: 0,
+          message: message.trim(),
+          code,
           severity: severity as 'error' | 'warning',
         });
       }
@@ -473,6 +528,41 @@ export class BuildGateService {
     return errors;
   }
 
+  private ensureErrorsFromOutput(
+    parsedErrors: BuildError[],
+    output: string,
+    workDir: string,
+    label: string
+  ): BuildError[] {
+    if (parsedErrors.length > 0) return parsedErrors;
+    const trimmed = output.trim();
+    if (!trimmed) return parsedErrors;
+    const message = `${label} output:\n${this.truncateOutput(trimmed)}`;
+    console.warn(`[BuildGate] ${label} output did not match expected error format, emitting raw output.`);
+    return [{
+      file: workDir,
+      line: 0,
+      column: 0,
+      message,
+      severity: 'error',
+    }];
+  }
+
+  private logParsedDiagnostics(label: string, items: BuildError[], limit = 10): void {
+    if (items.length === 0) return;
+    console.info(`[BuildGate] ${label} errors: showing ${Math.min(items.length, limit)} of ${items.length}`);
+    for (const item of items.slice(0, limit)) {
+      const loc = `${item.file}:${item.line}:${item.column}`;
+      const code = item.code ? ` ${item.code}` : '';
+      console.info(`[BuildGate] ${loc}${code} ${item.message}`);
+    }
+  }
+
+  private truncateOutput(output: string): string {
+    if (output.length <= MAX_FALLBACK_OUTPUT_CHARS) return output;
+    return `${output.slice(0, MAX_FALLBACK_OUTPUT_CHARS)}\n... (truncated)`;
+  }
+
   /**
    * Discover TypeScript files in a project for LSP initialization
    * Returns up to 20 files to avoid performance issues
@@ -511,6 +601,37 @@ export class BuildGateService {
 
     await scanDir(workDir);
     return files;
+  }
+
+  private normalizeChangedFiles(files: string[], workDir: string): string[] {
+    const normalized = new Set<string>();
+    for (const file of files) {
+      if (!file || typeof file !== 'string') continue;
+      const absolute = isAbsolute(file) ? resolve(file) : resolve(workDir, file);
+      const rel = relative(workDir, absolute);
+      if (rel.startsWith('..') || rel === '') continue;
+      const ext = extname(absolute);
+      if (!LSP_TOUCH_EXTENSIONS.has(ext)) continue;
+      if (!existsSync(absolute)) continue;
+      normalized.add(absolute);
+    }
+    return Array.from(normalized);
+  }
+
+  private filterDiagnostics(
+    diagnostics: Record<string, LSP.Diagnostic[]>,
+    workDir: string
+  ): Record<string, LSP.Diagnostic[]> {
+    const filtered: Record<string, LSP.Diagnostic[]> = {};
+    for (const [file, items] of Object.entries(diagnostics)) {
+      if (!file) continue;
+      const absolute = isAbsolute(file) ? resolve(file) : resolve(workDir, file);
+      const rel = relative(workDir, absolute);
+      if (rel.startsWith('..')) continue;
+      if (!existsSync(absolute)) continue;
+      filtered[absolute] = items;
+    }
+    return filtered;
   }
 
   /**

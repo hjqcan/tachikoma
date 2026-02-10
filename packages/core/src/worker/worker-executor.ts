@@ -188,14 +188,30 @@ export class WorkerExecutor {
     // selective memory sync：从 shared context 注入“关键决策/产物”摘要到约束（best-effort）
     const injectedSharedConstraint = await this.buildSharedContextConstraint(sessionManager);
 
+    const rawConstraints = Array.isArray(subtask.constraints)
+      ? [...subtask.constraints]
+      : [];
+    if (injectedSharedConstraint) {
+      rawConstraints.push(injectedSharedConstraint);
+    }
+    const { constraints: sanitizedConstraints, removedToolHints } =
+      this.sanitizeConstraintsForTools(rawConstraints, tools);
+
+    if (removedToolHints.length > 0) {
+      const preview = removedToolHints.slice(0, 5).join(', ');
+      const remaining = removedToolHints.length - Math.min(removedToolHints.length, 5);
+      const suffix = remaining > 0 ? `, +${remaining} more` : '';
+      console.info(
+        `[WorkerExecutor] Removed unavailable tool hints from constraints: ${preview}${suffix}`
+      );
+    }
+
     // 转换 SubTask 为 WorkerTask（注意：必须传递 parentObjective 以支持技能匹配上下文）
     const workerTask: WorkerTask = {
       id: subtask.id,
       type: 'atomic', // 子任务默认为原子任务
       objective: subtask.objective,
-      constraints: injectedSharedConstraint
-        ? [...subtask.constraints, injectedSharedConstraint]
-        : subtask.constraints,
+      constraints: sanitizedConstraints,
       parentTaskId: subtask.parentId,
       ...(subtask.parentObjective !== undefined && { parentObjective: subtask.parentObjective }),
       ...(subtask.priority !== undefined && { priority: subtask.priority }),
@@ -811,6 +827,88 @@ export class WorkerExecutor {
 
     const text = lines.join('\n').slice(0, 2000);
     return text.trim() ? text : null;
+  }
+
+  private sanitizeConstraintsForTools(
+    constraints: string[],
+    tools: Tool[]
+  ): { constraints: string[]; removedToolHints: string[] } {
+    if (!Array.isArray(constraints) || constraints.length === 0) {
+      return { constraints: [], removedToolHints: [] };
+    }
+
+    const available = new Set(tools.map(tool => tool.name));
+    const removedToolHints: string[] = [];
+    const sanitized: string[] = [];
+
+    for (const constraint of constraints) {
+      if (typeof constraint !== 'string' || constraint.trim().length === 0) {
+        continue;
+      }
+
+      const lines = constraint.split('\n');
+      const keptLines: string[] = [];
+
+      for (const line of lines) {
+        const parsed = this.parseRecommendedToolHint(line);
+        if (!parsed) {
+          keptLines.push(line);
+          continue;
+        }
+
+        const availableTools = parsed.tools.filter(tool => available.has(tool));
+        const missingTools = parsed.tools.filter(tool => !available.has(tool));
+
+        if (availableTools.length === 0) {
+          removedToolHints.push(...missingTools);
+          continue;
+        }
+
+        if (missingTools.length > 0) {
+          removedToolHints.push(...missingTools);
+          keptLines.push(
+            `${parsed.label}${parsed.separator} ${availableTools.join(', ')} (unavailable: ${missingTools.join(', ')})`
+          );
+          continue;
+        }
+
+        keptLines.push(line);
+      }
+
+      if (keptLines.length > 0) {
+        sanitized.push(keptLines.join('\n'));
+      }
+    }
+
+    if (removedToolHints.length > 0) {
+      const unique = Array.from(new Set(removedToolHints));
+      sanitized.push(
+        `Note: recommended tools unavailable and removed: ${unique.join(', ')}. Use only the tools listed in "Available tools".`
+      );
+    }
+
+    return { constraints: sanitized, removedToolHints };
+  }
+
+  private parseRecommendedToolHint(
+    line: string
+  ): { label: string; separator: string; tools: string[] } | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    const withoutBullet = trimmed.replace(/^[-*]\s+/, '');
+    const match = withoutBullet.match(
+      /^(推荐工具|recommended tools?|recommended tool)\s*([:：])\s*(.+)$/i
+    );
+    if (!match || !match[3]) return null;
+    const label = match[1];
+    const separator = match[2];
+    if (!label || !separator) return null;
+    const tools = match[3]
+      .split(/[,\s、，]+/)
+      .map(tool => tool.trim())
+      .filter(tool => tool.length > 0);
+    if (tools.length === 0) return null;
+    return { label, separator, tools };
   }
 }
 

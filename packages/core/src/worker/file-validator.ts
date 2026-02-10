@@ -5,6 +5,9 @@
  * Detects problematic patterns and reports violations for agent to fix.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 export interface FileViolation {
   /** Absolute file path */
   file: string;
@@ -110,11 +113,228 @@ const VALIDATION_RULES = {
   }
 };
 
+const CJS_CONFIG_PATTERN = /(?:^|[\\/])[^\\/]+\.config\.js$/i;
+const COMMONJS_SYNTAX_PATTERN = /\bmodule\.exports\b|\bexports\.\w+|\brequire\(/;
+const JEST_CONFIG_PATTERN = /(?:^|[\\/])jest\.config\.(?:js|cjs|mjs|ts)$/i;
+const ESLINTRC_CJS_PATTERN = /(?:^|[\\/])\.eslintrc\.cjs$/i;
+const ESM_EXPORT_PATTERN = /\bexport\s+default\b/;
+const TEST_SETUP_PATTERN = /(?:^|[\\/])test-setup\.(?:ts|tsx|js|jsx)$/i;
+const JEST_DOM_IMPORT_PATTERN = /@testing-library\/jest-dom/;
+const REACT_IMPORT_PATTERN = /import\s+(?:\*\s+as\s+)?React\b[^;]*from\s+['"]react['"]/;
+const REACT_USAGE_PATTERN = /\bReact\b/;
+const MAX_PACKAGE_SEARCH_DEPTH = 8;
+const packageTypeCache = new Map<string, string | null>();
+const packageInfoCache = new Map<string, { type: string | null; hasVitest: boolean; hasJest: boolean } | null>();
+const tsconfigCache = new Map<string, string | null>();
+
+function findNearestPackageJson(startDir: string): string | null {
+  let current = startDir;
+  for (let i = 0; i < MAX_PACKAGE_SEARCH_DEPTH; i++) {
+    const candidate = join(current, 'package.json');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function readPackageInfo(packageJsonPath: string): { type: string | null; hasVitest: boolean; hasJest: boolean } | null {
+  const cached = packageInfoCache.get(packageJsonPath);
+  if (cached !== undefined) return cached;
+  try {
+    const raw = readFileSync(packageJsonPath, 'utf-8');
+    const parsed = JSON.parse(raw) as {
+      type?: string;
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const typeValue = typeof parsed.type === 'string' ? parsed.type : null;
+    const scripts = parsed.scripts ?? {};
+    const deps = { ...parsed.dependencies, ...parsed.devDependencies };
+    const scriptText = Object.values(scripts).join(' ').toLowerCase();
+    const hasVitest = scriptText.includes('vitest') || Boolean(deps.vitest);
+    const hasJest = scriptText.includes('jest') || Boolean(deps.jest);
+    const info = { type: typeValue, hasVitest, hasJest };
+    packageTypeCache.set(packageJsonPath, typeValue);
+    packageInfoCache.set(packageJsonPath, info);
+    return info;
+  } catch {
+    packageTypeCache.set(packageJsonPath, null);
+    packageInfoCache.set(packageJsonPath, null);
+    return null;
+  }
+}
+
+function isEsmPackage(filePath: string): boolean {
+  const pkg = findNearestPackageJson(dirname(filePath));
+  if (!pkg) return false;
+  return readPackageInfo(pkg)?.type === 'module';
+}
+
+function detectCjsConfigInEsm(filePath: string, content: string): FileViolation | null {
+  if (!CJS_CONFIG_PATTERN.test(filePath)) return null;
+  if (!COMMONJS_SYNTAX_PATTERN.test(content)) return null;
+  if (!isEsmPackage(filePath)) return null;
+  return {
+    file: filePath,
+    rule: 'cjs-config-in-esm',
+    message:
+      'This project uses `"type": "module"` but the config file uses CommonJS (`module.exports`/`require`). ' +
+      'Rename the file to `.cjs` or convert it to ESM (`export default`).',
+    severity: 'error',
+  };
+}
+
+function findNearestTsconfig(startDir: string): string | null {
+  let current = startDir;
+  for (let i = 0; i < MAX_PACKAGE_SEARCH_DEPTH; i++) {
+    const candidate = join(current, 'tsconfig.json');
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return null;
+}
+
+function readTsconfigJsxMode(tsconfigPath: string): string | null {
+  const cached = tsconfigCache.get(tsconfigPath);
+  if (cached !== undefined) return cached;
+  try {
+    const raw = readFileSync(tsconfigPath, 'utf-8');
+    const sanitized = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const parsed = JSON.parse(sanitized) as { compilerOptions?: { jsx?: string } };
+    const mode = parsed.compilerOptions?.jsx ?? null;
+    tsconfigCache.set(tsconfigPath, mode ?? null);
+    return mode ?? null;
+  } catch {
+    tsconfigCache.set(tsconfigPath, null);
+    return null;
+  }
+}
+
+function isReactAutoRuntime(filePath: string): boolean {
+  const tsconfig = findNearestTsconfig(dirname(filePath));
+  if (!tsconfig) return false;
+  const mode = readTsconfigJsxMode(tsconfig);
+  return mode === 'react-jsx' || mode === 'react-jsxdev';
+}
+
+function hasUnusedReactImport(content: string): boolean {
+  if (!REACT_IMPORT_PATTERN.test(content)) return false;
+  const withoutImport = content.replace(REACT_IMPORT_PATTERN, '');
+  return !REACT_USAGE_PATTERN.test(withoutImport);
+}
+
+function detectTestFrameworkConflict(filePath: string, content: string): FileViolation | null {
+  if (!filePath.endsWith('package.json')) return null;
+  try {
+    const parsed = JSON.parse(content) as {
+      scripts?: Record<string, string>;
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const scripts = parsed.scripts ?? {};
+    const deps = { ...parsed.dependencies, ...parsed.devDependencies };
+    const scriptText = Object.values(scripts).join(' ').toLowerCase();
+    const hasVitest = scriptText.includes('vitest') || Boolean(deps.vitest);
+    const hasJest = scriptText.includes('jest') || Boolean(deps.jest);
+    if (hasVitest && hasJest) {
+      return {
+        file: filePath,
+        rule: 'mixed-test-frameworks',
+        message:
+          'Test framework conflict: both Vitest and Jest are configured. Use Vitest only; remove Jest scripts/deps/config.',
+        severity: 'error',
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function detectJestConfigInVitestProject(filePath: string): FileViolation | null {
+  if (!JEST_CONFIG_PATTERN.test(filePath)) return null;
+  const pkgPath = findNearestPackageJson(dirname(filePath));
+  if (!pkgPath) return null;
+  const info = readPackageInfo(pkgPath);
+  if (!info?.hasVitest) return null;
+  return {
+    file: filePath,
+    rule: 'jest-config-in-vitest-project',
+    message:
+      'Jest config detected in a Vitest project. Remove Jest config or switch entirely to Vitest.',
+    severity: 'error',
+  };
+}
+
+function detectEslintCjsExportDefault(filePath: string, content: string): FileViolation | null {
+  if (!ESLINTRC_CJS_PATTERN.test(filePath)) return null;
+  if (!ESM_EXPORT_PATTERN.test(content)) return null;
+  return {
+    file: filePath,
+    rule: 'eslintrc-cjs-export-default',
+    message:
+      'ESLint CJS config uses ESM syntax. Replace `export default` with `module.exports =` in `.eslintrc.cjs`, or use `eslint.config.js` for ESLint v9.',
+    severity: 'error',
+  };
+}
+
+function detectMissingJestDomInTestSetup(filePath: string, content: string): FileViolation | null {
+  if (!TEST_SETUP_PATTERN.test(filePath)) return null;
+  if (JEST_DOM_IMPORT_PATTERN.test(content)) return null;
+  return {
+    file: filePath,
+    rule: 'missing-jest-dom-setup',
+    message:
+      'Test setup file must import "@testing-library/jest-dom" to register DOM matchers.',
+    severity: 'error',
+  };
+}
+
 /**
  * Validate a single file's content against quality rules
  */
 export function validateFileContent(filePath: string, content: string): FileViolation[] {
   const violations: FileViolation[] = [];
+
+  const testFrameworkViolation = detectTestFrameworkConflict(filePath, content);
+  if (testFrameworkViolation) {
+    violations.push(testFrameworkViolation);
+  }
+
+  const jestConfigViolation = detectJestConfigInVitestProject(filePath);
+  if (jestConfigViolation) {
+    violations.push(jestConfigViolation);
+  }
+
+  const eslintCjsViolation = detectEslintCjsExportDefault(filePath, content);
+  if (eslintCjsViolation) {
+    violations.push(eslintCjsViolation);
+  }
+
+  const jestDomSetupViolation = detectMissingJestDomInTestSetup(filePath, content);
+  if (jestDomSetupViolation) {
+    violations.push(jestDomSetupViolation);
+  }
+
+  const cjsConfigViolation = detectCjsConfigInEsm(filePath, content);
+  if (cjsConfigViolation) {
+    violations.push(cjsConfigViolation);
+  }
+
+  if (isReactAutoRuntime(filePath) && hasUnusedReactImport(content)) {
+    violations.push({
+      file: filePath,
+      rule: 'unused-react-import',
+      message:
+        'Unused React import detected. With `jsx: react-jsx`, remove `import React` or convert to type-only imports.',
+      severity: 'error',
+    });
+  }
 
   // Check Missing Vitest Imports
   if (VALIDATION_RULES.missingVitestImports.pattern.test(filePath)) {

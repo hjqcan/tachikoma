@@ -195,6 +195,18 @@ export class SkillsManager {
       taskDescription
     ].filter((s): s is string => typeof s === 'string' && s.length > 0).join(' | ');
 
+    const { skills: filteredSkills, skipped } = this.filterSkillsForTools(
+      this.skills,
+      options?.availableToolNames
+    );
+
+    if (skipped.length > 0) {
+      const preview = skipped.slice(0, 5).map(entry => `${entry.name} (missing: ${entry.missing.join(', ')})`);
+      const remaining = skipped.length - preview.length;
+      const suffix = remaining > 0 ? `, +${remaining} more` : '';
+      console.info(`[SkillsManager] Skipped skills due to missing tools: ${preview.join('; ')}${suffix}`);
+    }
+
     // 新模式：使用带激活的渲染
     if (options?.autoActivate && matchContext) {
       const renderOptions: SkillRenderOptions = { ...options };
@@ -207,7 +219,7 @@ export class SkillsManager {
       
       // 使用合并后的上下文进行技能匹配
       const { section, activated } = renderSkillsSectionWithActivation(
-        this.skills,
+        filteredSkills,
         matchContext,
         renderOptions
       );
@@ -233,13 +245,13 @@ export class SkillsManager {
     let skillsSection: string | null;
     if (taskDescription) {
       skillsSection = renderSkillsSectionWithRecommendations(
-        this.skills,
+        filteredSkills,
         taskDescription,
         this.config?.maxSkillTokens
       );
     } else {
       skillsSection = renderSkillsSection(
-        this.skills,
+        filteredSkills,
         this.config?.maxSkillTokens
       );
     }
@@ -251,6 +263,35 @@ export class SkillsManager {
     // Project Context can be injected as messages or appended to system prompt
     
     return appendLoadedSkills(finalPrompt);
+  }
+
+  private filterSkillsForTools(
+    skills: SkillMetadata[],
+    availableToolNames?: string[]
+  ): { skills: SkillMetadata[]; skipped: Array<{ name: string; missing: string[] }> } {
+    if (!availableToolNames || availableToolNames.length === 0) {
+      return { skills, skipped: [] };
+    }
+
+    const available = new Set(availableToolNames);
+    const filtered: SkillMetadata[] = [];
+    const skipped: Array<{ name: string; missing: string[] }> = [];
+
+    for (const skill of skills) {
+      const required = (skill.requiresTools ?? []).filter(Boolean);
+      if (required.length === 0) {
+        filtered.push(skill);
+        continue;
+      }
+      const missing = required.filter(tool => !available.has(tool));
+      if (missing.length > 0) {
+        skipped.push({ name: skill.name, missing });
+        continue;
+      }
+      filtered.push(skill);
+    }
+
+    return { skills: filtered, skipped };
   }
 
   /**

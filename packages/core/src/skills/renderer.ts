@@ -194,7 +194,11 @@ export function renderSkillsSectionWithActivation(
     return { section: null, activated: [] };
   }
 
-  const { maxSkillTokens = DEFAULT_MAX_SKILL_TOKENS, ...activationOptions } = options;
+  const {
+    maxSkillTokens = DEFAULT_MAX_SKILL_TOKENS,
+    availableToolNames: _availableToolNames,
+    ...activationOptions
+  } = options;
 
   // 1. 激活匹配的 skills
   const activated = activateSkills(skills, taskDescription, activationOptions);

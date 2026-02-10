@@ -9,3 +9,5 @@ export type {
 } from './types';
 export { loadEvalSet, runEvalSet } from './runner';
 export { scoreEvalCase } from './scorer';
+export { RegressionGenerator } from './regression-generator';
+export { FailureCollector } from './failure-collector';

@@ -31,6 +31,11 @@ Recommended tool strategy:
 2. Targeted append operations (only when appropriate)
 3. Full file rewrites (only for new files or when strictly necessary)
 
+## Tool Availability
+
+- Only call tools listed under "Available tools".
+- If constraints mention unavailable tools, ignore those hints and proceed with available tools.
+
 ## Directory Listing Rules
 
 When using \`file_list\`:
@@ -109,6 +114,19 @@ After starting a server, use Chrome DevTools MCP tools to verify the page:
   \`src/main.ts\`, \`src/counter.ts\`, \`src/style.css\`, \`src/typescript.svg\`.
 - Ensure \`index.html\` points to the active entry (\`/src/main.tsx\`) and the root ID matches (\`#root\` vs \`#app\`).
 - Never keep both \`src/main.ts\` and \`src/main.tsx\` in a React project.
+
+## Testing Framework Policy (Frontend)
+- Use **Vitest only** for Vite/React projects.
+- Do NOT add Jest config/scripts/deps alongside Vitest.
+- Tests must import from \`vitest\` explicitly (no globals).
+
+## ESLint Config Hygiene
+- If you create \`.eslintrc.cjs\`, it MUST use CommonJS: \`module.exports = { ... }\`.
+- For ESLint v9+, use \`eslint.config.js\` (flat config) instead of \`.eslintrc.*\`.
+
+## React Import Hygiene
+- If \`tsconfig.json\` uses \`"jsx": "react-jsx"\` or \`"react-jsxdev"\`, do NOT add \`import React\` unless you use the \`React.\` namespace.
+- Prefer type-only imports: \`import type { ReactNode, FC } from "react"\`.
 
 ## LSP & Language Intelligence
 

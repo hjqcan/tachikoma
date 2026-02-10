@@ -50,9 +50,10 @@ const BALANCED_EXECUTION_DISCIPLINE = `## Completion & Verification Discipline
 - If verification is skipped, explain why and provide the exact command to run.`;
 
 const TOOL_SELECTION_GUIDE = `## Tool Selection Guide
+CRITICAL: Use ONLY the exact tool names from "Available tools" below. Do NOT use names like write_file, read_file, run_shell - these are NOT available.
 - Search code: shell_run + rg
-- Read file: file_read
-- Edit file: apply_patch (preferred), file_write (new file)
+- Read file: file_read (NOT read_file)
+- Edit file: apply_patch (preferred), file_write (NOT write_file)
 - Install deps: package_install
 - Run tests: run_tests
 - Type check: type_check

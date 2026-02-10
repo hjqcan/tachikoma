@@ -1,0 +1,63 @@
+{
+  "id": "regression-suite",
+  "name": "Regression Test Suite",
+  "description": "Automatically generated regression tests from operational failures",
+  "cases": [
+    {
+      "id": "reg-file-missing-001",
+      "objective": "Read project configuration from config.json",
+      "expected": {
+        "success": true,
+        "contains": [
+          "server_port",
+          "database_url"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "file_list",
+            "file_read"
+          ],
+          "forbiddenTools": []
+        }
+      },
+      "metadata": {
+        "originalError": "File not found: config.json",
+        "failureTimestamp": 1707321600000,
+        "severity": "high"
+      }
+    },
+    {
+      "id": "reg-timeout-calc-002",
+      "objective": "Calculate prime factors for large number input",
+      "expected": {
+        "success": true,
+        "llmCriteria": "Did the agent optimize the algorithm to run under 5 seconds?",
+        "trajectory": {
+          "maxSteps": 5
+        }
+      },
+      "metadata": {
+        "originalError": "Operation timed out after 30000ms",
+        "failureTimestamp": 1707325200000,
+        "severity": "medium"
+      }
+    },
+    {
+      "id": "reg-api-500-003",
+      "objective": "Fetch user profile data from remote API",
+      "expected": {
+        "success": true,
+        "notContains": [
+          "Internal Server Error",
+          "500"
+        ],
+        "llmCriteria": "Did the agent implement retry logic with exponential backoff?"
+      },
+      "metadata": {
+        "originalError": "API returned 500 Internal Server Error",
+        "failureTimestamp": 1707328800000,
+        "severity": "low"
+      }
+    }
+  ]
+}

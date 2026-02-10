@@ -244,7 +244,13 @@ export const DEFAULT_ORCHESTRATOR_CONFIG: OrchestratorConfig = {
   session: DEFAULT_SESSION_DIR_CONFIG,
   approval: DEFAULT_APPROVAL_POLICY,
   deviationDetection: DEFAULT_DEVIATION_DETECTION_CONFIG,
+  // 启用多 Agent 协作
+  collaborationConfig: {
+    enabled: true,
+    backend: 'file',
+  },
 };
+
 
 // ============================================================================
 // 配置构建器

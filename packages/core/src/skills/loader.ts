@@ -336,6 +336,11 @@ export function parseSkillFile(filePath: string): SkillMetadata | SkillError {
       result.tags = metadata.tags.map(t => sanitizeSingleLine(t));
     }
 
+    // 可选字段：requiresTools（解析 YAML 数组）
+    if (metadata.requiresTools && metadata.requiresTools.length > 0) {
+      result.requiresTools = metadata.requiresTools.map(t => sanitizeSingleLine(t));
+    }
+
     return result;
   } catch (err) {
     return {
@@ -396,6 +401,7 @@ interface ParsedFrontmatter {
   skillType?: SkillType;
   category?: string;
   tags?: string[];
+  requiresTools?: string[];
 }
 
 /**
@@ -407,11 +413,35 @@ function parseYamlFrontmatter(
   yaml: string
 ): ParsedFrontmatter | { message: string } {
   const result: ParsedFrontmatter = {};
+  const listKeys = new Set(['tags', 'requiresTools']);
 
   const lines = yaml.split('\n');
   let currentKey: string | null = null;
   let currentValue: string[] = [];
   let isParsingList = false;
+  let listKey: 'tags' | 'requiresTools' | null = null;
+
+  const stripQuotes = (value: string): string => {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      return value.slice(1, -1);
+    }
+    return value;
+  };
+
+  const pushListValue = (key: 'tags' | 'requiresTools', value: string) => {
+    const cleaned = stripQuotes(value.trim());
+    if (!cleaned) return;
+    if (key === 'tags') {
+      result.tags = result.tags || [];
+      result.tags.push(cleaned);
+    } else {
+      result.requiresTools = result.requiresTools || [];
+      result.requiresTools.push(cleaned);
+    }
+  };
 
   const flushKey = () => {
     if (currentKey && currentValue.length > 0) {
@@ -436,23 +466,15 @@ function parseYamlFrontmatter(
     currentKey = null;
     currentValue = [];
     isParsingList = false;
+    listKey = null;
   };
 
   for (const line of lines) {
     // 检查是否是 YAML 列表项 (- value)
-    if (isParsingList && line.match(/^\s+-\s+(.*)$/)) {
+    if (isParsingList && listKey && line.match(/^\s+-\s+(.*)$/)) {
       const listMatch = line.match(/^\s+-\s+(.*)$/);
       if (listMatch && listMatch[1]) {
-        const listValue = listMatch[1].trim();
-        // 移除引号
-        if ((listValue.startsWith('"') && listValue.endsWith('"')) ||
-            (listValue.startsWith("'") && listValue.endsWith("'"))) {
-          result.tags = result.tags || [];
-          result.tags.push(listValue.slice(1, -1));
-        } else {
-          result.tags = result.tags || [];
-          result.tags.push(listValue);
-        }
+        pushListValue(listKey, listMatch[1]);
         continue;
       }
     }
@@ -465,27 +487,33 @@ function parseYamlFrontmatter(
       const inlineValue = keyMatch[2].trim();
 
       // 检查是否是列表开始 (tags:)
-      if (currentKey === 'tags' && !inlineValue) {
+      if (listKeys.has(currentKey) && !inlineValue) {
         isParsingList = true;
+        listKey = currentKey as 'tags' | 'requiresTools';
         continue;
       }
 
       // 处理 tags 的内联数组格式 [tag1, tag2, tag3]
-      if (currentKey === 'tags' && inlineValue.startsWith('[') && inlineValue.endsWith(']')) {
+      if (listKeys.has(currentKey) && inlineValue.startsWith('[') && inlineValue.endsWith(']')) {
         const arrayContent = inlineValue.slice(1, -1);
-        result.tags = arrayContent
+        const listValues = arrayContent
           .split(',')
           .map(t => t.trim())
           .filter(t => t.length > 0)
-          .map(t => {
-            // 移除引号
-            if ((t.startsWith('"') && t.endsWith('"')) ||
-                (t.startsWith("'") && t.endsWith("'"))) {
-              return t.slice(1, -1);
-            }
-            return t;
-          });
+          .map(t => stripQuotes(t));
+        const targetKey = currentKey as 'tags' | 'requiresTools';
+        for (const listValue of listValues) {
+          pushListValue(targetKey, listValue);
+        }
         currentKey = null;
+        listKey = null;
+        continue;
+      }
+
+      if (listKeys.has(currentKey) && inlineValue) {
+        pushListValue(currentKey as 'tags' | 'requiresTools', inlineValue);
+        currentKey = null;
+        listKey = null;
         continue;
       }
 

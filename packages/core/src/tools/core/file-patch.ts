@@ -14,6 +14,13 @@ import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 import { withFileLock } from './file-lock';
+import {
+  isTestInForbiddenLocation,
+  suggestTestLocation,
+  hasDuplicateTestSuffix,
+  dedupeTestSuffix,
+  validateFileContent,
+} from '../../worker/file-validator';
 
 /**
  * 获取锁持有者ID
@@ -604,7 +611,45 @@ Freeform 语法（非标准 unified diff）：
         };
       }
 
-        await writeFile(absolutePath, content);
+      // Pre-write validation: Block __tests__ folders
+      if (isTestInForbiddenLocation(absolutePath)) {
+        const componentName = absolutePath.match(/[/\\]([^/\\]+)\.[tj]sx?$/)?.[1]?.replace(/\.test$/, '') ?? 'Component';
+        const suggestedPath = suggestTestLocation(absolutePath.replace('/__tests__', '').replace('\\__tests__', ''));
+        return {
+          success: false,
+          error: `❌ VALIDATION ERROR: Tests must NOT be in __tests__ folders.\n\n` +
+            `File: ${absolutePath}\n\n` +
+            `Problem: __tests__ folders break import paths and cause "Failed to resolve import" errors.\n\n` +
+            `Solution: Place the test file NEXT TO the component it tests.\n` +
+            `For example: ${componentName}.test.tsx should be in the same folder as ${componentName}.tsx\n\n` +
+            `Suggested location: ${suggestedPath}`,
+        };
+      }
+
+      // Pre-write validation: Block duplicate test suffixes (e.g., .test.test.tsx)
+      if (hasDuplicateTestSuffix(absolutePath)) {
+        const suggestedPath = dedupeTestSuffix(absolutePath);
+        return {
+          success: false,
+          error: `❌ VALIDATION ERROR: Duplicate test suffix detected.\n\n` +
+            `File: ${absolutePath}\n\n` +
+            `Problem: Test filenames must NOT contain ".test.test" or ".spec.spec".\n\n` +
+            `Solution: Use a single suffix (e.g., Component.test.tsx).\n\n` +
+            `Suggested location: ${suggestedPath}`,
+        };
+      }
+
+      // Pre-write validation: Check content quality (e.g. imports)
+      const violations = validateFileContent(absolutePath, content);
+      if (violations.length > 0) {
+        const errorMsg = violations.map(v => `❌ ${v.message}`).join('\n\n');
+        return {
+          success: false,
+          error: `VALIDATION FAILED:\n\n${errorMsg}\n\nPlease correct the content and try again.`,
+        };
+      }
+
+      await writeFile(absolutePath, content);
 
       const newBytes = Buffer.from(content, 'utf-8').length;
       const newLines = content.split('\n').length;

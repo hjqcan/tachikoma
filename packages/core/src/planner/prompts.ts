@@ -186,6 +186,10 @@ Before writing ANY test file, you MUST:
 - Tests MUST be co-located: \`Header.test.tsx\` next to \`Header.tsx\`. 
 - **NEVER create \`__tests__\` folders** - this ALWAYS breaks import paths and causes "Failed to resolve import" errors.
 
+### Test Framework Policy (Frontend)
+- Use **Vitest only** for Vite/React projects.
+- Do NOT add Jest config/scripts/deps alongside Vitest.
+
 
 ### TypeScript Configuration for Vitest (必须配置)
 \`tsconfig.json\` MUST include vitest types, otherwise ALL test files fail with "Cannot find name 'beforeEach'":
@@ -250,6 +254,11 @@ languageOptions: {
     test: 'readonly'
   }
 }
+\`\`\`
+
+If you use \`.eslintrc.cjs\` (ESLint < 9), it MUST be CommonJS:
+\`\`\`javascript
+module.exports = { /* eslint config */ }
 \`\`\`
 
 **Required Dependencies**: vitest, @testing-library/react, @testing-library/jest-dom, @testing-library/user-event, jsdom.

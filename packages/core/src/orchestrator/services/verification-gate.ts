@@ -346,6 +346,67 @@ export class VerificationGateService {
           summary: `Entrypoint mismatch detected in ${project.path}`,
         };
       }
+      const boundaryErrors = this.checkProjectBoundaryViolations(
+        workDir,
+        detectedProjects,
+        options.changedFiles
+      );
+      if (boundaryErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: boundaryErrors,
+          warnings: [],
+          command: 'project-boundary-check',
+          duration: 0,
+          summary: `Project boundary violation detected in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Project boundary violation detected in ${project.path}`,
+        };
+      }
+      const testFrameworkErrors = this.checkTestFrameworkConsistency(project.path, project.config);
+      if (testFrameworkErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: testFrameworkErrors,
+          warnings: [],
+          command: 'test-framework-check',
+          duration: 0,
+          summary: `Test framework conflict detected in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Test framework conflict detected in ${project.path}`,
+        };
+      }
+      const testingLibraryErrors = this.checkTestingLibrarySetup(project.path);
+      if (testingLibraryErrors.length > 0) {
+        allLayerResults.push({
+          layer: 'build',
+          passed: false,
+          errors: testingLibraryErrors,
+          warnings: [],
+          command: 'testing-library-setup-check',
+          duration: 0,
+          summary: `Testing Library setup missing in ${project.path}`,
+        });
+        return {
+          passed: false,
+          layers: allLayerResults,
+          duration: Date.now() - startTime,
+          projectConfig: project.config,
+          summary: `Testing Library setup missing in ${project.path}`,
+        };
+      }
       const forbiddenTestDirErrors = this.checkForbiddenTestDirs(project.path);
       if (forbiddenTestDirErrors.length > 0) {
         allLayerResults.push({
@@ -439,6 +500,17 @@ export class VerificationGateService {
           console.info(`[VerificationGate] [${project.path}] ${layer.toUpperCase()} PASSED in ${layerResult.duration}ms`);
         } else {
           console.error(`[VerificationGate] [${project.path}] ${layer.toUpperCase()} FAILED: ${layerResult.summary}`);
+          const detail = VerificationGateService.formatLayerErrorsForWorker(
+            {
+              passed: false,
+              layers: [layerResult],
+              duration: layerResult.duration,
+              projectConfig: project.config,
+              summary: layerResult.summary,
+            },
+            layerResult.layer
+          );
+          console.error(detail);
           
           // If a critical layer fails, we might want to stop early
           if (['type', 'build'].includes(layer)) {
@@ -913,6 +985,110 @@ export class VerificationGateService {
     return errors;
   }
 
+  private checkProjectBoundaryViolations(
+    workDir: string,
+    detectedProjects: { path: string; config: ProjectConfig }[],
+    changedFiles?: string[]
+  ): VerificationError[] {
+    const errors: VerificationError[] = [];
+    if (detectedProjects.length === 0) return errors;
+
+    const normalizedWorkDir = resolve(workDir);
+    const rootIsProject = detectedProjects.some((project) => resolve(project.path) === normalizedWorkDir);
+    if (rootIsProject) return errors;
+
+    const sourceRoots = new Set(['src', 'app', 'pages', 'components', 'lib']);
+    const isWithinProject = (filePath: string) =>
+      detectedProjects.some((project) => {
+        const rel = relative(resolve(project.path), filePath);
+        return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+      });
+
+    if (changedFiles && changedFiles.length > 0) {
+      for (const file of changedFiles) {
+        const absoluteFile = isAbsolute(file) ? resolve(file) : resolve(workDir, file);
+        const relToRoot = relative(normalizedWorkDir, absoluteFile);
+        if (relToRoot.startsWith('..') || relToRoot === '') continue;
+        if (isWithinProject(absoluteFile)) continue;
+        const top = relToRoot.split(/[\\/]/)[0];
+        if (!top || !sourceRoots.has(top)) continue;
+        errors.push({
+          file: absoluteFile,
+          message:
+            `PROJECT BOUNDARY: "${top}" was written at workspace root, ` +
+            `but no root project exists. Move this file under a detected project (e.g., ${detectedProjects.map(p => p.path).join(', ')}).`,
+          severity: 'error',
+        });
+      }
+      return errors;
+    }
+
+    // No changedFiles info: detect root-level source trees when workspace is not a project root.
+    for (const dirName of sourceRoots) {
+      const candidate = join(workDir, dirName);
+      if (!existsSync(candidate)) continue;
+      errors.push({
+        file: candidate,
+        message:
+          `PROJECT BOUNDARY: "${dirName}" exists at workspace root, ` +
+          `but no root project was detected. Keep source under detected project roots instead.`,
+        severity: 'error',
+      });
+    }
+
+    return errors;
+  }
+
+  private checkTestFrameworkConsistency(workDir: string, config: ProjectConfig): VerificationError[] {
+    const errors: VerificationError[] = [];
+    const packageJsonPath = join(workDir, 'package.json');
+    if (!existsSync(packageJsonPath)) return errors;
+
+    let pkg: { scripts?: Record<string, string>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> } | null = null;
+    try {
+      pkg = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as {
+        scripts?: Record<string, string>;
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+    } catch {
+      return errors;
+    }
+    if (!pkg) return errors;
+
+    const scripts = pkg.scripts ?? {};
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const scriptText = Object.values(scripts).join(' ').toLowerCase();
+    const hasVitest = scriptText.includes('vitest') || Boolean(deps.vitest);
+    const hasJest = scriptText.includes('jest') || Boolean(deps.jest);
+    const hasJestConfig =
+      existsSync(join(workDir, 'jest.config.js')) ||
+      existsSync(join(workDir, 'jest.config.cjs')) ||
+      existsSync(join(workDir, 'jest.config.mjs')) ||
+      existsSync(join(workDir, 'jest.config.ts'));
+
+    if (hasVitest && hasJest) {
+      errors.push({
+        file: packageJsonPath,
+        message:
+          'TEST FRAMEWORK CONFLICT: Both Vitest and Jest are configured. Use a single framework (Vitest only) and remove Jest scripts/deps/config.',
+        severity: 'error',
+      });
+      return errors;
+    }
+
+    if ((config.testFramework === 'vitest' || hasVitest) && hasJestConfig) {
+      errors.push({
+        file: packageJsonPath,
+        message:
+          'TEST FRAMEWORK CONFLICT: Jest config detected in a Vitest project. Remove jest.config.* or switch entirely to Jest.',
+        severity: 'error',
+      });
+    }
+
+    return errors;
+  }
+
   /**
    * P10: Fail if forbidden __tests__ directories exist (even empty)
    */
@@ -996,6 +1172,133 @@ export class VerificationGateService {
     }
 
     return errors;
+  }
+
+  /**
+   * P12: Ensure Testing Library setup when toBeInTheDocument is used.
+   */
+  private checkTestingLibrarySetup(workDir: string): VerificationError[] {
+    const errors: VerificationError[] = [];
+    const testFiles = this.findTestFiles(workDir, 4, 400);
+    if (testFiles.length === 0) return errors;
+
+    let usesDomMatchers = false;
+    for (const file of testFiles) {
+      try {
+        const content = readFileSync(file, 'utf-8');
+        if (content.includes('toBeInTheDocument')) {
+          usesDomMatchers = true;
+          break;
+        }
+      } catch {
+        // ignore read errors
+      }
+    }
+    if (!usesDomMatchers) return errors;
+
+    const tsconfigPath = join(workDir, 'tsconfig.json');
+    const tsconfigTypes = this.readTsconfigTypes(tsconfigPath);
+    if (!tsconfigTypes.includes('@testing-library/jest-dom')) {
+      errors.push({
+        file: tsconfigPath,
+        message:
+          'TEST SETUP: toBeInTheDocument is used but tsconfig.json is missing "@testing-library/jest-dom" in compilerOptions.types.',
+        severity: 'error',
+      });
+    }
+
+    const setupFile = this.findTestSetupFile(workDir);
+    if (!setupFile) {
+      errors.push({
+        file: join(workDir, 'src'),
+        message:
+          'TEST SETUP: toBeInTheDocument is used but no test setup file was found (expected src/test-setup.ts). Add it and import "@testing-library/jest-dom".',
+        severity: 'error',
+      });
+      return errors;
+    }
+
+    try {
+      const setupContent = readFileSync(setupFile, 'utf-8');
+      if (!setupContent.includes('@testing-library/jest-dom')) {
+        errors.push({
+          file: setupFile,
+          message:
+            'TEST SETUP: Test setup file must import "@testing-library/jest-dom" to register DOM matchers.',
+          severity: 'error',
+        });
+      }
+    } catch {
+      errors.push({
+        file: setupFile,
+        message:
+          'TEST SETUP: Unable to read test setup file to verify jest-dom import.',
+        severity: 'error',
+      });
+    }
+
+    return errors;
+  }
+
+  private findTestFiles(workDir: string, maxDepth: number, maxFiles: number): string[] {
+    const results: string[] = [];
+    const baseDirs = ['src', 'app', 'pages', 'components', 'lib'];
+
+    const scan = (dir: string, depth: number): void => {
+      if (depth <= 0 || results.length >= maxFiles) return;
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (results.length >= maxFiles) break;
+          if (entry.name.startsWith('.')) continue;
+          const fullPath = join(dir, entry.name);
+          if (entry.isDirectory()) {
+            if (entry.name === 'node_modules') continue;
+            scan(fullPath, depth - 1);
+          } else if (entry.isFile()) {
+            if (/\.test\.(ts|tsx|js|jsx)$/.test(entry.name)) {
+              results.push(fullPath);
+            }
+          }
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    for (const dirName of baseDirs) {
+      const dir = join(workDir, dirName);
+      if (!existsSync(dir)) continue;
+      scan(dir, maxDepth);
+    }
+
+    return results;
+  }
+
+  private readTsconfigTypes(tsconfigPath: string): string[] {
+    if (!existsSync(tsconfigPath)) return [];
+    try {
+      const raw = readFileSync(tsconfigPath, 'utf-8');
+      const sanitized = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      const parsed = JSON.parse(sanitized) as { compilerOptions?: { types?: string[] } };
+      const types = parsed.compilerOptions?.types;
+      return Array.isArray(types) ? types : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private findTestSetupFile(workDir: string): string | null {
+    const candidates = [
+      join(workDir, 'src', 'test-setup.ts'),
+      join(workDir, 'src', 'test-setup.tsx'),
+      join(workDir, 'src', 'test', 'setup.ts'),
+      join(workDir, 'src', 'test', 'setup.tsx'),
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
   }
 
   /**

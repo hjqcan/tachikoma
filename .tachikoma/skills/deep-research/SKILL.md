@@ -3,6 +3,8 @@ name: deep-research
 description: |
   当任务需要在公开网络上进行长时、多轮资料检索、阅读、对比与综合，并产出带引用（citations）的报告时使用本技能。
   优先调用 deep_research 工具，而不是手动多次 web_search / browser_*。
+requiresTools:
+  - deep_research
 license: MIT
 ---
 

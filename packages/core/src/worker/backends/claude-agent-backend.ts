@@ -614,6 +614,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         { 
           autoActivate: true,
           includeProjectContext: true,
+          availableToolNames: tools.map(tool => tool.name),
           ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }),
         }
       );
