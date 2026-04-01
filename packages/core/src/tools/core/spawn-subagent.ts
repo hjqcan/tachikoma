@@ -16,6 +16,7 @@ import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory, ToolPermission } from '../types';
 import { buildTool } from '../build-tool';
 import { getSpawnSubagentPrompt } from './prompts/spawn-subagent-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 /**
  * 子任务结果
@@ -142,6 +143,7 @@ function validateInput(input: unknown): {
  */
 export const spawnSubagentTool = buildTool({
   name: 'spawn_subagent',
+  aliases: getDefaultModelFacingAliases('spawn_subagent'),
   title: 'Spawn Sub-Agent',
   description: `创建一个子任务/子Agent来处理特定目标。
 

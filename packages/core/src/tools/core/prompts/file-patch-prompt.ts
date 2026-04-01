@@ -6,12 +6,18 @@
  * @module tools/core/prompts/file-patch-prompt
  */
 
+import {
+  FILE_EDIT_TOOL_NAME,
+  FILE_READ_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+} from '../../model-facing-names';
+
 export function getFilePatchPrompt(): string {
-  return `Apply incremental patches to an existing file. This is the PREFERRED tool for editing files — use it instead of file_write when modifying existing content.
+  return `Apply incremental patches to an existing file. This is the PREFERRED tool for editing files — use it instead of ${FILE_WRITE_TOOL_NAME} when modifying existing content.
 
 ## Important Rules
 
-1. You MUST read the file (with file_read) BEFORE using this tool. Never edit a file you haven't read. The tool may reject your request if the file hasn't been read first.
+1. You MUST read the file (with ${FILE_READ_TOOL_NAME}) BEFORE using this tool. Never edit a file you haven't read. The tool may reject your request if the file hasn't been read first.
 2. Be precise with search strings in patches — they must match the file content EXACTLY, including whitespace and indentation.
 3. Prefer small, targeted patches over rewriting large sections of code.
 4. When making multiple changes to the same file, combine them into a single apply_patch call.
@@ -57,7 +63,7 @@ Rules:
 
 ## Common Mistakes
 
-- Using apply_patch on a file you haven't read → read it first with file_read
+- Using ${FILE_EDIT_TOOL_NAME} on a file you haven't read → read it first with ${FILE_READ_TOOL_NAME}
 - Incorrect whitespace in search strings → copy exact text from the file
 - Ambiguous context line → use a more specific, unique line
 - Editing the wrong occurrence → specify the occurrence number`;

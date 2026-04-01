@@ -6,6 +6,7 @@
 
 import type { Tool } from '../types';
 import { getToolPromptText } from './build-tool';
+import { getModelFacingToolName, resolveInternalToolName } from './model-facing-names';
 
 import {
   fileReadTool,
@@ -194,14 +195,17 @@ export function getToolsByCapability(capabilities: {
  * 按名称查找工具
  */
 export function getToolByName(name: string): Tool | undefined {
-  return coreTools.find((tool) => tool.name === name);
+  const resolved = resolveInternalToolName(name);
+  return coreTools.find(
+    (tool) => tool.name === resolved || getModelFacingToolName(tool) === name
+  );
 }
 
 /**
  * 获取所有工具名称
  */
 export function getToolNames(): string[] {
-  return coreTools.map((tool) => tool.name);
+  return coreTools.map((tool) => getModelFacingToolName(tool));
 }
 
 /**
@@ -213,7 +217,7 @@ export function getToolDefinitions(): {
   inputSchema: unknown;
 }[] {
   return coreTools.map((tool) => ({
-    name: tool.name,
+    name: getModelFacingToolName(tool),
     description: getToolPromptText(tool),
     inputSchema: tool.inputSchema,
   }));

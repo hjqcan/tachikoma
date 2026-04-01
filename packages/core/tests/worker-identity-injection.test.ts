@@ -50,7 +50,7 @@ describe('18.6 identityContext injection in SDK backends', () => {
 
     // 调用私有方法（仅用于测试注入逻辑）
     const systemPrompt = (await (backend as any).buildSystemPrompt('memory', null)) as string;
-    expect(systemPrompt).toContain('## Agent Identity');
+    expect(systemPrompt).toContain('# Agent Identity');
     expect(systemPrompt).toContain('Use dark mode');
   });
 
@@ -86,7 +86,7 @@ describe('18.6 identityContext injection in SDK backends', () => {
 
     const systemPrompt = sdkOptions.systemPrompt as string | undefined;
     expect(typeof systemPrompt).toBe('string');
-    expect(systemPrompt!).toContain('## Agent Identity');
+    expect(systemPrompt!).toContain('# Agent Identity');
     expect(systemPrompt!).toContain('Use dark mode');
   });
 

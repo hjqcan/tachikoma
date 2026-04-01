@@ -11,6 +11,7 @@ import { ToolExecutor } from './tool-executor';
 import type { PermissionValidationResult } from './permission-validator';
 import { ToolNotFoundError } from './errors';
 import { getToolPromptText } from './build-tool';
+import { getModelFacingToolName } from './model-facing-names';
 
 /**
  * 工具定义（用于渐进披露）
@@ -204,7 +205,7 @@ export class ToolRegistry {
     // 构建定义
     return tools.map((tool) => {
       const definition: ToolDefinition = {
-        name: tool.name,
+        name: getModelFacingToolName(tool),
         description: getToolPromptText(tool),
       };
 

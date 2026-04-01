@@ -15,6 +15,7 @@ import { mergeEnv } from '../env-utils';
 import { shellSessionManager } from './shell-session-manager';
 import { buildTool } from '../build-tool';
 import { getShellRunPrompt } from './prompts/shell-run-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 // =============================================================================
 // Timeout Configuration (inspired by OpenCode & Codex best practices)
@@ -609,6 +610,7 @@ async function executeCommand(
  */
 export const shellRunTool = buildTool({
   name: 'shell_run',
+  aliases: getDefaultModelFacingAliases('shell_run'),
   title: 'Run Shell Command',
   description: `Execute shell commands in the working directory.
 

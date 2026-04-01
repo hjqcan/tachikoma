@@ -1,6 +1,7 @@
 import type { Tool } from '../../types';
 import type { WorkerTask } from '../types';
 import { getToolPromptText } from '../../tools/build-tool';
+import { getModelFacingToolName } from '../../tools/model-facing-names';
 
 type ToolDescriptionMode = 'names-only' | 'full-schema';
 
@@ -25,13 +26,14 @@ export function formatToolDescriptions(
         description.length > maxDescriptionLength
           ? `${description.slice(0, maxDescriptionLength)}...`
           : description;
+      const toolName = getModelFacingToolName(tool);
 
       if (mode === 'names-only') {
-        return shortDesc ? `- ${tool.name}: ${shortDesc}` : `- ${tool.name}`;
+        return shortDesc ? `- ${toolName}: ${shortDesc}` : `- ${toolName}`;
       }
 
       const schemaStr = JSON.stringify(tool.inputSchema, null, 2);
-      return `- ${tool.name}: ${shortDesc}
+      return `- ${toolName}: ${shortDesc}
   Input schema: ${schemaStr}`;
     })
     .join('\n\n');

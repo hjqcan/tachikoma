@@ -24,6 +24,7 @@ import {
 import { LSP } from '../../lsp';
 import { buildTool } from '../build-tool';
 import { getFileWritePrompt } from './prompts/file-write-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 
 // Singleton BuildGateService instance
@@ -101,6 +102,7 @@ interface FileWriteOutputExtended extends FileWriteOutput {
  */
 export const fileWriteTool = buildTool({
   name: 'file_write',
+  aliases: getDefaultModelFacingAliases('file_write'),
   title: 'Write File',
   description: `写入内容到指定文件。
 - 如果文件不存在则创建

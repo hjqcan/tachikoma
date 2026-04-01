@@ -110,6 +110,7 @@ import { ToolCallTracker } from '../tool-call-tracker';
 import { FailureMemory } from '../failure-memory';
 import { findToolByName } from '../../tools/build-tool';
 import { ReadFileStateCache } from '../../tools/read-file-state';
+import { resolveInternalToolName } from '../../tools/model-facing-names';
 
 // ============================================================================
 // 常量
@@ -734,11 +735,20 @@ export class GenericAgentBackend extends BaseWorkerBackend {
           : [];
         const hasNativeToolCalls = nativeToolCalls.length > 0;
         const hasToolCallMarker = !hasNativeToolCalls && containsToolCall(response.content);
-        const toolCalls = hasNativeToolCalls
+        const toolCalls = (hasNativeToolCalls
           ? nativeToolCalls
           : hasToolCallMarker
             ? parseToolCalls(response.content)
-            : [];
+            : []).map((call) => {
+              const resolved = findToolByName(tools, resolveInternalToolName(call.name));
+              if (!resolved) {
+                return call;
+              }
+              return {
+                ...call,
+                name: resolved.name,
+              };
+            });
         const toolCallsParseFailed = !hasNativeToolCalls && hasToolCallMarker && toolCalls.length === 0;
         let toolCallsSucceeded = 0;
         

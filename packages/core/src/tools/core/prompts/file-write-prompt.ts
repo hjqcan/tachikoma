@@ -6,19 +6,25 @@
  * @module tools/core/prompts/file-write-prompt
  */
 
+import {
+  FILE_EDIT_TOOL_NAME,
+  FILE_READ_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+} from '../../model-facing-names';
+
 export function getFileWritePrompt(): string {
   return `Write content to a file on the local filesystem. Creates the file if it doesn't exist, including any parent directories.
 
 ## Important Rules
 
-1. For EDITING existing files, prefer \`apply_patch\` over \`file_write\`. apply_patch makes targeted changes while file_write replaces the entire file.
-2. Use \`file_write\` for:
+1. For EDITING existing files, prefer \`${FILE_EDIT_TOOL_NAME}\` over \`${FILE_WRITE_TOOL_NAME}\`. ${FILE_EDIT_TOOL_NAME} makes targeted changes while ${FILE_WRITE_TOOL_NAME} replaces the entire file.
+2. Use \`${FILE_WRITE_TOOL_NAME}\` for:
    - Creating new files
    - Small configuration files where full replacement is simpler
    - Generated content (e.g., build artifacts)
    - Append mode (\`append: true\`) for logs or growing files
-3. NEVER use file_write to modify a file you haven't read first — you risk losing content you don't know about.
-4. Use \`file_write\` instead of \`cat\` with heredoc or \`echo\` redirection via shell_run.
+3. NEVER use ${FILE_WRITE_TOOL_NAME} to modify a file you haven't read first — you risk losing content you don't know about.
+4. Use \`${FILE_WRITE_TOOL_NAME}\` instead of \`cat\` with heredoc or \`echo\` redirection via Bash.
 
 ## Parameters
 
@@ -45,5 +51,6 @@ After successful writes, the tool automatically checks for errors via the LSP:
 
 - Always include complete, working code — never use placeholders or ellipses
 - For test files, name them \`Component.test.tsx\`, NOT in \`__tests__/\` directories
-- If you're replacing a large file, consider whether apply_patch would be more appropriate`;
+- If you're replacing a large file, consider whether ${FILE_EDIT_TOOL_NAME} would be more appropriate.
+- If this is an existing file, you MUST use ${FILE_READ_TOOL_NAME} first.`;
 }

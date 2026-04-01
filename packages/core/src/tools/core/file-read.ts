@@ -18,6 +18,7 @@ import {
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
 import { buildTool } from '../build-tool';
 import { getFileReadPrompt } from './prompts/file-read-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 // =============================================================================
 // Constants (inspired by Codex)
@@ -358,6 +359,7 @@ function formatOutputLines(records: LineRecord[], showLineNumbers = true): strin
  */
 export const fileReadTool = buildTool({
   name: 'file_read',
+  aliases: getDefaultModelFacingAliases('file_read'),
   title: 'Read File',
   description: `读取指定文件的内容。路径相对于工作目录。
 

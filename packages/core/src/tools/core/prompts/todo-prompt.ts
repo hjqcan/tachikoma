@@ -6,8 +6,10 @@
  * @module tools/core/prompts/todo-prompt
  */
 
+import { TODO_READ_TOOL_NAME, TODO_WRITE_TOOL_NAME } from '../../model-facing-names';
+
 export function getTodoWritePrompt(): string {
-  return `Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
+  return `Use ${TODO_WRITE_TOOL_NAME} to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 It also helps the user understand the progress of the task and overall progress of their requests.
 
 ## When to Use This Tool
@@ -46,7 +48,7 @@ When in doubt, use this tool. Being proactive with task management demonstrates 
 }
 
 export function getTodoReadPrompt(): string {
-  return `Read the current todo list for the active session.
+  return `${TODO_READ_TOOL_NAME} reads the current todo list for the active session.
 
 Use this when you need to inspect existing tracked work before updating it, resuming after interruption, or reconciling progress with new instructions.`;
 }

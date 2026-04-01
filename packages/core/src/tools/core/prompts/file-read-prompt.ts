@@ -6,12 +6,14 @@
  * @module tools/core/prompts/file-read-prompt
  */
 
+import { BASH_TOOL_NAME, FILE_READ_TOOL_NAME, GREP_TOOL_NAME } from '../../model-facing-names';
+
 export function getFileReadPrompt(): string {
   return `Read the contents of a file from the local filesystem.
 
 ## Important Rules
 
-1. Always read a file BEFORE editing it with apply_patch or file_write. This is critical — never edit a file you haven't read first, as you will not have accurate content to base your edits on.
+1. Always read a file BEFORE editing it with Edit or Write. This is critical — never edit a file you haven't read first, as you will not have accurate content to base your edits on.
 2. For large files, use \`mode: "slice"\` with \`offset\` and \`limit\` to read specific line ranges instead of the entire file.
 3. The first time you read a new file, prefer reading the whole file to understand its full context.
 4. Binary files (images, PDFs, etc.) are returned as base64-encoded content.
@@ -37,7 +39,7 @@ Example: Read function at line 42: \`{ "path": "app.ts", "mode": "indentation", 
 
 ## Tips
 
-- Use \`file_read\` instead of \`cat\`, \`head\`, \`tail\`, or \`sed\` via shell_run.
-- If a file is not found, check the exact path using shell_run with \`ls\` or \`find\`.
-- For searching within files, prefer \`code_search\` (grep/ripgrep) over reading and scanning manually.`;
+- Use \`${FILE_READ_TOOL_NAME}\` instead of \`cat\`, \`head\`, \`tail\`, or \`sed\` via ${BASH_TOOL_NAME}.
+- If a file is not found, check the exact path using ${BASH_TOOL_NAME} with \`ls\` or \`find\`.
+- For searching within files, prefer \`${GREP_TOOL_NAME}\` over reading and scanning manually.`;
 }

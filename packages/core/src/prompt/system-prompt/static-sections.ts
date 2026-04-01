@@ -17,6 +17,17 @@
  * @module prompt/system-prompt/static-sections
  */
 
+import {
+  AGENT_TOOL_NAME,
+  BASH_TOOL_NAME,
+  FILE_EDIT_TOOL_NAME,
+  FILE_READ_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+  GLOB_TOOL_NAME,
+  GREP_TOOL_NAME,
+  TODO_WRITE_TOOL_NAME,
+} from '../../tools/model-facing-names';
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -115,18 +126,20 @@ In short: only take risky actions carefully, and when in doubt, ask before actin
 
 export function getUsingToolsSection(_enabledToolNames?: Set<string>): string {
   const providedToolSubitems = [
-    `To read files use file_read instead of cat, head, tail, or sed`,
-    `To edit files use apply_patch instead of sed or awk`,
-    `To create files use file_write instead of cat with heredoc or echo redirection`,
-    `To search code use code_search instead of grep or rg`,
-    `Reserve using shell_run exclusively for system commands and terminal operations that require shell execution. Default to dedicated tools first.`,
+    `To read files use ${FILE_READ_TOOL_NAME} instead of cat, head, tail, or sed`,
+    `To edit files use ${FILE_EDIT_TOOL_NAME} instead of sed or awk`,
+    `To create files use ${FILE_WRITE_TOOL_NAME} instead of cat with heredoc or echo redirection`,
+    `To search code use ${GREP_TOOL_NAME} instead of grep or rg`,
+    `To search for files use ${GLOB_TOOL_NAME} instead of find or ls`,
+    `Reserve using ${BASH_TOOL_NAME} exclusively for system commands and terminal operations that require shell execution. Default to dedicated tools first.`,
   ];
 
   const items: Array<string | string[]> = [
-    `Do NOT use shell_run to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work. This is CRITICAL:`,
+    `Do NOT use ${BASH_TOOL_NAME} to run commands when a relevant dedicated tool is provided. Using dedicated tools allows the user to better understand and review your work. This is CRITICAL:`,
     providedToolSubitems,
-    `Break down and manage your work with the todowrite tool. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with it. Do not batch up multiple tasks before marking them as completed.`,
+    `Break down and manage your work with ${TODO_WRITE_TOOL_NAME}. These tools are helpful for planning your work and helping the user track your progress. Mark each task as completed as soon as you are done with it. Do not batch up multiple tasks before marking them as completed.`,
     `You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls, do NOT call these in parallel — call them sequentially instead.`,
+    `Use ${AGENT_TOOL_NAME} only when a task genuinely benefits from delegation or isolated context.`,
   ];
 
   return [`# Using your tools`, ...prependBullets(items)].join('\n');

@@ -24,6 +24,7 @@ import {
 } from '../../worker/file-validator';
 import { buildTool } from '../build-tool';
 import { getFilePatchPrompt } from './prompts/file-patch-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 /**
  * 获取锁持有者ID
@@ -435,6 +436,7 @@ function applyFreeformPatch(
  */
 export const applyPatchTool = buildTool({
   name: 'apply_patch',
+  aliases: getDefaultModelFacingAliases('apply_patch'),
   title: 'Apply Patch',
   description: `对文件应用增量补丁。支持两种模式：
 

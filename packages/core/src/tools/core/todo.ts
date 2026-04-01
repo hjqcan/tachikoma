@@ -20,6 +20,7 @@ import { ToolCategory, ToolLayer, ToolPermission } from '../types';
 import { ensureWorkDir } from './utils';
 import { buildTool } from '../build-tool';
 import { getTodoReadPrompt, getTodoWritePrompt } from './prompts/todo-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 interface TodoStateFile {
   revision: number;
@@ -218,6 +219,7 @@ function validateTodoList(nextTodos: TodoItem[], prevTodos: TodoItem[]): TodoVal
 
 export const todoWriteTool = buildTool({
   name: 'todowrite',
+  aliases: getDefaultModelFacingAliases('todowrite'),
   title: 'Todo Write',
   description: `Create or update a structured todo list for the current session.
 - Use for multi-step tasks
@@ -372,6 +374,7 @@ export const todoWriteTool = buildTool({
 
 export const todoReadTool = buildTool({
   name: 'todoread',
+  aliases: getDefaultModelFacingAliases('todoread'),
   title: 'Todo Read',
   description: 'Read the current todo list for the session.',
   searchHint: 'read checklist progress todos session state',

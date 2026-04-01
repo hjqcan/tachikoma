@@ -77,6 +77,8 @@ const CRITICAL_ERROR_PATTERNS = [
   /error installing/i,
 ];
 
+const MAX_FINAL_VERIFICATION_FIX_ATTEMPTS = 3;
+
 interface CriticalToolFailure {
   toolName: string;
   error: string;
@@ -243,36 +245,21 @@ export class ExecutionLoop {
     const aggregated = this.aggregationEngine.aggregate(subtaskMap, completed, failed);
     this.emit('aggregate:complete', taskId, { result: aggregated });
     
-    // Run Verification Gate check after plan completion - HARD GATE
-    let verificationResult: VerificationResult | undefined;
-    if (this.verificationGateService) {
-      const changedFiles = this.collectModifiedFiles(completed.values());
-      verificationResult = await this.verificationGateService.verify(workDir, {
-        preset: 'full',
-        ...(changedFiles.length > 0 ? { changedFiles } : {}),
-      });
-      if (!verificationResult.passed) {
-        const errorSummary = VerificationGateService.formatErrorsForWorker(verificationResult);
-        console.error(`[VerificationGate] FINAL CHECK FAILED with errors`);
-        console.error(errorSummary);
-        
-        // Update TaskMaster statuses to reflect failure (undo 'done' status)
-        for (const [subtaskId, subtask] of subtaskMap) {
-          if (subtask.status === 'success') {
-            subtask.status = 'failure';
-            this.state.markSubtaskFailed(subtaskId, `Final Verification Gate failed`);
-            await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
-          }
-        }
-        
-        // Trigger replan so the planner can repair the failed verification
-        throw new ReplanNeededError(
-          taskId,
-          `Final Verification Gate FAILED: ${verificationResult.summary}`,
-          errorSummary
-        );
-      }
-    }
+    const retryPolicy = resolveRetryPolicy(
+      activePlan.delegation.retryPolicy,
+      this.orchestratorConfig.delegation.retryPolicy,
+      this.orchestratorConfig.delegation.retryPolicyMode ?? 'config'
+    );
+
+    const verificationResult = await this.runFinalVerificationWithFixLoop(
+      taskId,
+      workDir,
+      subtaskMap,
+      completed,
+      activePlan.delegation.timeout,
+      retryPolicy,
+      signal
+    );
     
     return { aggregated, ...(verificationResult && { verificationResult }) };
   }
@@ -759,6 +746,104 @@ export class ExecutionLoop {
         signal.addEventListener('abort', onAbort, { once: true });
       }
     });
+  }
+
+  private async runFinalVerificationWithFixLoop(
+    taskId: string,
+    workDir: string,
+    subtaskMap: Map<string, SubTask>,
+    completed: Map<string, TaskResult>,
+    timeout: number,
+    retryPolicy: RetryPolicy,
+    signal: AbortSignal
+  ): Promise<VerificationResult | undefined> {
+    if (!this.verificationGateService) {
+      return undefined;
+    }
+
+    const changedFiles = this.collectModifiedFiles(completed.values());
+    let fixAttempts = 0;
+    let autoFixDisabled = false;
+
+    while (fixAttempts <= MAX_FINAL_VERIFICATION_FIX_ATTEMPTS) {
+      const verificationResult = await this.verificationGateService.verify(workDir, {
+        preset: 'full',
+        ...(changedFiles.length > 0 ? { changedFiles } : {}),
+      });
+
+      if (verificationResult.passed) {
+        return verificationResult;
+      }
+
+      if (fixAttempts >= MAX_FINAL_VERIFICATION_FIX_ATTEMPTS) {
+        const errorSummary = VerificationGateService.formatErrorsForWorker(verificationResult);
+        console.error(`[VerificationGate] FINAL CHECK FAILED with errors`);
+        console.error(errorSummary);
+
+        for (const [subtaskId, subtask] of subtaskMap) {
+          if (subtask.status === 'success') {
+            subtask.status = 'failure';
+            this.state.markSubtaskFailed(subtaskId, 'Final Verification Gate failed');
+            await this.taskMasterAdapter.restoreStatus(subtaskId).catch(() => undefined);
+          }
+        }
+
+        throw new ReplanNeededError(
+          taskId,
+          `Final Verification Gate FAILED after ${MAX_FINAL_VERIFICATION_FIX_ATTEMPTS} fix attempts. ${verificationResult.summary}`,
+          errorSummary
+        );
+      }
+
+      fixAttempts++;
+      const failedLayer = verificationResult.layers.find((layer) => !layer.passed);
+      const errorSummary = VerificationGateService.formatErrorsForWorker(verificationResult);
+      const fixSummary = VerificationGateService.formatLayerErrorsForWorker(
+        verificationResult,
+        failedLayer?.layer
+      );
+      const verifyCommand = this.mapToShellCommand(failedLayer?.command);
+
+      console.warn(
+        `[VerificationGate] Final verification failed ${failedLayer?.layer ?? 'check'} ` +
+          `(fix attempt ${fixAttempts}/${MAX_FINAL_VERIFICATION_FIX_ATTEMPTS}). Errors:\n${errorSummary}`
+      );
+
+      if (!autoFixDisabled) {
+        const autoFixResult = await this.tryAutoFix(workDir, verificationResult);
+        if (autoFixResult.fixed > 0) {
+          console.info(
+            `[VerificationGate] Auto-fixed ${autoFixResult.fixed} issues during final verification`
+          );
+          continue;
+        }
+        if (autoFixResult.errors.length > 0) {
+          console.warn(`[AutoFix] ${autoFixResult.errors.join('; ')}`);
+        }
+        if (autoFixResult.skip) {
+          autoFixDisabled = true;
+          console.warn('[AutoFix] Disabled for final verification');
+        }
+      }
+
+      try {
+        await this.runVerificationFixTask(
+          taskId,
+          fixSummary,
+          verifyCommand,
+          failedLayer?.layer,
+          timeout,
+          retryPolicy,
+          signal
+        );
+      } catch (error) {
+        console.warn(
+          `[VerificationGate] Final verification fix task failed: ${(error as Error).message}`
+        );
+      }
+    }
+
+    return undefined;
   }
 
   private extractReplayGuardData(

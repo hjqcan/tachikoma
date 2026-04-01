@@ -8,13 +8,21 @@
  * @module tools/core/prompts/shell-run-prompt
  */
 
+import {
+  BASH_TOOL_NAME,
+  FILE_EDIT_TOOL_NAME,
+  FILE_READ_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+  GREP_TOOL_NAME,
+} from '../../model-facing-names';
+
 export function getShellRunPrompt(): string {
   return `Execute a shell command in the user's environment.
 
 ## Important Rules
 
 1. You MUST use this tool to run shell commands. NEVER output shell commands as text for the user to manually execute — the user expects you to run them.
-2. Prefer dedicated tools (file_read, apply_patch, file_write, code_search) over shell commands when available. Only use shell_run when no dedicated tool exists.
+2. Prefer dedicated tools (${FILE_READ_TOOL_NAME}, ${FILE_EDIT_TOOL_NAME}, ${FILE_WRITE_TOOL_NAME}, ${GREP_TOOL_NAME}) over shell commands when available. Only use ${BASH_TOOL_NAME} when no dedicated tool exists.
 3. Do NOT run commands that produce unbounded output. Always limit output (e.g. use \`head\`, \`tail\`, or redirect to a file).
 4. Do NOT start interactive programs (e.g. \`vim\`, \`python\` REPL without \`-c\`). They will hang.
 5. For long-running processes (dev servers, watchers), use \`background: true\`.

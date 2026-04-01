@@ -13,6 +13,7 @@ import { validatePath, ensureWorkDir } from './utils';
 import { FILE_LIST_DEFAULT_EXCLUDES, FILE_LIST_MAX_RESULTS } from '../constants';
 import { buildTool } from '../build-tool';
 import { getFileListPrompt } from './prompts/file-list-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 /** 扩展的 FileListInput，包含新参数 */
 interface ExtendedFileListInput extends FileListInput {
@@ -168,6 +169,7 @@ async function readDirRecursive(
  */
 export const fileListTool = buildTool({
   name: 'file_list',
+  aliases: getDefaultModelFacingAliases('file_list'),
   title: 'List Files',
   description: `列出指定目录的内容。
 - 支持递归列出子目录

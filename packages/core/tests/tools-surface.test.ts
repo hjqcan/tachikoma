@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ExecutionContext } from '../src/types';
-import { coreTools } from '../src/tools';
+import { coreTools, getToolByName, getToolNames } from '../src/tools';
 import { applyPatchTool } from '../src/tools/core/file-patch';
 import { fileWriteTool } from '../src/tools/core/file-write';
 import { ReadFileStateCache } from '../src/tools/read-file-state';
@@ -33,6 +33,24 @@ describe('tool surface', () => {
       'todowrite',
       'todoread',
     ]);
+  });
+
+  it('exposes Claude Code-style canonical names to the model surface', () => {
+    expect(getToolNames()).toEqual([
+      'Read',
+      'Write',
+      'Glob',
+      'Bash',
+      'Grep',
+      'Edit',
+      'Agent',
+      'TodoWrite',
+      'TodoRead',
+    ]);
+    expect(getToolByName('Bash')?.name).toBe('shell_run');
+    expect(getToolByName('bash')?.name).toBe('shell_run');
+    expect(getToolByName('Read')?.name).toBe('file_read');
+    expect(getToolByName('read')?.name).toBe('file_read');
   });
 
   it('requires reading an existing file before file_write overwrites it', async () => {

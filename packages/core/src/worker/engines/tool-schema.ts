@@ -9,6 +9,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import type { Tool } from '../../types';
 import { getToolPromptText } from '../../tools/build-tool';
+import { getModelFacingToolName } from '../../tools/model-facing-names';
 
 // ============================================================================
 // 类型定义
@@ -182,7 +183,7 @@ export function convertToolsToAITools(
   const aiTools: Record<string, AITool> = {};
   
   for (const t of tools) {
-    aiTools[t.name] = convertToolToAITool(t);
+    aiTools[getModelFacingToolName(t)] = convertToolToAITool(t);
   }
   
   return aiTools;

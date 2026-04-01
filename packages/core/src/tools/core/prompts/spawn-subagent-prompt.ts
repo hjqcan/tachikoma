@@ -6,8 +6,10 @@
  * @module tools/core/prompts/spawn-subagent-prompt
  */
 
+import { AGENT_TOOL_NAME } from '../../model-facing-names';
+
 export function getSpawnSubagentPrompt(): string {
-  return `Launch a new subagent to handle complex, multi-step tasks autonomously.
+  return `Launch a new subagent with ${AGENT_TOOL_NAME} to handle complex, multi-step tasks autonomously.
 
 Usage notes:
 - Use a subagent when the work is open-ended, multi-step, or benefits from isolated context

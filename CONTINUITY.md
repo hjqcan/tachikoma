@@ -11,12 +11,13 @@ Key decisions:
 - 连续性账本以 `/Users/hjqcan/Documents/tachikoma/http:/CONTINUITY.md` 为准；根目录 `CONTINUITY.md` 保持镜像。
 - 默认 worker 工具面固定为最小子集：`file_read`、`file_write`、`file_list`、`shell_run`、`code_search`、`apply_patch`、`spawn_subagent`、`todowrite`、`todoread`。
 - verification/build/dev-server/package-install/expand-commit 线优先做“service 直调 / internal capability”或直接删除工具包装。
-- 当前正在回答“升级计划是否已完成”的状态确认问题。
+- 当前继续做模型侧工具名对齐，优先按 `/Users/hjqcan/Documents/tachikoma/third-party/claude-code-main` 的 canonical names 暴露给模型，而不是继续使用内部 snake_case 名称。
+- 模型侧 canonical names 最终定为：`Read`、`Write`、`Glob`、`Bash`、`Grep`、`Edit`、`Agent`、`TodoWrite`、`TodoRead`；内部工具名继续保留给执行层和编排层。
 
 State:
-- Done: 原计划中的提示词系统改造、核心工具层改造、工具面收缩、以及后续用户要求的内部工具协议剥离已完成。
-- Now: 向用户汇总“是否完成”的结论与边界。
-- Next: 若用户要求，把文档/task 清单也同步改成已完成状态，或继续清理网络能力 `web_search` / `deep_research`。
+- Done: 原计划中的提示词系统改造、核心工具层改造、工具面收缩、内部工具协议剥离，以及模型侧 canonical tool names 对齐均已完成。
+- Now: 等待用户确认是否继续处理网络能力 `web_search` / `deep_research` 或同步更新 docs/task 清单。
+- Next: 若用户继续要求“彻底收尾”，就更新 `docs/*.task.md` 完成状态，并决定是否物理清理网络能力。
 
 Done:
 - 已完成提示词系统改造：
@@ -35,13 +36,25 @@ Done:
 - 已完成默认/公共工具面收缩与多轮物理删除。
 - 已完成 verification/build/dev-server/package-install/expand-commit 线工具协议剥离。
 - 回归测试通过；`tsc` 仅剩既有错误（eval/observability 老问题）。
+- 已完成模型侧工具名对齐：
+  - 新增 `packages/core/src/tools/model-facing-names.ts`
+  - 核心工具已补 canonical aliases
+  - prompt / registry / MCP bridge / generic backend / OpenAI backend 已切到 canonical names
+  - 增加回归测试，锁定 model-facing names 与 preflight 行为
+- 验证结果：
+  - `bun test packages/core/tests/agent-identity-blocks.test.ts packages/core/tests/integration/tool-system.test.ts packages/core/tests/integration/e2e-tool-execution.test.ts packages/core/tests/benchmarks/tool-performance.test.ts packages/core/tests/tools-surface.test.ts` 通过（69 pass）
+  - `bun test packages/core/tests/tool-runtime-preflight.test.ts packages/core/tests/worker-backend.test.ts packages/core/tests/worker-integration.test.ts packages/core/tests/worker-identity-injection.test.ts` 通过（35 pass）
+  - `bun x tsc -p packages/core/tsconfig.json --noEmit --pretty false` 仅剩既有错误：`src/eval/{regression-generator,scorer}.ts`、`src/observability/{remote-metrics,remote-tracer}.ts`
 
 Open questions (UNCONFIRMED if needed):
-- 是否要继续清掉网络能力 `web_search` / `deep_research`。
-- 是否要把 `docs/Tachikoma 提示词系统 + 工具层升级计划.task.md` 勾成完成。
+- 是否继续清掉网络能力 `web_search` / `deep_research`。
+- 是否同步更新 `docs/Tachikoma 提示词系统 + 工具层升级计划.task.md` 的完成状态。
 
 Working set (files/ids/commands):
 - `/Users/hjqcan/Documents/tachikoma/http:/CONTINUITY.md`
 - `/Users/hjqcan/Documents/tachikoma/CONTINUITY.md`
-- `/Users/hjqcan/Documents/tachikoma/docs/Tachikoma 提示词系统 + 工具层升级计划.md`
-- `/Users/hjqcan/Documents/tachikoma/docs/Tachikoma 提示词系统 + 工具层升级计划.task.md`
+- `/Users/hjqcan/Documents/tachikoma/packages/core/src/tools/model-facing-names.ts`
+- `/Users/hjqcan/Documents/tachikoma/packages/core/src/worker/backends/openai-agent-backend.ts`
+- `/Users/hjqcan/Documents/tachikoma/packages/core/src/worker/backends/generic-agent-backend.ts`
+- `/Users/hjqcan/Documents/tachikoma/packages/core/src/worker/tool-runtime/preflight.ts`
+- `/Users/hjqcan/Documents/tachikoma/packages/core/src/tools/index.ts`

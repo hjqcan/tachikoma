@@ -32,10 +32,11 @@ describe('runToolPreflight', () => {
 
     expect(result.profile).toBe('pi-core');
     expect([...result.availableToolNames].sort()).toEqual([
-      'apply_patch',
-      'file_read',
-      'file_write',
-      'shell_run',
+      'Bash',
+      'Edit',
+      'Glob',
+      'Read',
+      'Write',
     ]);
     expect(result.availableSkillToolNames).toContain('read');
     expect(result.availableSkillToolNames).toContain('write');
@@ -45,11 +46,11 @@ describe('runToolPreflight', () => {
     expect(result.mismatchCount).toBe(1);
 
     const mergedConstraints = result.sanitizedConstraints.join('\n');
-    expect(mergedConstraints).toContain('Recommended tools: file_read, file_write');
+    expect(mergedConstraints).toContain('Recommended tools: Read, Write');
     expect(mergedConstraints).toContain('(unavailable: deep_research)');
   });
 
-  test('should fallback to full profile when canonical pi-core tools are missing', () => {
+  test('should keep pi-core profile and continue with the available subset when some canonical tools are missing', () => {
     const tools: Tool[] = [createMockTool('file_list'), createMockTool('code_search')];
 
     const result = runToolPreflight({
@@ -58,10 +59,10 @@ describe('runToolPreflight', () => {
       constraints: [],
     });
 
-    expect(result.profile).toBe('full');
-    expect(result.availableToolNames).toEqual(['file_list', 'code_search']);
-    expect(result.nativeTools.map((tool) => tool.name)).toEqual(['file_list', 'code_search']);
-    expect(result.notes.some((note) => note.includes('fell back to full profile'))).toBe(true);
+    expect(result.profile).toBe('pi-core');
+    expect(result.availableToolNames).toEqual(['Grep', 'Glob']);
+    expect(result.nativeTools.map((tool) => tool.name)).toEqual(['code_search', 'file_list']);
+    expect(result.notes.some((note) => note.includes('missing canonical tools'))).toBe(true);
   });
 });
 

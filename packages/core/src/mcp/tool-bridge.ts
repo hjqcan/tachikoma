@@ -9,6 +9,7 @@
 import type { Tool, ExecutionContext } from '../types';
 import type { ToolResult } from '../tools/types';
 import { DEFAULT_RESOURCE_LIMITS as DEFAULT_WORKER_LIMITS } from '../worker/types';
+import { getModelFacingToolName } from '../tools/model-facing-names';
 import {
   checkToolInputSize,
   checkToolCallAgainstConstraints,
@@ -258,7 +259,7 @@ export class ToolToMCPBridge {
     const runtimeFlags = resolveToolRuntimeFeatureFlags(context.env);
     // 使用 SDK 的 tool() 函数创建 MCP Tool
     return toolFactory(
-      tachikoma.name,
+      getModelFacingToolName(tachikoma),
       tachikoma.description,
       tachikoma.inputSchema ?? { type: 'object', properties: {} },
       async (args: Record<string, unknown>): Promise<string> => {
@@ -420,7 +421,7 @@ export class ToolToMCPBridge {
     return {
       name: this.config.serverName,
       tools: tools.map((t) => ({
-        name: t.name,
+        name: getModelFacingToolName(t),
         description: t.description,
         inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
         handler: async () => {

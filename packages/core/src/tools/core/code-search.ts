@@ -12,6 +12,7 @@ import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { buildTool } from '../build-tool';
 import { getCodeSearchPrompt } from './prompts/code-search-prompt';
+import { getDefaultModelFacingAliases } from '../model-facing-names';
 
 /** 搜索匹配内容最大长度 */
 const MAX_MATCH_CONTENT_LENGTH = 200;
@@ -107,6 +108,7 @@ async function searchFile(
  */
 export const codeSearchTool = buildTool({
   name: 'code_search',
+  aliases: getDefaultModelFacingAliases('code_search'),
   title: 'Code Search',
   description: `在代码文件中搜索指定模式。
 - 支持正则表达式和普通字符串匹配

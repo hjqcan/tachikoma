@@ -75,6 +75,11 @@ import { resolve } from 'node:path';
 import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
 import { getToolPromptText } from '../../tools/build-tool';
 import { ReadFileStateCache } from '../../tools/read-file-state';
+import {
+  getAllToolLookupNames,
+  getModelFacingToolName,
+  resolveInternalToolName,
+} from '../../tools/model-facing-names';
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 5,  // Codex-style: allow multiple reconnection attempts
@@ -654,7 +659,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
           // 构建工具映射和 SDK 工具
           for (const tool of tools) {
-            this.toolMap.set(tool.name, tool);
+            for (const lookupName of getAllToolLookupNames(tool)) {
+              this.toolMap.set(lookupName, tool);
+            }
           }
 
           // 跟踪最终结果（用于记忆保存）
@@ -1166,7 +1173,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
       // 创建 SDK tool
       return sdkTool({
-        name: tachikomaTool.name,
+        name: getModelFacingToolName(tachikomaTool),
         description: getToolPromptText(tachikomaTool),
         parameters: zodParameters,
         execute: async (params: unknown) => {
@@ -1533,9 +1540,10 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       parsedArgs = argsSource as Record<string, unknown>;
     }
 
-    const tool = this.toolMap.get(toolName);
+    const tool = this.toolMap.get(toolName) ?? this.toolMap.get(resolveInternalToolName(toolName));
+    const resolvedToolName = tool?.name ?? resolveInternalToolName(toolName);
     const decision = isKeyDecision(
-      toolName,
+      resolvedToolName,
       parsedArgs,
       tool,
       keyDecisionPolicy,
@@ -1545,8 +1553,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     return {
       type: 'approval_request',
       requestId: callId,
-      action: toolName,
-      description: decision.reason || `Tool ${toolName} requires approval`,
+      action: resolvedToolName,
+      description: decision.reason || `Tool ${resolvedToolName} requires approval`,
       details: { 
         toolInput: parsedArgs,
         riskLevel: decision.riskLevel,
@@ -1675,10 +1683,14 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           }
         }
 
-        // Guard against repeated tool calls (prevents infinite loops)
-        this.guardAgainstRepeatedToolCall(toolName, args);
+        const normalizedToolName =
+          (this.toolMap.get(toolName) ?? this.toolMap.get(resolveInternalToolName(toolName)))?.name ??
+          resolveInternalToolName(toolName);
 
-        messages.push(createToolCallMessage(toolName, args, callId));
+        // Guard against repeated tool calls (prevents infinite loops)
+        this.guardAgainstRepeatedToolCall(normalizedToolName, args);
+
+        messages.push(createToolCallMessage(normalizedToolName, args, callId));
         break;
       }
 
@@ -1687,6 +1699,9 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
          // rawItem matches ToolCallOutputItem (function_call_result, etc)
          const callId = rawItem.callId || rawItem.id || `call-${Date.now()}`;
          const toolName = rawItem.name || 'unknown';
+         const normalizedToolName =
+           (this.toolMap.get(toolName) ?? this.toolMap.get(resolveInternalToolName(toolName)))?.name ??
+           resolveInternalToolName(toolName);
          
          let output = '';
          if (rawItem.type === 'function_call_result') {
@@ -1705,7 +1720,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
          } catch {
            // Non-JSON output -> assume success (transport succeeded).
          }
-         messages.push(createToolResultMessage(toolName, callId, output, success, 0));
+         messages.push(createToolResultMessage(normalizedToolName, callId, output, success, 0));
          break;
       }
 

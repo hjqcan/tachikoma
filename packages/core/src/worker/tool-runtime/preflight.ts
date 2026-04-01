@@ -1,12 +1,28 @@
 import type { Tool } from '../../types';
 import { createResolvedToolsetSnapshot } from './resolved-toolset';
 import type { ResolvedToolset, ToolProfile } from './types';
+import {
+  getAllToolLookupNames,
+  getModelFacingToolName,
+} from '../../tools/model-facing-names';
 
 export const PI_CORE_TOOL_ALIASES: Readonly<Record<string, string>> = Object.freeze({
   read: 'file_read',
+  file_read: 'file_read',
   write: 'file_write',
+  file_write: 'file_write',
   edit: 'apply_patch',
+  apply_patch: 'apply_patch',
   bash: 'shell_run',
+  shell_run: 'shell_run',
+  grep: 'code_search',
+  code_search: 'code_search',
+  glob: 'file_list',
+  file_list: 'file_list',
+  agent: 'spawn_subagent',
+  spawn_subagent: 'spawn_subagent',
+  todowrite: 'todowrite',
+  todoread: 'todoread',
 });
 
 export interface ToolPreflightInput {
@@ -119,7 +135,12 @@ function buildAvailableSkillToolNames(
   nativeTools: Tool[],
   aliasMap: Record<string, string>
 ): string[] {
-  const available = new Set<string>(nativeTools.map((tool) => tool.name));
+  const available = new Set<string>();
+  for (const tool of nativeTools) {
+    for (const name of getAllToolLookupNames(tool)) {
+      available.add(name);
+    }
+  }
   for (const [alias, target] of Object.entries(aliasMap)) {
     if (available.has(target)) {
       available.add(alias);
@@ -177,7 +198,10 @@ function sanitizeConstraints(
         continue;
       }
 
-      let rewritten = `${parsed.label}${parsed.separator} ${dedupAvailable.join(', ')}`;
+      const displayNames = Array.from(
+        new Set(dedupAvailable.map((name) => getModelFacingToolName(name)))
+      );
+      let rewritten = `${parsed.label}${parsed.separator} ${displayNames.join(', ')}`;
       if (dedupMissing.length > 0) {
         removedToolHints.push(...dedupMissing);
         rewritten += ` (unavailable: ${dedupMissing.join(', ')})`;
@@ -215,7 +239,13 @@ function buildAliasNote(
     }
   }
   if (activeAliases.length === 0) return null;
-  return `Tool aliases (reference only): ${activeAliases.join(', ')}. Always call the actual tool names on the right side.`;
+  const rendered = activeAliases.map((pair) => {
+    const [rawAlias = '', rawTarget = ''] = pair.split('->');
+    const alias = rawAlias;
+    const resolvedTarget = rawTarget.length > 0 ? rawTarget : alias;
+    return `${alias}->${getModelFacingToolName(resolvedTarget)}`;
+  });
+  return `Tool aliases (reference only): ${rendered.join(', ')}. Always call the preferred tool names on the right side.`;
 }
 
 export function runToolPreflight(input: ToolPreflightInput): ToolPreflightResult {
@@ -228,11 +258,11 @@ export function runToolPreflight(input: ToolPreflightInput): ToolPreflightResult
 
   const profileSelection = filterToolsByProfile(input.tools, requestedProfile, aliasMap);
   const nativeTools = profileSelection.nativeTools;
-  const availableToolNames = nativeTools.map((tool) => tool.name);
-  const availableSet = new Set<string>(availableToolNames);
+  const availableToolNames = nativeTools.map((tool) => getModelFacingToolName(tool));
+  const availableInternalSet = new Set<string>(nativeTools.map((tool) => tool.name));
 
-  const sanitized = sanitizeConstraints(constraints, availableSet, aliasMap);
-  const aliasNote = buildAliasNote(aliasMap, availableSet);
+  const sanitized = sanitizeConstraints(constraints, availableInternalSet, aliasMap);
+  const aliasNote = buildAliasNote(aliasMap, availableInternalSet);
   const sanitizedConstraints = [...sanitized.sanitizedConstraints];
   if (aliasNote) {
     sanitizedConstraints.push(aliasNote);
