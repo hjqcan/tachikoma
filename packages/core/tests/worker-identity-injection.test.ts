@@ -77,7 +77,7 @@ describe('18.6 identityContext injection in SDK backends', () => {
     const sdkOptions = (await (backend as any).buildSDKOptions(
       [],                        // tools
       { workDir },               // options
-      undefined,                 // task
+      { id: 'test-task', type: 'atomic', objective: 'test-objective' }, // task
       undefined,                 // memoryContext
       undefined,                 // skillsManager (skip to avoid renderSystemPromptSection call)
       'test-objective',          // taskObjective
@@ -89,6 +89,33 @@ describe('18.6 identityContext injection in SDK backends', () => {
     expect(systemPrompt!).toContain('## Agent Identity');
     expect(systemPrompt!).toContain('Use dark mode');
   });
+
+  test('ClaudeAgentSDKBackend transformSDKMessage should treat isError payload as tool failure', async () => {
+    const backend = new ClaudeAgentSDKBackend({
+      provider: 'anthropic',
+      model: 'claude-3-5-sonnet-20241022',
+      apiKey: 'test-key',
+    });
+
+    // Prime call map so tool_result can recover name/input.
+    (backend as any).transformSDKMessage({
+      type: 'tool_use',
+      id: 'call-1',
+      name: 'todowrite',
+      input: { todos: [] },
+    });
+
+    const transformed = (backend as any).transformSDKMessage({
+      type: 'tool_result',
+      tool_use_id: 'call-1',
+      content: JSON.stringify({
+        isError: true,
+        code: 'TOOL_FUNCTIONAL_ERROR',
+        error: 'Invalid todo transition',
+      }),
+    }) as Record<string, unknown>;
+
+    expect(transformed.type).toBe('tool_result');
+    expect(transformed.success).toBe(false);
+  });
 });
-
-

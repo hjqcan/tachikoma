@@ -6,10 +6,12 @@
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { CodeSearchInput, CodeSearchOutput, SearchMatch, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
+import { buildTool } from '../build-tool';
+import { getCodeSearchPrompt } from './prompts/code-search-prompt';
 
 /** 搜索匹配内容最大长度 */
 const MAX_MATCH_CONTENT_LENGTH = 200;
@@ -103,7 +105,7 @@ async function searchFile(
 /**
  * code_search 工具定义
  */
-export const codeSearchTool: Tool = {
+export const codeSearchTool = buildTool({
   name: 'code_search',
   title: 'Code Search',
   description: `在代码文件中搜索指定模式。
@@ -111,6 +113,10 @@ export const codeSearchTool: Tool = {
 - 支持文件类型过滤
 - 自动跳过 node_modules 和隐藏文件
 - 匹配内容自动截断（最大 200 字符）`,
+  searchHint: 'search text pattern regex symbol references codebase',
+  isReadOnly: () => true,
+  isConcurrencySafe: () => true,
+  prompt: getCodeSearchPrompt,
   inputSchema: {
     type: 'object',
     properties: {
@@ -255,4 +261,4 @@ export const codeSearchTool: Tool = {
       };
     }
   },
-};
+});

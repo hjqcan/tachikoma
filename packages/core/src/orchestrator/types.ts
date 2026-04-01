@@ -707,6 +707,100 @@ export interface SkillLearningConfig {
 }
 
 /**
+ * Session Compaction 配置
+ *
+ * 用于控制 P1-3/P1-4 的上下文压缩与 todo guard 行为
+ */
+export interface SessionCompactionConfig {
+  /** 是否启用 session compaction（禁用时仍可保留 todo guard） */
+  enabled: boolean;
+  /** 是否启用 todo guard（禁用时不注入/校验 todo 快照约束） */
+  todoGuardEnabled: boolean;
+  /** 触发 compaction 的约束字符阈值 */
+  maxConstraintChars: number;
+  /** compaction 后保留的最近约束条数 */
+  keepLastConstraints: number;
+  /** summary 最大条目数 */
+  maxSummaryItems: number;
+  /** summary 最大字符数 */
+  maxSummaryChars: number;
+}
+
+/**
+ * Todo FSM 配置
+ *
+ * 用于控制 todo 状态机非法转移的处理策略：
+ * - strictMode=true: 非法转移直接返回错误（阻断）
+ * - strictMode=false: 记录告警并允许写入（影子/过渡模式）
+ */
+export interface TodoFsmConfig {
+  /** 是否启用严格模式（非法转移阻断） */
+  strictMode: boolean;
+}
+
+/**
+ * Tool Runtime v2 配置
+ */
+export interface ToolRuntimeV2Config {
+  /** 是否启用统一 tool runtime 内核 */
+  enabled: boolean;
+  /** 影子模式（记录新链路行为，但不改变策略决策） */
+  shadowMode: boolean;
+}
+
+/**
+ * Tool Profile 配置
+ */
+export interface ToolProfileConfig {
+  /** 默认工具剖面 */
+  default: 'pi-core' | 'full';
+}
+
+/**
+ * Synthetic Tool Result 配置
+ */
+export interface SyntheticToolResultConfig {
+  /** 是否启用 synthetic tool_result 下沉 */
+  enabled: boolean;
+}
+
+/**
+ * 中间态 smoke 配置
+ */
+export interface MidExecutionSmokeConfig {
+  /** 是否启用中间态 probe/smoke 注入 */
+  enabled: boolean;
+}
+
+/**
+ * Replay Guard 配置
+ */
+export interface ReplayGuardConfig {
+  /** 是否启用 resume/replan 幂等 replay guard */
+  enabled: boolean;
+}
+
+/**
+ * 融合特性开关配置
+ *
+ * 与融合方案文档中的 feature flags 一一对应：
+ * - toolRuntimeV2.enabled / toolRuntimeV2.shadowMode
+ * - toolProfile.default
+ * - syntheticToolResult.enabled
+ * - midExecutionSmoke.enabled
+ * - resume.replayGuard.enabled
+ */
+export interface FusionFeatureFlagsConfig {
+  toolRuntimeV2: ToolRuntimeV2Config;
+  toolProfile: ToolProfileConfig;
+  syntheticToolResult: SyntheticToolResultConfig;
+  midExecutionSmoke: MidExecutionSmokeConfig;
+  resume: {
+    replayGuard: ReplayGuardConfig;
+  };
+}
+
+/**
  * Orchestrator 配置
  */
 export interface OrchestratorConfig {
@@ -766,6 +860,18 @@ export interface OrchestratorConfig {
    * 传递给 Planner 用于加载 Orchestrator Skills
    */
   skillsConfig?: SkillDiscoveryConfig;
+  /**
+   * Session compaction 配置
+   */
+  sessionCompaction: SessionCompactionConfig;
+  /**
+   * Todo FSM 配置
+   */
+  todoFsm: TodoFsmConfig;
+  /**
+   * 融合特性开关配置
+   */
+  featureFlags: FusionFeatureFlagsConfig;
 }
 
 /**
@@ -849,12 +955,17 @@ export type OrchestratorEventType =
   | 'subtask:complete'
   | 'subtask:failed'
   | 'subtask:retrying'
+  | 'observer:probe_triggered'  // 中间态探测触发（根据关键文件变更生成 steering）
+  | 'observer:probe_injected'   // 中间态探测已注入到下一个子任务
+  | 'compaction:applied'        // session compaction 已生效
+  | 'compaction:todo_mismatch'  // compaction 摘要中的 todo hash 与真实快照不一致
   | 'worker:thinking'
   | 'worker:action'
   | 'aggregate:start'
   | 'aggregate:complete'
   | 'checkpoint:created'
   | 'checkpoint:restored'
+  | 'todo:replay_skipped'       // replay guard 命中，跳过重复子任务执行
   | 'approval:received'           // 收到审批请求
   | 'approval:complete'           // 审批处理完成
   | 'deviation:detected'          // 检测到偏离

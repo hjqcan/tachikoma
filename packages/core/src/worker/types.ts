@@ -12,6 +12,7 @@ import type { InterventionFile } from '../orchestrator/session/types';
 import type { PromptContextConfig, ProjectContextConfig } from '../prompt';
 import type { SkillDiscoveryConfig } from '../skills';
 import type { MemoryConfig } from '../memory';
+import type { ResolvedToolset, ToolProfile } from './tool-runtime/types';
 
 // Re-export for external use
 export type { InterventionFile };
@@ -294,6 +295,27 @@ export interface WorkerExecutionOptions {
    * @see https://www.relace.ai/blog/fast-agentic-search
    */
   parallelExecution?: ParallelExecutionConfig;
+
+  /**
+   * 工具剖面（Tool Profile）
+   * - full: 使用全部可用工具（默认）
+   * - pi-core: 收敛为 read/write/edit/bash 对应的最小工具集
+   */
+  toolProfile?: ToolProfile;
+
+  /**
+   * 预检后的工具上下文（由 WorkerExecutor 注入）
+   * 用于保持 prompt/skills/backend 的工具可用性一致。
+   */
+  toolPreflight?: {
+    profile: ToolProfile;
+    availableToolNames: string[];
+    availableSkillToolNames: string[];
+    aliasMap: Record<string, string>;
+    mismatchCount: number;
+    resolvedToolsetHash: string;
+    resolvedToolset: ResolvedToolset;
+  };
 }
 
 /**
@@ -457,7 +479,6 @@ export const SEQUENTIAL_TOOLS: readonly string[] = [
   'shell_run',
   'run_command',
   'spawn_subagent',
-  'submit_result',
   'todowrite',
   'delete_file',
   'create_directory',

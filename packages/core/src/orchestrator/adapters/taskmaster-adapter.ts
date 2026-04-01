@@ -19,7 +19,6 @@ import {
   ensureTaskmetaV1,
   type TaskmetaFileV1,
   addTaskOrSubtaskDependency,
-  expandTaskOrSubtask,
 } from '../../taskmaster-compat';
 import { relative, isAbsolute } from 'node:path';
 
@@ -170,9 +169,7 @@ export class TaskMasterAdapter {
    * 合并“执行起始时的原始状态快照”
    *
    * 规则：只补齐缺失项，不覆盖已有值。
-   * 这样可以确保：
-   * - 首次 run() 记录的快照在后续 replan 时不会被覆盖
-   * - expand_commit 新增的任务/子任务可在后续 plan 中补齐快照
+   * 这样可以确保首次 run() 记录的快照在后续 replan 时不会被覆盖。
    */
   mergeOriginalStatuses(statuses?: Record<string, TaskMasterTaskStatus>): void {
     if (!statuses) return;
@@ -213,33 +210,6 @@ export class TaskMasterAdapter {
     if (!ref) return;
 
     await addTaskOrSubtaskDependency(subtaskId, predecessor, ref);
-  }
-
-  /**
-   * 展开子任务
-   */
-  async expandSubtask(
-    targetId: string,
-    subtasks: {
-      title: string;
-      description: string;
-      details: string;
-      testStrategy: string;
-    }[],
-    options: {
-      force?: boolean;
-      strategy: 'serial' | 'parallel';
-    }
-  ): Promise<void> {
-    const ref = this.getRef();
-    if (!ref) return;
-
-    await expandTaskOrSubtask(targetId, subtasks, {
-      projectRoot: ref.projectRoot,
-      file: ref.file,
-      tag: ref.tag,
-      ...options,
-    });
   }
 
   /**

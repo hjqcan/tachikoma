@@ -336,216 +336,8 @@ export interface ApplyPatchOutput {
   bytesDelta: number;
 }
 
-/**
- * replace_between_markers 输入
- */
-export interface ReplaceBetweenMarkersInput {
-  /** 文件路径（相对于工作目录） */
-  path: string;
-  /** 开始标记（精确匹配） */
-  startMarker: string;
-  /** 结束标记（精确匹配） */
-  endMarker: string;
-  /** 新内容（不包含标记） */
-  content: string;
-  /** 是否包含标记本身（默认 false，只替换中间内容） */
-  includeMarkers?: boolean;
-  /** 匹配第几对标记（默认 1，0 表示全部） */
-  occurrence?: number;
-}
-
-/**
- * replace_between_markers 输出
- */
-export interface ReplaceBetweenMarkersOutput {
-  /** 修改的文件路径 */
-  path: string;
-  /** 替换的区域数量 */
-  regionsReplaced: number;
-  /** 修改前后的行数差 */
-  linesDelta: number;
-  /** 修改前后的字节差 */
-  bytesDelta: number;
-}
-
-// ============================================================================
-// run_tests 工具类型
-// ============================================================================
-
-/**
- * 测试运行输入
- */
-export interface RunTestsInput {
-  /** 测试文件路径或模式 (bun 模式必填；npm 模式可选，仅用于日志) */
-  pattern?: string;
-  /** 工作目录 (相对于上下文 workDir) */
-  cwd?: string;
-  /** 超时时间 (毫秒，默认 60000) */
-  timeout?: number;
-  /** 是否使用 bun test (默认 true，否则使用 npm test) */
-  useBun?: boolean;
-  /** 额外参数 (npm 模式下用于实际筛选，如 --testPathPattern) */
-  extraArgs?: string[];
-}
-
-/**
- * 测试运行输出
- */
-export interface RunTestsOutput {
-  /** 标准输出 */
-  stdout: string;
-  /** 标准错误 */
-  stderr: string;
-  /** 退出码 */
-  exitCode: number;
-  /** 输出是否被截断 */
-  truncated: boolean;
-  /** 是否超时 */
-  timedOut: boolean;
-}
-
-// ============================================================================
-// type_check 工具类型
-// ============================================================================
-
-/**
- * 类型检查输入
- */
-export interface TypeCheckInput {
-  /** 工作目录 (相对于上下文 workDir) */
-  cwd?: string;
-  /** tsconfig 项目路径 (--project 参数) */
-  project?: string;
-  /** 超时时间 (毫秒，默认 120000) */
-  timeout?: number;
-}
-
-/**
- * 类型检查输出
- */
-export interface TypeCheckOutput {
-  /** 是否通过类型检查 */
-  passed: boolean;
-  /** 错误数量 */
-  errorCount: number;
-  /** 诊断输出 */
-  diagnostics: string;
-  /** 输出是否被截断 */
-  truncated: boolean;
-}
-
-// ============================================================================
-// package_info 工具类型
-// ============================================================================
-
-/**
- * 包信息输入
- */
-export interface PackageInfoInput {
-  /** package.json 路径 (相对于上下文 workDir，默认 '.') */
-  path?: string;
-  /** 是否解析锁文件获取实际版本 */
-  resolveLockfile?: boolean;
-}
-
 /** 检测到的包管理器类型 */
 export type PackageManager = 'bun' | 'npm' | 'yarn' | 'pnpm' | 'unknown';
-
-/**
- * 包信息输出
- */
-export interface PackageInfoOutput {
-  /** 包名 */
-  name: string;
-  /** 版本 */
-  version: string;
-  /** 生产依赖 */
-  dependencies: Record<string, string>;
-  /** 开发依赖 */
-  devDependencies: Record<string, string>;
-  /** Peer 依赖 */
-  peerDependencies: Record<string, string>;
-  /** 锁文件解析的实际版本 (key: packageName, value: resolvedVersion) */
-  resolvedVersions?: Record<string, string>;
-  /** 检测到的包管理器 */
-  packageManager: PackageManager;
-}
-
-// ============================================================================
-// package_install 工具类型
-// ============================================================================
-
-/**
- * 包安装输入
- */
-export interface PackageInstallInput {
-  /** 要安装的包列表（空表示 install） */
-  packages?: string[];
-  /** 是否安装为 devDependencies */
-  dev?: boolean;
-  /** 工作目录（相对于上下文 workDir） */
-  cwd?: string;
-  /** 指定包管理器（默认 auto） */
-  packageManager?: PackageManager | 'auto';
-  /** 超时时间（毫秒） */
-  timeoutMs?: number;
-  /** 日志轮询间隔（毫秒） */
-  pollIntervalMs?: number;
-  /** 最大输出长度 */
-  maxOutput?: number;
-  /** 额外参数 */
-  extraArgs?: string[];
-}
-
-/**
- * 包安装输出
- */
-export interface PackageInstallOutput {
-  /** 实际使用的包管理器 */
-  packageManager: PackageManager;
-  /** 实际执行的命令 */
-  command: string;
-  /** 工作目录 */
-  cwd: string;
-  /** 退出码 */
-  exitCode: number;
-  /** 日志输出 */
-  logs: string;
-  /** 日志是否被截断 */
-  logsTruncated: boolean;
-  /** 执行耗时（毫秒） */
-  durationMs: number;
-  /** 是否超时 */
-  timedOut: boolean;
-  /** 后台进程 ID */
-  processId: string;
-  /** 警告信息 */
-  warnings?: string[];
-}
-
-// ============================================================================
-// env_get 工具类型
-// ============================================================================
-
-/**
- * 环境变量读取输入
- */
-export interface EnvGetInput {
-  /** 要读取的环境变量名称列表 */
-  names: string[];
-}
-
-/**
- * 环境变量读取输出
- */
-export interface EnvGetOutput {
-  /** 成功读取的变量 */
-  values: Record<string, string>;
-  /** 被拒绝的变量 (不在白名单) */
-  denied: string[];
-  /** 不存在的变量 */
-  missing: string[];
-}
 
 // ============================================================================
 // script_run 兜底工具类型 (低优先级)
@@ -584,51 +376,10 @@ export interface ScriptRunOutput {
 }
 
 // ============================================================================
-// LSP 工具类型
-// ============================================================================
-
-export type LspOperation =
-  | 'goToDefinition'
-  | 'findReferences'
-  | 'hover'
-  | 'documentSymbol'
-  | 'workspaceSymbol'
-  | 'goToImplementation'
-  | 'prepareCallHierarchy'
-  | 'incomingCalls'
-  | 'outgoingCalls';
-
-export interface LspToolInput {
-  operation: LspOperation;
-  filePath: string;
-  line?: number;
-  character?: number;
-  query?: string;
-}
-
-export interface LspToolOutput {
-  operation: LspOperation;
-  file: string;
-  count: number;
-  result: unknown;
-}
-
-export interface LspDiagnosticsInput {
-  path: string;
-}
-
-export interface LspDiagnosticsOutput {
-  file: string;
-  count: number;
-  diagnostics: unknown[];
-  pretty: string[];
-}
-
-// ============================================================================
 // Todo 工具类型
 // ============================================================================
 
-export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'cancelled';
 export type TodoPriority = 'high' | 'medium' | 'low';
 
 export interface TodoItem {
@@ -640,11 +391,29 @@ export interface TodoItem {
 
 export interface TodoWriteInput {
   todos: TodoItem[];
+  /** Optional optimistic concurrency guard. */
+  baseRevision?: number;
 }
 
 export interface TodoWriteOutput {
   todos: TodoItem[];
   pendingCount: number;
+  revision: number;
+  counts: Record<TodoStatus, number>;
+  /**
+   * 非严格模式下的 FSM 告警（允许写入但会返回告警）
+   */
+  warnings?: Array<{
+    code: 'TODO_FSM_INVALID_TRANSITION' | 'TODO_FSM_MULTIPLE_IN_PROGRESS';
+    message: string;
+  }>;
+  /**
+   * FSM 执行模式信息
+   */
+  fsm?: {
+    strictMode: boolean;
+    violationCount: number;
+  };
 }
 
 export interface TodoReadInput {
@@ -654,6 +423,8 @@ export interface TodoReadInput {
 export interface TodoReadOutput {
   todos: TodoItem[];
   pendingCount: number;
+  revision: number;
+  counts: Record<TodoStatus, number>;
 }
 
 // ============================================================================

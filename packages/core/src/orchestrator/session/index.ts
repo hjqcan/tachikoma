@@ -34,6 +34,12 @@ export type {
   SyncLogEntry,
   ApiSpec,
   ApiEndpoint,
+  SharedTodoItem,
+  SharedTodoSnapshot,
+  SharedSummaryState,
+  SharedExecutionStateContract,
+  SharedTodoReplayEvent,
+  SharedTodoReplayGuard,
   // 事件类型
   SessionFileEventType,
   SessionFileEvent,
@@ -110,4 +116,3 @@ export {
   type SafeReadOptions,
   DEFAULT_SAFE_READ_OPTIONS,
 } from './utils';
-

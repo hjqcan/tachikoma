@@ -2,7 +2,7 @@
  * Build Gate Service
  *
  * Validates that code changes pass build/type checks before marking tasks as complete.
- * Inspired by OpenCode's lsp_diagnostics pattern.
+ * Inspired by OpenCode's LSP-first verification pattern.
  *
  * Key responsibilities:
  * - Detect project type (TypeScript, Python, etc.)
@@ -286,7 +286,7 @@ export class BuildGateService {
         summary: passed
           ? 'LSP check passed'
           : `LSP check failed: ${errorCount} errors, ${warningCount} warnings`,
-        command: 'lsp_diagnostics',
+        command: 'lsp_check',
         duration: Date.now() - startTime,
       };
     } catch (error) {
@@ -697,7 +697,7 @@ export class BuildGateService {
     }
 
     const verifyCommand =
-      result.command && result.command !== 'lsp_diagnostics' ? result.command : 'npx tsc --noEmit';
+      result.command && result.command !== 'lsp_check' ? result.command : 'npx tsc --noEmit';
     lines.push('');
     lines.push(`Please fix all errors and ensure \`${verifyCommand}\` passes.`);
 

@@ -1,0 +1,50 @@
+{
+  "id": "resume-idempotency-replay",
+  "name": "Resume Idempotency Replay Set",
+  "description": "Regression cases for replay-guard semantics and duplicate completion avoidance during resume.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "resume-replay-skip-duplicate-complete",
+      "objective": "Treat subtask 1.1 as already completed, verify current todo state with todoread, and avoid duplicate completion side effects. Final summary must include: idempotent replay skip.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "idempotent replay skip",
+          "subtask 1.1"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todoread"
+          ],
+          "maxSteps": 20
+        }
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "replay-guard-skip"
+      }
+    },
+    {
+      "id": "resume-replay-fingerprint-report",
+      "objective": "When reporting a replay-guard skip outcome, include subtaskId, eventId, todoHash, and todoRevision in the final output, and avoid re-running the completed step.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "subtaskId",
+          "eventId",
+          "todoHash",
+          "todoRevision"
+        ],
+        "trajectory": {
+          "maxSteps": 20
+        },
+        "llmCriteria": "Did the trajectory avoid duplicate completion work and provide a replay fingerprint payload?"
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "replay-observability-fingerprint"
+      }
+    }
+  ]
+}

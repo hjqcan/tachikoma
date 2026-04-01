@@ -147,9 +147,28 @@ export class WorkerManager {
     const backendConfig: Record<string, unknown> = {};
     if (llm?.apiKey) backendConfig.apiKey = llm.apiKey;
     if (llm?.baseUrl) backendConfig.baseUrl = llm.baseUrl;
+    const featureFlags = this.orchestratorConfig.featureFlags;
+    const executionOptions = {
+      env: {
+        TACHIKOMA_TOOL_RUNTIME_V2_ENABLED: String(featureFlags.toolRuntimeV2.enabled),
+        TACHIKOMA_TOOL_RUNTIME_V2_SHADOW_MODE: String(featureFlags.toolRuntimeV2.shadowMode),
+        TACHIKOMA_TOOL_PROFILE_DEFAULT: String(featureFlags.toolProfile.default),
+        TACHIKOMA_SYNTHETIC_TOOL_RESULT_ENABLED: String(
+          featureFlags.syntheticToolResult.enabled
+        ),
+        TACHIKOMA_MID_EXECUTION_SMOKE_ENABLED: String(
+          featureFlags.midExecutionSmoke.enabled
+        ),
+        TACHIKOMA_RESUME_REPLAY_GUARD_ENABLED: String(
+          featureFlags.resume.replayGuard.enabled
+        ),
+        TACHIKOMA_TODO_FSM_STRICT_MODE: String(this.orchestratorConfig.todoFsm.strictMode),
+      },
+    };
 
     const agent = new WorkerAgent(workerId, agentConfig, {
       workDir: this.workDir,
+      executionOptions,
       ...(sessionManager ? { sessionManager } : {}),
       ...(this.mcpClient ? { mcpClient: this.mcpClient } : {}),
       ...(collaborationConfig ? { collaborationConfig } : {}),

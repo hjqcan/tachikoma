@@ -120,7 +120,7 @@ export class ResumeService {
         resumableCount: restoreResult.resumableSubtaskIds?.length ?? 0,
       });
 
-      // resume：不启用 watch，但仍需要审批仲裁（文件锁/expand_commit）
+      // resume：不启用 watch，但仍需要审批仲裁（文件锁）
       if (hooks?.afterSessionReady) {
         await hooks.afterSessionReady({ taskId: checkpoint.taskId, workDir, sessionId });
       }
@@ -171,5 +171,4 @@ export class ResumeService {
     }
   }
 }
-
 

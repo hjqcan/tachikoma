@@ -50,6 +50,85 @@ export interface ApiSpec {
 }
 
 /**
+ * Todo 快照条目（用于 session 级执行状态共享）
+ */
+export interface SharedTodoItem {
+  id: string;
+  content: string;
+  status: string;
+  priority?: string;
+}
+
+/**
+ * Todo 快照（用于 P1-1: resume/replan 幂等基座）
+ */
+export interface SharedTodoSnapshot {
+  revision: number;
+  pendingCount: number;
+  counts: Record<string, number>;
+  hash: string;
+  updatedAt: number;
+  updatedByWorkerId: string;
+  subtaskId: string;
+  sourceTool: 'todowrite' | 'todoread';
+  todos: SharedTodoItem[];
+}
+
+/**
+ * Compaction 摘要状态（用于 P1-3: Session Compaction）
+ */
+export interface SharedSummaryState {
+  /** 摘要文本（用于恢复上下文） */
+  summary: string;
+  /** 摘要内容 hash */
+  summaryHash: string;
+  /** 摘要对应的 todo hash（用于冲突检测） */
+  todoSnapshotHash: string;
+  /** 摘要对应的 todo revision */
+  todoRevision: number;
+  /** 本次压缩掉的约束条目数 */
+  compactedConstraintCount: number;
+  /** 本次保留的最近约束条目数 */
+  retainedConstraintCount: number;
+  /** 更新时间 */
+  updatedAt: number;
+}
+
+/**
+ * 执行态契约（用于 P1-4: Todo x Compaction 冲突裁决）
+ */
+export interface SharedExecutionStateContract {
+  /** 权威 todo 状态 */
+  todoState?: SharedTodoSnapshot;
+  /** compaction 摘要状态 */
+  summaryState?: SharedSummaryState;
+  /** 冲突裁决策略（当前固定为 todo_wins） */
+  conflictPolicy: 'todo_wins';
+  /** 契约更新时间 */
+  updatedAt: number;
+}
+
+/**
+ * Todo replay 事件（用于 resume/replan 幂等去重）
+ */
+export interface SharedTodoReplayEvent {
+  eventId: string;
+  subtaskId: string;
+  objectiveHash: string;
+  todoHash: string;
+  todoRevision: number;
+  recordedAt: number;
+}
+
+/**
+ * Todo replay 去重索引
+ */
+export interface SharedTodoReplayGuard {
+  events: SharedTodoReplayEvent[];
+  updatedAt: number;
+}
+
+/**
  * 共享知识数据（允许扩展字段）
  */
 export interface SharedKnowledgeData {
@@ -58,6 +137,12 @@ export interface SharedKnowledgeData {
   apiSpec?: ApiSpec;
   /** 生成的文件清单 (按 worker ID 分组) */
   generatedFiles?: Record<string, string[]>;
+  /** todo 状态快照 (session 级) */
+  todoState?: SharedTodoSnapshot;
+  /** 执行态契约（todo + summary，冲突策略） */
+  executionStateContract?: SharedExecutionStateContract;
+  /** todo replay 去重状态 */
+  todoReplayGuard?: SharedTodoReplayGuard;
   [key: string]: unknown;
 }
 
@@ -113,5 +198,3 @@ export interface MessageRecord {
   /** 相关子任务 ID */
   subtaskId?: string;
 }
-
-

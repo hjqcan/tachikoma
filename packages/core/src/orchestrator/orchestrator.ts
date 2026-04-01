@@ -36,6 +36,8 @@ import { SessionController } from './runner/session-controller';
 import { ExecutionLoop } from './runner/execution-loop';
 import { RunService } from './runner/run-service';
 import { ResumeService } from './runner/resume-service';
+import type { MetricsCollector } from '../observability';
+import { noopMetrics, ORCHESTRATOR_METRICS } from '../observability';
 
 export type { ResumeFromOptions } from './runner/types';
 
@@ -49,6 +51,7 @@ export interface OrchestratorOptions {
   workerPool?: IWorkerPool;
   sessionManager?: ISessionFileManager;
   mcpClient?: MCPClientManager;
+  metrics?: MetricsCollector;
 }
 
 // ============================================================================
@@ -90,6 +93,9 @@ export class Orchestrator extends BaseAgent {
   // 运行期对象
   private approvalService: ApprovalArbitrationService | null = null;
   private readonly verificationGateService: VerificationGateService;
+  private readonly metrics: MetricsCollector;
+  private taskClosureSuccessCount = 0;
+  private taskClosureTotalCount = 0;
 
   constructor(id: string, options: OrchestratorOptions = {}) {
     const orchestratorConfig = createOrchestratorConfig(options.config);
@@ -107,6 +113,7 @@ export class Orchestrator extends BaseAgent {
     this.workerPool = options.workerPool ?? new DefaultWorkerPool(orchestratorConfig.workerPool);
     this.workerPoolInjected = options.workerPool !== undefined;
     this.injectedSessionManager = options.sessionManager ?? null;
+    this.metrics = options.metrics ?? noopMetrics;
     if (options.mcpClient) {
       this.mcpClient = options.mcpClient;
     }
@@ -187,7 +194,6 @@ export class Orchestrator extends BaseAgent {
       workerPoolInjected: this.workerPoolInjected,
       aggregationEngine: this.aggregationEngine,
       executionEngine: this.executionEngine,
-      planEngine: this.planEngine,
       taskMasterAdapter: this.taskMasterAdapter,
       emit: emitFn,
       progress: this.progress,
@@ -265,7 +271,7 @@ export class Orchestrator extends BaseAgent {
     }
 
     this.approvalService = null;
-    return await this.resumeService.resumeFrom(checkpointId, options, {
+    const result = await this.resumeService.resumeFrom(checkpointId, options, {
       afterSessionReady: async () => {
         this.approvalService = this.createApprovalService();
         this.session.setApprovalService(this.approvalService);
@@ -275,6 +281,8 @@ export class Orchestrator extends BaseAgent {
         await this.approvalService?.handlePendingApproval(event);
       },
     });
+    this.recordTaskClosureSuccessRate(result.status);
+    return result;
   }
 
   // ============================================================================
@@ -290,6 +298,18 @@ export class Orchestrator extends BaseAgent {
   }
 
   private emit<T>(type: OrchestratorEventType, taskId: string, data: T, subtaskId?: string): void {
+    if (type === 'todo:replay_skipped') {
+      this.metrics.increment(ORCHESTRATOR_METRICS.TODO_RESUME_IDEMPOTENT_REPLAY_COUNT, 1);
+    }
+    if (type === 'observer:probe_triggered') {
+      this.metrics.increment(ORCHESTRATOR_METRICS.MID_SMOKE_TRIGGER_COUNT, 1);
+    }
+    if (type === 'compaction:applied') {
+      this.metrics.increment(ORCHESTRATOR_METRICS.SESSION_COMPACTION_COUNT, 1);
+    }
+    if (type === 'compaction:todo_mismatch') {
+      this.metrics.increment(ORCHESTRATOR_METRICS.SESSION_COMPACTION_TODO_MISMATCH_COUNT, 1);
+    }
     const sessionId = this.orchestratorState.sessionId;
     this.eventService.setContext({
       ...(sessionId ? { sessionId } : {}),
@@ -304,7 +324,7 @@ export class Orchestrator extends BaseAgent {
 
   protected override async executeTask(task: Task, signal: AbortSignal): Promise<TaskResult> {
     this.approvalService = null;
-    return await this.runService.run(task, signal, {
+    const result = await this.runService.run(task, signal, {
       afterSessionOpen: async ({ taskId }) => {
         this.approvalService = this.createApprovalService();
         this.session.setApprovalService(this.approvalService);
@@ -320,6 +340,8 @@ export class Orchestrator extends BaseAgent {
         }
       },
     });
+    this.recordTaskClosureSuccessRate(result.status);
+    return result;
   }
 
   // ============================================================================
@@ -369,18 +391,6 @@ export class Orchestrator extends BaseAgent {
         addDependency: async (subtaskId: string, predecessor: string) => {
           await this.taskMasterAdapter.addDependency(subtaskId, predecessor);
         },
-        expandSubtask: async (targetId, subtasks, opts) => {
-          await this.taskMasterAdapter.expandSubtask(targetId, subtasks, {
-            strategy: opts.strategy,
-            ...(opts.force !== undefined ? { force: opts.force } : {}),
-          });
-        },
-        markPendingReplan: () => {
-          this.orchestratorState.pendingReplan = true;
-        },
-        addExpandedSubtask: (subtaskId: string) => {
-          this.orchestratorState.expandedSubtaskIds.add(subtaskId);
-        },
         getRoleAssignment: (targetId: string) => {
           const plan = this.orchestratorState.currentPlanOutput;
           const st = plan?.subtasks?.find((s) => s.id === targetId);
@@ -425,6 +435,15 @@ export class Orchestrator extends BaseAgent {
         },
       },
     });
+  }
+
+  private recordTaskClosureSuccessRate(status: TaskResult['status']): void {
+    this.taskClosureTotalCount += 1;
+    if (status === 'success') {
+      this.taskClosureSuccessCount += 1;
+    }
+    const rate = this.taskClosureSuccessCount / this.taskClosureTotalCount;
+    this.metrics.gauge(ORCHESTRATOR_METRICS.TASK_CLOSURE_SUCCESS_RATE, rate);
   }
 }
 

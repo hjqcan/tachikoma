@@ -25,7 +25,12 @@ import {
   listDir,
   CheckpointManager as CheckpointManagerImpl,
 } from '../session';
+import type { SharedKnowledgeData } from '../session';
 import type { TaskMasterPlanEngine } from './taskmaster-plan-engine';
+import {
+  applySessionCompaction,
+  type SessionCompactionOptions,
+} from '../services/session-compaction-manager';
 
 export interface ResumeFromCheckpointOptions {
   strategy?: RecoveryStrategy;
@@ -136,8 +141,9 @@ export class CheckpointResumeEngine {
         complexity: 'moderate',
       };
 
+      const resumeTask = await this.withTodoSnapshotConstraint(orchestratorTask, sessionManager);
       const planResult = await this.planEngine.executePlanPhase(
-        orchestratorTask,
+        resumeTask,
         { projectRoot: workDir, tag: tasksJsonTag, file: tasksPathAbs },
         startSignal
       );
@@ -198,6 +204,79 @@ export class CheckpointResumeEngine {
       },
     };
   }
+
+  private async withTodoSnapshotConstraint(
+    task: OrchestratorTask,
+    sessionManager: ISessionFileManager
+  ): Promise<OrchestratorTask> {
+    if (this.orchestratorConfig.sessionCompaction.todoGuardEnabled === false) return task;
+
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return task;
+
+    const data = (shared.sharedKnowledge?.data ?? {}) as SharedKnowledgeData;
+    const compactionOptions = this.buildSessionCompactionOptions();
+    const compacted = applySessionCompaction({
+      constraints: task.constraints ?? [],
+      data,
+      ...(compactionOptions ? { options: compactionOptions } : {}),
+    });
+    const snapshot = compacted.contract.todoState;
+    if (!snapshot) return task;
+
+    if (compacted.mismatch) {
+      const previous = compacted.previousTodoHashes
+        .filter((hash) => hash !== snapshot.hash);
+      if (
+        compacted.previousSummaryTodoHash &&
+        compacted.previousSummaryTodoHash !== snapshot.hash &&
+        !previous.includes(compacted.previousSummaryTodoHash)
+      ) {
+        previous.push(compacted.previousSummaryTodoHash);
+      }
+      console.warn(
+        `[CheckpointResumeEngine] todoSnapshotHash mismatch detected during resume: expected=${snapshot.hash}, previous=${previous.join(',')}`
+      );
+    }
+    if (compacted.contractUpdated) {
+      await sessionManager.writeSharedContext({
+        objective: shared.objective,
+        constraints: shared.constraints,
+        sharedKnowledge: {
+          data: {
+            ...data,
+            ...(snapshot ? { todoState: snapshot } : {}),
+            executionStateContract: compacted.contract,
+          },
+          updatedAt: Date.now(),
+        },
+        ...(shared.workspace ? { workspace: shared.workspace } : {}),
+      }).catch(() => undefined);
+    }
+    if (!compacted.updated) return task;
+
+    return {
+      ...task,
+      constraints: compacted.constraints,
+    };
+  }
+
+  private buildSessionCompactionOptions(): SessionCompactionOptions | null {
+    const config = this.orchestratorConfig.sessionCompaction;
+    if (!config) return null;
+
+    if (config.enabled === false) {
+      return {
+        maxConstraintChars: Number.MAX_SAFE_INTEGER,
+        keepLastConstraints: Number.MAX_SAFE_INTEGER,
+      };
+    }
+
+    return {
+      maxConstraintChars: config.maxConstraintChars,
+      keepLastConstraints: config.keepLastConstraints,
+      maxSummaryItems: config.maxSummaryItems,
+      maxSummaryChars: config.maxSummaryChars,
+    };
+  }
 }
-
-

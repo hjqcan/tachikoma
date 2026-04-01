@@ -59,6 +59,35 @@ Notes:
 tachikoma eval --eval-set ./evals/basic.json --workdir .
 ```
 
+## Tachikoma x pi-mono Fusion Unified Suite
+
+Fusion 计划相关用例已聚合到：
+
+- `evals/tachikoma-pi-fusion-regression-suite.json`（18 cases）
+
+一条命令执行：
+
+```bash
+tachikoma eval \
+  --eval-set ./evals/tachikoma-pi-fusion-regression-suite.json \
+  --workdir . \
+  --report ./evals/reports/tachikoma-pi-fusion-report.json \
+  --no-approval
+```
+
+按阶段分开执行（便于定位回归）：
+
+- Recoverable 错误：`evals/tool-not-found-recover.json`、`evals/invalid-args-recover.json`
+- Tool Profile：`evals/pi-core-profile.json`
+- Mid smoke：`evals/mid-smoke-frontend-backend.json`
+- Todo/Resume/FSM：`evals/todo-resume.json`、`evals/todo-fsm-illegal-transition.json`
+- Compaction/Contract：`evals/long-session-compaction.json`、`evals/compaction-todo-consistency.json`
+- ReplayGuard：`evals/resume-idempotency-replay.json`
+
+说明：
+
+- `evals/regression-suite.json` 继续用于质量飞轮（自动回流失败样本），不建议手工覆盖。
+
 Optional flags:
 
 ```bash

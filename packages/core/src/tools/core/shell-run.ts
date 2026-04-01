@@ -7,12 +7,14 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { ShellRunInput, ShellRunOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir, truncateOutput, DEFAULT_MAX_OUTPUT } from './utils';
 import { mergeEnv } from '../env-utils';
 import { shellSessionManager } from './shell-session-manager';
+import { buildTool } from '../build-tool';
+import { getShellRunPrompt } from './prompts/shell-run-prompt';
 
 // =============================================================================
 // Timeout Configuration (inspired by OpenCode & Codex best practices)
@@ -605,7 +607,7 @@ async function executeCommand(
 /**
  * shell_run 工具定义
  */
-export const shellRunTool: Tool = {
+export const shellRunTool = buildTool({
   name: 'shell_run',
   title: 'Run Shell Command',
   description: `Execute shell commands in the working directory.
@@ -614,8 +616,16 @@ export const shellRunTool: Tool = {
 - Dangerous commands are rejected
 - Large output is auto-truncated (default max 50000 chars)
 - **background mode**: Set background=true to run long-running commands (like dev servers) without blocking. Returns PID immediately.
-- Background processes are scoped to the current task and auto-terminated on task completion. Use shell_bg to manage them.`,
+- Background processes are scoped to the current task and auto-terminated on task completion.`,
   isCommandBased: true,
+  searchHint: 'bash shell command terminal process background session',
+  isReadOnly: (input) => !isMutatingCommand((input as ExtendedShellRunInput | undefined)?.command),
+  isConcurrencySafe: (input) => !isMutatingCommand((input as ExtendedShellRunInput | undefined)?.command),
+  isDestructive: (input) => {
+    const command = (input as ExtendedShellRunInput | undefined)?.command;
+    return typeof command === 'string' ? isDangerousCommand(command) : false;
+  },
+  prompt: getShellRunPrompt,
   inputSchema: {
     type: 'object',
     properties: {
@@ -868,4 +878,4 @@ export const shellRunTool: Tool = {
     const { command } = input as ExtendedShellRunInput;
     return isMutatingCommand(command);
   },
-};
+});

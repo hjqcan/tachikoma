@@ -2,15 +2,25 @@ import type { Task, TaskResult, RetryPolicy } from '../../types';
 import type { IWorkerPool } from '../worker-pool';
 import type { OrchestratorConfig, OrchestratorTask, PlannerOutput, SubTask, ExecutionStep } from '../types';
 import type { OrchestratorState } from '../state';
-import { generateTimestampId } from '../session';
+import { generateTimestampId, type SharedKnowledgeData } from '../session';
 import { resolveRetryPolicy, calculateRetryDelay, shouldRetry } from '../config';
 import type { AggregationEngine } from '../engines/aggregation-engine';
 import { ExecutionEngine } from '../engines/execution-engine';
-import { TaskMasterPlanEngine } from '../engines/taskmaster-plan-engine';
 import { TaskMasterAdapter } from '../adapters/taskmaster-adapter';
 import type { ApprovalArbitrationService } from '../services/approval-arbitration';
 import type { IntegrationContextService } from '../services/integration-context';
 import { VerificationGateService, type VerificationLayerResult, type VerificationResult } from '../services/verification-gate';
+import {
+  appendTodoReplayEvent,
+  createTodoReplayEvent,
+  createTodoReplayEventId,
+  normalizeSharedTodoSnapshot,
+  normalizeTodoReplayGuard,
+} from '../services/todo-snapshot-context';
+import {
+  buildMidExecutionProbeConstraint,
+  detectMidExecutionProbe,
+} from '../services/mid-execution-probe';
 import type { EmitFn } from './types';
 import type { ProgressReporter } from './progress-reporter';
 import type { CheckpointService } from './checkpoint-service';
@@ -23,7 +33,6 @@ export interface ExecutionLoopDeps {
   workerPoolInjected: boolean;
   aggregationEngine: AggregationEngine;
   executionEngine: ExecutionEngine;
-  planEngine: TaskMasterPlanEngine;
   taskMasterAdapter: TaskMasterAdapter;
   emit: EmitFn;
   progress: ProgressReporter;
@@ -51,10 +60,8 @@ export class ReplanNeededError extends Error {
  * Critical tool names that should trigger replan on failure
  */
 const CRITICAL_TOOLS = new Set([
-  'package_install',
   'shell_run',
   'npm_install',
-  'dev_server',
 ]);
 
 /**
@@ -151,7 +158,6 @@ export class ExecutionLoop {
   private readonly workerPoolInjected: boolean;
   private readonly aggregationEngine: AggregationEngine;
   private readonly executionEngine: ExecutionEngine;
-  private readonly planEngine: TaskMasterPlanEngine;
   private readonly taskMasterAdapter: TaskMasterAdapter;
   private readonly emit: EmitFn;
   private readonly progress: ProgressReporter;
@@ -168,7 +174,6 @@ export class ExecutionLoop {
     this.workerPoolInjected = deps.workerPoolInjected;
     this.aggregationEngine = deps.aggregationEngine;
     this.executionEngine = deps.executionEngine;
-    this.planEngine = deps.planEngine;
     this.taskMasterAdapter = deps.taskMasterAdapter;
     this.emit = deps.emit;
     this.progress = deps.progress;
@@ -181,7 +186,7 @@ export class ExecutionLoop {
 
   async runPlan(
     taskId: string,
-    orchestratorTask: OrchestratorTask,
+    _orchestratorTask: OrchestratorTask,
     workDir: string,
     planOutput: PlannerOutput,
     signal: AbortSignal
@@ -226,48 +231,10 @@ export class ExecutionLoop {
 
         await this.executeStep(taskId, step, subtaskMap, activePlan.delegation.timeout, retryPolicy, signal);
         await this.checkpoints.saveSnapshot(taskId, 'executing', `step-${step.order}`).catch(() => undefined);
-
-        if (this.state.pendingReplan) {
-          break;
-        }
       }
 
       if (signal.aborted) break;
-      if (!this.state.pendingReplan) break;
-
-      this.state.pendingReplan = false;
-
-      const ref = this.taskMasterAdapter.getRef();
-      const sessionTag = ref?.tag ?? this.state.sessionId ?? 'master';
-      const file = ref?.file;
-
-      const replanned = await this.planEngine.executePlanPhase(
-        orchestratorTask,
-        { projectRoot: workDir, tag: sessionTag, ...(file ? { file } : {}) },
-        signal
-      );
-      if (!replanned.success || !replanned.output) {
-        throw new Error(`Replan failed: ${replanned.error ?? 'unknown error'}`);
-      }
-
-      if (replanned.tasksPath) {
-        // 只补齐新增项，避免覆盖 run 开始时记录的 originalStatuses
-        this.taskMasterAdapter.mergeOriginalStatuses(replanned.originalStatuses);
-        this.taskMasterAdapter.initialize({
-          projectRoot: workDir,
-          tasksPath: replanned.tasksPath,
-          tag: replanned.effectiveTag ?? sessionTag,
-        });
-      }
-
-      const sm = this.state.sessionManager;
-      if (sm) {
-        await this.taskMasterAdapter.saveRuntime(sm, taskId, replanned.output).catch(() => undefined);
-      }
-
-      activePlan = replanned.output;
-      mergeSubtasks(activePlan.subtasks);
-      this.state.currentPlanOutput = activePlan;
+      break;
     }
 
     this.emit('aggregate:start', taskId, {});
@@ -485,6 +452,31 @@ export class ExecutionLoop {
       subtaskMap.set(subtaskId, activeSubtask);
     }
 
+    const replayGuardResult = await this.tryCompleteSubtaskByReplayGuard(activeSubtask);
+    if (replayGuardResult) {
+      this.state.markSubtaskCompleted(subtaskId, replayGuardResult);
+      activeSubtask.status = 'success';
+      console.info(`[ExecutionLoop] Subtask ${subtaskId} skipped by replay guard`);
+      await this.taskMasterAdapter.writeStatus(subtaskId, 'done').catch(() => undefined);
+      await this.getApprovalService()?.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
+      this.emit('subtask:complete', taskId, { result: replayGuardResult }, subtaskId);
+      const replayGuardData = this.extractReplayGuardData(replayGuardResult);
+      if (replayGuardData) {
+        this.emit(
+          'todo:replay_skipped',
+          taskId,
+          {
+            subtaskId,
+            ...replayGuardData,
+          },
+          subtaskId
+        );
+      }
+      await this.progress.write(taskId, 'executing').catch(() => undefined);
+      await this.checkpoints.saveSnapshot(taskId, 'executing', 'subtask-replay-skip').catch(() => undefined);
+      return;
+    }
+
     this.state.markSubtaskRunning(subtaskId);
     activeSubtask.status = 'running';
     await this.taskMasterAdapter.writeStatus(subtaskId, 'in-progress').catch(() => undefined);
@@ -575,13 +567,18 @@ export class ExecutionLoop {
 
         // Derive language constraints from role capabilities
         const roleConstraints = this.deriveConstraintsFromRole(activeSubtask.roleId);
+        const observerConstraint = this.consumeMidExecutionProbeConstraint(taskId, subtaskId);
         
         const workerTask: Task = {
           id: activeSubtask.id,
           type: 'atomic',
           objective: activeSubtask.objective,
           ...(activeSubtask.parentObjective !== undefined && { parentObjective: activeSubtask.parentObjective }),
-          constraints: [...(activeSubtask.constraints ?? []), ...roleConstraints],
+          constraints: [
+            ...(activeSubtask.constraints ?? []),
+            ...roleConstraints,
+            ...(observerConstraint ? [observerConstraint] : []),
+          ],
           ...(activeSubtask.outputSchema !== undefined && { outputSchema: activeSubtask.outputSchema }),
           context: {
             parentTaskId: taskId,
@@ -604,19 +601,6 @@ export class ExecutionLoop {
         }
 
         await integration?.syncAfterSubtaskCompletion(workerId, activeSubtask, result).catch(() => undefined);
-
-        if (this.state.expandedSubtaskIds.has(subtaskId)) {
-          this.state.expandedSubtaskIds.delete(subtaskId);
-          this.state.pendingReplan = true;
-          this.state.executionState?.runningSubtasks.delete(subtaskId);
-          activeSubtask.status = 'pending';
-          delete activeSubtask.assignedWorkerId;
-          await this.getApprovalService()?.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
-          this.emit('subtask:complete', taskId, { result }, subtaskId);
-          await this.progress.write(taskId, 'executing').catch(() => undefined);
-          await this.checkpoints.saveSnapshot(taskId, 'executing', 'expanded').catch(() => undefined);
-          return;
-        }
 
         if (result.status !== 'success') {
           const out = result.output && typeof result.output === 'object' ? (result.output as Record<string, unknown>) : {};
@@ -709,10 +693,13 @@ export class ExecutionLoop {
           }
         }
 
+        this.captureMidExecutionProbe(taskId, subtaskId, result.modifiedFiles ?? []);
+
         this.state.markSubtaskCompleted(subtaskId, result);
         activeSubtask.status = 'success';
         console.info(`[ExecutionLoop] Subtask ${subtaskId} completed successfully`);
         await this.taskMasterAdapter.writeStatus(subtaskId, 'done').catch(() => undefined);
+        await this.recordTodoReplayEvent(activeSubtask).catch(() => undefined);
         await this.getApprovalService()?.releaseFileLocksForSubtask(subtaskId).catch(() => undefined);
 
         if (result.metrics?.tokensUsed) {
@@ -774,6 +761,133 @@ export class ExecutionLoop {
     });
   }
 
+  private extractReplayGuardData(
+    result: TaskResult
+  ): { eventId: string; todoHash: string; todoRevision: number } | null {
+    const output = result.output;
+    if (!output || typeof output !== 'object') return null;
+
+    const record = output as Record<string, unknown>;
+    const replayGuard = record.replayGuard;
+    if (!replayGuard || typeof replayGuard !== 'object') return null;
+
+    const replay = replayGuard as Record<string, unknown>;
+    const eventId = typeof replay.eventId === 'string' ? replay.eventId : '';
+    const todoHash = typeof replay.todoHash === 'string' ? replay.todoHash : '';
+    const todoRevision = replay.todoRevision;
+    if (!eventId || !todoHash) return null;
+    if (typeof todoRevision !== 'number' || !Number.isInteger(todoRevision) || todoRevision < 0) {
+      return null;
+    }
+
+    return {
+      eventId,
+      todoHash,
+      todoRevision,
+    };
+  }
+
+  private async tryCompleteSubtaskByReplayGuard(subtask: SubTask): Promise<TaskResult | null> {
+    if (this.orchestratorConfig.featureFlags.resume.replayGuard.enabled === false) {
+      return null;
+    }
+    const sessionManager = this.state.sessionManager;
+    if (!sessionManager) return null;
+
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return null;
+
+    const data = (shared.sharedKnowledge?.data ?? {}) as SharedKnowledgeData;
+    const contractTodo = (data.executionStateContract as Record<string, unknown> | undefined)?.todoState;
+    const snapshot = normalizeSharedTodoSnapshot(contractTodo) ?? normalizeSharedTodoSnapshot(data.todoState);
+    if (!snapshot) return null;
+
+    const replayGuard = normalizeTodoReplayGuard(data.todoReplayGuard);
+    const eventId = createTodoReplayEventId({
+      subtaskId: subtask.id,
+      objective: subtask.objective,
+      snapshot,
+    });
+
+    if (!replayGuard.events.some((event) => event.eventId === eventId)) {
+      return null;
+    }
+
+    const now = Date.now();
+    return {
+      taskId: subtask.id,
+      status: 'success',
+      output: {
+        text: `ReplayGuard skipped duplicate execution for ${subtask.id}`,
+        replayGuard: {
+          eventId,
+          todoHash: snapshot.hash,
+          todoRevision: snapshot.revision,
+        },
+      },
+      artifacts: [],
+      metrics: {
+        startTime: now,
+        endTime: now,
+        duration: 0,
+        tokensUsed: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+      },
+      trace: {
+        traceId: generateTimestampId('trace'),
+        spanId: generateTimestampId('span'),
+        operation: 'execution.replay_guard_skip',
+        attributes: {
+          subtaskId: subtask.id,
+          eventId,
+          todoHash: snapshot.hash,
+          todoRevision: snapshot.revision,
+        },
+        events: [],
+        duration: 0,
+      },
+    };
+  }
+
+  private async recordTodoReplayEvent(subtask: SubTask): Promise<void> {
+    if (this.orchestratorConfig.featureFlags.resume.replayGuard.enabled === false) {
+      return;
+    }
+    const sessionManager = this.state.sessionManager;
+    if (!sessionManager) return;
+
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return;
+
+    const data = (shared.sharedKnowledge?.data ?? {}) as SharedKnowledgeData;
+    const contractTodo = (data.executionStateContract as Record<string, unknown> | undefined)?.todoState;
+    const snapshot = normalizeSharedTodoSnapshot(contractTodo) ?? normalizeSharedTodoSnapshot(data.todoState);
+    if (!snapshot) return;
+
+    const replayGuard = normalizeTodoReplayGuard(data.todoReplayGuard);
+    const replayEvent = createTodoReplayEvent({
+      subtaskId: subtask.id,
+      objective: subtask.objective,
+      snapshot,
+    });
+    const next = appendTodoReplayEvent(replayGuard, replayEvent);
+    if (!next.updated) return;
+
+    await sessionManager.writeSharedContext({
+      objective: shared.objective,
+      constraints: shared.constraints,
+      sharedKnowledge: {
+        data: {
+          ...data,
+          todoReplayGuard: next.guard,
+        },
+        updatedAt: Date.now(),
+      },
+      ...(shared.workspace ? { workspace: shared.workspace } : {}),
+    });
+  }
+
   private collectModifiedFiles(results: Iterable<TaskResult | undefined>): string[] {
     const files = new Set<string>();
     for (const result of results) {
@@ -784,6 +898,50 @@ export class ExecutionLoop {
       }
     }
     return Array.from(files);
+  }
+
+  private consumeMidExecutionProbeConstraint(taskId: string, subtaskId: string): string | undefined {
+    if (this.orchestratorConfig.featureFlags.midExecutionSmoke.enabled === false) {
+      return undefined;
+    }
+    const probe = this.state.dequeueObserverProbe();
+    if (!probe) return undefined;
+
+    this.emit(
+      'observer:probe_injected',
+      taskId,
+      {
+        subtaskId,
+        probeType: probe.type,
+        sourceSubtaskId: probe.sourceSubtaskId,
+        probeId: probe.id,
+      },
+      subtaskId
+    );
+    return buildMidExecutionProbeConstraint(probe);
+  }
+
+  private captureMidExecutionProbe(taskId: string, sourceSubtaskId: string, modifiedFiles: string[]): void {
+    if (this.orchestratorConfig.featureFlags.midExecutionSmoke.enabled === false) {
+      return;
+    }
+    const probe = detectMidExecutionProbe(sourceSubtaskId, modifiedFiles);
+    if (!probe) return;
+
+    const queued = this.state.enqueueObserverProbe(probe);
+    if (!queued) return;
+
+    this.emit(
+      'observer:probe_triggered',
+      taskId,
+      {
+        subtaskId: sourceSubtaskId,
+        probeType: probe.type,
+        probeId: probe.id,
+        matchedFiles: probe.matchedFiles,
+      },
+      sourceSubtaskId
+    );
   }
 
   /**
@@ -1145,12 +1303,12 @@ ${verifyStep}
   /**
    * Map build gate command to actual shell command
    * 
-   * Converts internal commands (like 'lsp_diagnostics') to real shell commands
+   * Converts internal verification command labels (like 'lsp_check') to real shell commands
    * that workers can run for verification.
    */
   private mapToShellCommand(command?: string): string {
     if (!command) return 'npx tsc --noEmit';
-    if (command === 'lsp_diagnostics') return 'npx tsc --noEmit';
+    if (command === 'lsp_check') return 'npx tsc --noEmit';
     return command;
   }
 

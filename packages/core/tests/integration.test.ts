@@ -13,6 +13,7 @@ import {
   Orchestrator,
   createOrchestratorConfig,
   MockWorkerPool,
+  DefaultWorkerPool,
   DEFAULT_WORKER_POOL_CONFIG,
   type OrchestratorEventType,
   // Session
@@ -22,7 +23,10 @@ import {
   CheckpointManager,
 } from '../src/orchestrator';
 import { Planner, MockLLMClient } from '../src/planner';
-import type { Task } from '../src/types';
+import type { Task, TaskResult } from '../src/types';
+import { BaseAgent } from '../src/abstracts/base-agent';
+import { MemoryMetrics, ORCHESTRATOR_METRICS } from '../src/observability';
+import { formatTodoSnapshotConstraint } from '../src/orchestrator/services/todo-snapshot-context';
 
 // ============================================================================
 // 测试环境配置
@@ -139,6 +143,51 @@ function createTestWorkerPool(options?: {
     initialWorkers: workerCount,
     taskDelay,
   });
+}
+
+class ProbeWorkerAgent extends BaseAgent {
+  runCount = 0;
+  observedConstraints: string[][] = [];
+
+  constructor(id: string) {
+    super(id, 'worker', {
+      name: id,
+      description: 'Probe Worker',
+      provider: 'mock',
+      model: 'mock',
+      temperature: 0,
+      maxTokens: 100,
+    });
+  }
+
+  protected async executeTask(task: Task, _signal: AbortSignal): Promise<TaskResult> {
+    this.runCount += 1;
+    this.observedConstraints.push([...(task.constraints ?? [])]);
+    const now = Date.now();
+    return {
+      taskId: task.id,
+      status: 'success',
+      output: { text: `ok-${this.runCount}` },
+      artifacts: [],
+      ...(this.runCount === 1 ? { modifiedFiles: ['src/api/routes/users.ts'] } : {}),
+      metrics: {
+        startTime: now,
+        endTime: now,
+        duration: 0,
+        tokensUsed: 0,
+        toolCallCount: 0,
+        retryCount: 0,
+      },
+      trace: {
+        traceId: `trace-${task.id}`,
+        spanId: `span-${task.id}`,
+        operation: 'test.probe-worker',
+        attributes: {},
+        events: [],
+        duration: 0,
+      },
+    };
+  }
 }
 
 // ============================================================================
@@ -839,6 +888,296 @@ describe('组件间协作测试', () => {
       expect(sessionManager.getSessionPath()).toContain(TEST_ROOT_DIR);
 
       // 清理
+      await sessionManager.close();
+      await orchestrator.stop();
+    });
+  });
+
+  describe('System Observer + ExecutionLoop 协作', () => {
+    it('关键文件变更应触发 probe，并在下一子任务注入 observer 约束', async () => {
+      const planner = createTestPlanner({ subtaskCount: 2, simulateDelay: 0 });
+      const workerPool = new DefaultWorkerPool({
+        selectionStrategy: 'round-robin',
+        maxWorkers: 2,
+        minWorkers: 0,
+        idleTimeout: 1000,
+        healthCheckInterval: 5000,
+      });
+      const probeAgent = new ProbeWorkerAgent('worker-probe');
+      workerPool.register({
+        id: 'worker-probe',
+        status: 'idle',
+        agent: probeAgent,
+        capabilities: ['general', 'role:generalist'],
+      });
+
+      const sessionManager = await createAndInitializeSessionFileManager(
+        `${TEST_SESSION_ID}-observer-probe`,
+        { rootDir: TEST_ROOT_DIR }
+      );
+
+      const orchestrator = new Orchestrator('orch-observer-probe', {
+        planner,
+        workerPool,
+        sessionManager,
+        config: {
+          session: { rootDir: TEST_ROOT_DIR, enableWatch: false },
+          checkpoint: { enabled: false },
+          deviationDetection: { enabled: false },
+        },
+      });
+
+      const triggered: string[] = [];
+      const injected: string[] = [];
+      orchestrator.on('observer:probe_triggered', (event) => {
+        const data = event.data as { probeType?: string } | undefined;
+        triggered.push(data?.probeType ?? 'unknown');
+      });
+      orchestrator.on('observer:probe_injected', (event) => {
+        const data = event.data as { probeType?: string } | undefined;
+        injected.push(data?.probeType ?? 'unknown');
+      });
+
+      const task: Task = {
+        id: 'task-observer-probe',
+        type: 'composite',
+        objective: '测试 observer probe 注入',
+        constraints: [],
+      };
+
+      const result = await orchestrator.run(
+        withTaskmasterContext(task, `${TEST_SESSION_ID}-observer-probe`)
+      );
+
+      expect(result.status).toBe('success');
+      expect(probeAgent.runCount).toBeGreaterThanOrEqual(2);
+      expect(triggered).toContain('api');
+      expect(injected).toContain('api');
+      expect(
+        probeAgent.observedConstraints[1]?.some(
+          (constraint) =>
+            constraint.includes('[System Observer]') && constraint.includes('Probe type: api')
+        )
+      ).toBe(true);
+
+      await sessionManager.close();
+      await orchestrator.stop();
+    });
+  });
+
+  describe('Todo Snapshot Hash Consistency', () => {
+    it('当任务约束携带旧 todoSnapshotHash 时应触发 mismatch 事件并计数', async () => {
+      const planner = createTestPlanner({ subtaskCount: 1, simulateDelay: 0 });
+      const workerPool = createTestWorkerPool({ workerCount: 1, taskDelay: 0 });
+      const sessionTag = `${TEST_SESSION_ID}-todo-mismatch`;
+      const sessionManager = await createAndInitializeSessionFileManager(sessionTag, {
+        rootDir: TEST_ROOT_DIR,
+      });
+
+      const staleConstraint = formatTodoSnapshotConstraint({
+        revision: 1,
+        pendingCount: 1,
+        counts: { pending: 1, in_progress: 0, completed: 0, blocked: 0, cancelled: 0 },
+        hash: 'stalehash00000000',
+        updatedAt: Date.now() - 1000,
+        updatedByWorkerId: 'worker-old',
+        subtaskId: 'old',
+        sourceTool: 'todowrite',
+        todos: [{ id: 'old-1', content: 'old', status: 'pending' }],
+      });
+
+      await sessionManager.writeSharedContext({
+        objective: 'mismatch test',
+        constraints: [],
+        sharedKnowledge: {
+          data: {
+            todoState: {
+              revision: 5,
+              pendingCount: 0,
+              counts: { pending: 0, in_progress: 0, completed: 1, blocked: 0, cancelled: 0 },
+              hash: 'realhash111111111',
+              updatedAt: Date.now(),
+              updatedByWorkerId: 'worker-new',
+              subtaskId: '1.1',
+              sourceTool: 'todowrite',
+              todos: [{ id: '1.1', content: 'done', status: 'completed' }],
+            },
+          },
+          updatedAt: Date.now(),
+        },
+        workspace: {
+          rootPath: resolve(TEST_ROOT_DIR),
+          keyFiles: [],
+        },
+      });
+
+      const metrics = new MemoryMetrics();
+      const orchestrator = new Orchestrator('orch-todo-mismatch', {
+        planner,
+        workerPool,
+        sessionManager,
+        metrics,
+      });
+
+      const mismatchEvents: Array<Record<string, unknown>> = [];
+      orchestrator.on('compaction:todo_mismatch', (event) => {
+        mismatchEvents.push(event.data as Record<string, unknown>);
+      });
+
+      const task: Task = {
+        id: 'task-todo-mismatch',
+        type: 'composite',
+        objective: '验证 todo hash 冲突处理',
+        constraints: [staleConstraint],
+      };
+
+      const result = await orchestrator.run(withTaskmasterContext(task, sessionTag));
+      expect(result.status).toBe('success');
+      expect(mismatchEvents.length).toBeGreaterThan(0);
+      expect(mismatchEvents[0]?.expectedTodoHash).toBe('realhash111111111');
+
+      const snapshot = metrics.getMetrics();
+      expect(
+        snapshot.metrics[ORCHESTRATOR_METRICS.SESSION_COMPACTION_TODO_MISMATCH_COUNT]
+      ).toEqual({
+        type: 'counter',
+        value: 1,
+      });
+
+      await sessionManager.close();
+      await orchestrator.stop();
+    });
+
+    it('约束过长时应触发 session compaction 并记录指标', async () => {
+      const planner = createTestPlanner({ subtaskCount: 1, simulateDelay: 0 });
+      const workerPool = createTestWorkerPool({ workerCount: 1, taskDelay: 0 });
+      const sessionTag = `${TEST_SESSION_ID}-session-compaction`;
+      const sessionManager = await createAndInitializeSessionFileManager(sessionTag, {
+        rootDir: TEST_ROOT_DIR,
+      });
+
+      await sessionManager.writeSharedContext({
+        objective: 'compaction test',
+        constraints: [],
+        sharedKnowledge: {
+          data: {
+            todoState: {
+              revision: 9,
+              pendingCount: 1,
+              counts: { pending: 1, in_progress: 0, completed: 2, blocked: 0, cancelled: 0 },
+              hash: 'compactionhash1111',
+              updatedAt: Date.now(),
+              updatedByWorkerId: 'worker-a',
+              subtaskId: '1.1',
+              sourceTool: 'todowrite',
+              todos: [{ id: 'todo-1', content: 'keep progressing', status: 'pending' }],
+            },
+          },
+          updatedAt: Date.now(),
+        },
+        workspace: {
+          rootPath: resolve(TEST_ROOT_DIR),
+          keyFiles: [],
+        },
+      });
+
+      const metrics = new MemoryMetrics();
+      const orchestrator = new Orchestrator('orch-session-compaction', {
+        planner,
+        workerPool,
+        sessionManager,
+        metrics,
+      });
+
+      const compactionEvents: Array<Record<string, unknown>> = [];
+      orchestrator.on('compaction:applied', (event) => {
+        compactionEvents.push(event.data as Record<string, unknown>);
+      });
+
+      const largeConstraints = Array.from({ length: 16 }, (_, index) =>
+        `Constraint ${index + 1}: ${'this is a very long constraint segment '.repeat(8)}`
+      );
+
+      const task: Task = {
+        id: 'task-session-compaction',
+        type: 'composite',
+        objective: '验证 session compaction 触发',
+        constraints: largeConstraints,
+      };
+
+      const result = await orchestrator.run(withTaskmasterContext(task, sessionTag));
+      expect(result.status).toBe('success');
+      expect(compactionEvents.length).toBeGreaterThan(0);
+
+      const latestShared = await sessionManager.readSharedContext();
+      const data = latestShared?.sharedKnowledge?.data as Record<string, unknown> | undefined;
+      const executionStateContract = data?.executionStateContract as
+        | Record<string, unknown>
+        | undefined;
+      const summaryState = executionStateContract?.summaryState as
+        | Record<string, unknown>
+        | undefined;
+      expect(typeof summaryState?.summary).toBe('string');
+      expect(summaryState?.todoSnapshotHash).toBe('compactionhash1111');
+
+      const snapshot = metrics.getMetrics();
+      expect(snapshot.metrics[ORCHESTRATOR_METRICS.SESSION_COMPACTION_COUNT]).toEqual({
+        type: 'counter',
+        value: 1,
+      });
+
+      await sessionManager.close();
+      await orchestrator.stop();
+    });
+
+    it('应记录 task.closure.success_rate 滚动比率', async () => {
+      const planner = createTestPlanner({ subtaskCount: 1, simulateDelay: 0 });
+      const workerPool = createTestWorkerPool({ workerCount: 1, taskDelay: 0 });
+      const metrics = new MemoryMetrics();
+
+      const sessionTag = `${TEST_SESSION_ID}-closure-rate`;
+      const sessionManager = await createAndInitializeSessionFileManager(sessionTag, {
+        rootDir: TEST_ROOT_DIR,
+      });
+
+      const orchestrator = new Orchestrator('orch-closure-rate', {
+        planner,
+        workerPool,
+        sessionManager,
+        metrics,
+      });
+
+      const firstTask: Task = {
+        id: 'task-closure-rate-success',
+        type: 'composite',
+        objective: '第一次运行成功',
+        constraints: [],
+      };
+      const firstResult = await orchestrator.run(withTaskmasterContext(firstTask, `${sessionTag}-ok`));
+      expect(firstResult.status).toBe('success');
+
+      const afterSuccess = metrics.getMetrics();
+      expect(afterSuccess.metrics[ORCHESTRATOR_METRICS.TASK_CLOSURE_SUCCESS_RATE]).toEqual({
+        type: 'gauge',
+        value: 1,
+      });
+
+      const secondTask: Task = {
+        id: 'task-closure-rate-failure',
+        type: 'composite',
+        objective: '第二次运行失败',
+        constraints: [],
+      };
+      // 不提供 taskmaster context，触发 run 前置校验失败
+      const secondResult = await orchestrator.run(secondTask);
+      expect(secondResult.status).toBe('failure');
+
+      const afterFailure = metrics.getMetrics();
+      expect(afterFailure.metrics[ORCHESTRATOR_METRICS.TASK_CLOSURE_SUCCESS_RATE]).toEqual({
+        type: 'gauge',
+        value: 0.5,
+      });
+
       await sessionManager.close();
       await orchestrator.stop();
     });

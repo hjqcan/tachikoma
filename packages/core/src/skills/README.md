@@ -108,35 +108,6 @@ const prompt = blockManager.renderLoadedSkillsForPrompt();
 
 ---
 
-## Skill Tool
-
-`skillTool` 提供 LLM 可调用的技能管理接口：
-
-```typescript
-import { skillTool } from '@tachikoma/core/tools';
-import type { ExecutionContext } from '@tachikoma/core';
-
-// 直接调用时需要提供 ExecutionContext（在 Worker 内部调用时会自动注入）
-const ctx: ExecutionContext = {
-  workDir: process.cwd(),
-  permissions: [],
-};
-
-// 刷新技能列表
-await skillTool.execute({ command: 'refresh' }, ctx);
-
-// 列出已加载技能
-await skillTool.execute({ command: 'list' }, ctx);
-
-// 加载技能
-await skillTool.execute({ command: 'load', skills: ['git-workflow'] }, ctx);
-
-// 卸载技能
-await skillTool.execute({ command: 'unload', skills: ['git-workflow'] }, ctx);
-```
-
----
-
 ## Skill Learning（技能学习）
 
 从执行轨迹自动学习新技能：

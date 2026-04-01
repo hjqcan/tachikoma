@@ -41,7 +41,7 @@ export type {
 } from './types';
 
 // 预定义指标名称
-export { WORKER_METRICS, SANDBOX_METRICS } from './types';
+export { WORKER_METRICS, ORCHESTRATOR_METRICS, SANDBOX_METRICS } from './types';
 
 // ============================================================================
 // Logger 导出

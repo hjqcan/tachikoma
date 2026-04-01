@@ -6,11 +6,13 @@
 
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { FileListInput, FileListOutput, FileInfo, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
 import { FILE_LIST_DEFAULT_EXCLUDES, FILE_LIST_MAX_RESULTS } from '../constants';
+import { buildTool } from '../build-tool';
+import { getFileListPrompt } from './prompts/file-list-prompt';
 
 /** 扩展的 FileListInput，包含新参数 */
 interface ExtendedFileListInput extends FileListInput {
@@ -164,7 +166,7 @@ async function readDirRecursive(
 /**
  * file_list 工具定义
  */
-export const fileListTool: Tool = {
+export const fileListTool = buildTool({
   name: 'file_list',
   title: 'List Files',
   description: `列出指定目录的内容。
@@ -173,6 +175,10 @@ export const fileListTool: Tool = {
 - ⚠️ 递归模式下 node_modules, .git 等大目录默认被排除
 - 结果默认限制为 500 条，可通过 maxResults 调整
 - 路径相对于工作目录`,
+  searchHint: 'list directory tree filenames structure workspace',
+  isReadOnly: () => true,
+  isConcurrencySafe: () => true,
+  prompt: getFileListPrompt,
   inputSchema: {
     type: 'object',
     properties: {
@@ -363,4 +369,4 @@ export const fileListTool: Tool = {
       };
     }
   },
-};
+});

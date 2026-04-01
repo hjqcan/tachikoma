@@ -11,9 +11,11 @@
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory, ToolPermission } from '../types';
+import { buildTool } from '../build-tool';
+import { getSpawnSubagentPrompt } from './prompts/spawn-subagent-prompt';
 
 /**
  * 子任务结果
@@ -138,7 +140,7 @@ function validateInput(input: unknown): {
 /**
  * spawn_subagent 工具定义
  */
-export const spawnSubagentTool: Tool = {
+export const spawnSubagentTool = buildTool({
   name: 'spawn_subagent',
   title: 'Spawn Sub-Agent',
   description: `创建一个子任务/子Agent来处理特定目标。
@@ -151,6 +153,10 @@ export const spawnSubagentTool: Tool = {
 ⚠️ 路径约定：
 - 子任务定义写入 tasks.json（由 Orchestrator 管理）
 - Session 模式下通过 sessionId 隔离`,
+  searchHint: 'delegate task subagent parallel isolated context',
+  isReadOnly: () => false,
+  isConcurrencySafe: () => false,
+  prompt: getSpawnSubagentPrompt,
 
   layer: ToolLayer.Atomic,
   category: ToolCategory.Agent,
@@ -333,6 +339,6 @@ export const spawnSubagentTool: Tool = {
       },
     };
   },
-};
+});
 
 export default spawnSubagentTool;

@@ -1,0 +1,383 @@
+{
+  "id": "tachikoma-pi-fusion-regression-suite",
+  "name": "Tachikoma x pi-mono Fusion Regression Suite",
+  "description": "Unified regression entry for the tachikoma-pi-mono fusion plan (recoverable errors, pi-core profile, mid-smoke, todo FSM/resume, compaction, replay idempotency).",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "unknown-tool-fallback-to-available-tools",
+      "objective": "Attempt a task where a suggested tool is unavailable, recover from TOOL_NOT_FOUND by switching to available tools, and complete the task.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "TOOL_NOT_FOUND",
+          "recovered"
+        ],
+        "trajectory": {
+          "maxSteps": 30
+        },
+        "llmCriteria": "Did the agent avoid hard failure after unknown tool and continue using available tools?"
+      },
+      "metadata": {
+        "phase": "P0-3",
+        "focus": "unknown-tool-recoverable",
+        "sourceEvalSet": "tool-not-found-recover"
+      }
+    },
+    {
+      "id": "unknown-tool-no-task-abort",
+      "objective": "When receiving a synthetic unknown-tool error, continue by selecting an alternative tool path and finish without terminating the subtask.",
+      "expected": {
+        "success": true,
+        "trajectory": {
+          "maxSteps": 25
+        },
+        "llmCriteria": "Did the trajectory continue after synthetic error instead of aborting?"
+      },
+      "metadata": {
+        "phase": "P0-3",
+        "focus": "synthetic-error-continuation",
+        "sourceEvalSet": "tool-not-found-recover"
+      }
+    },
+    {
+      "id": "missing-required-arg-then-retry",
+      "objective": "Invoke a tool with missing required arguments, observe TOOL_VALIDATION_ERROR, correct the arguments, and succeed on retry.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "TOOL_VALIDATION_ERROR"
+        ],
+        "trajectory": {
+          "maxSteps": 30
+        },
+        "llmCriteria": "Did the agent repair tool input after validation failure and retry successfully?"
+      },
+      "metadata": {
+        "phase": "P0-3",
+        "focus": "validation-error-recovery",
+        "sourceEvalSet": "invalid-args-recover"
+      }
+    },
+    {
+      "id": "invalid-shape-to-valid-shape",
+      "objective": "Send malformed tool input payload, then adjust payload shape according to error hint and complete the operation without subtask failure.",
+      "expected": {
+        "success": true,
+        "trajectory": {
+          "maxSteps": 30
+        },
+        "llmCriteria": "Did the agent convert invalid payload schema into a valid one using returned hint?"
+      },
+      "metadata": {
+        "phase": "P0-3",
+        "focus": "input-shape-correction",
+        "sourceEvalSet": "invalid-args-recover"
+      }
+    },
+    {
+      "id": "pi-core-hint-sanitization",
+      "objective": "Under pi-core profile, ignore unavailable recommended tools and finish the task using only read/write/edit/bash equivalents.",
+      "expected": {
+        "success": true,
+        "trajectory": {
+          "maxSteps": 30
+        },
+        "llmCriteria": "Did the agent stay within pi-core tools after preflight sanitization?"
+      },
+      "metadata": {
+        "phase": "P0-2",
+        "focus": "profile-enforcement",
+        "sourceEvalSet": "pi-core-profile"
+      }
+    },
+    {
+      "id": "pi-core-alias-resolution",
+      "objective": "Use pi-core aliases in constraints and execute successfully after alias mapping to Tachikoma native tools.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "pi-core"
+        ],
+        "trajectory": {
+          "maxSteps": 25
+        }
+      },
+      "metadata": {
+        "phase": "P0-2",
+        "focus": "alias-mapping",
+        "sourceEvalSet": "pi-core-profile"
+      }
+    },
+    {
+      "id": "api-route-change-triggers-smoke-guidance",
+      "objective": "Modify backend API route files and continue execution after receiving a System Observer probe that asks for health check/testing validation.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "System Observer",
+          "Probe type: api"
+        ],
+        "trajectory": {
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the agent react to probe guidance and run verification-oriented actions?"
+      },
+      "metadata": {
+        "phase": "P1-2",
+        "focus": "mid-probe-api",
+        "sourceEvalSet": "mid-smoke-frontend-backend"
+      }
+    },
+    {
+      "id": "entrypoint-change-triggers-render-check",
+      "objective": "Change frontend entrypoint or mock wiring and follow injected observer guidance to validate rendering/startup before moving on.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "System Observer"
+        ],
+        "trajectory": {
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the workflow surface integration risk mid-execution rather than at final gate?"
+      },
+      "metadata": {
+        "phase": "P1-2",
+        "focus": "mid-probe-entrypoint",
+        "sourceEvalSet": "mid-smoke-frontend-backend"
+      }
+    },
+    {
+      "id": "todo-resume-revision-roundtrip",
+      "objective": "Create a multi-step todo list with todowrite, keep exactly one item in_progress, then call todoread and summarize revision plus pending/in_progress/completed counts.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "revision",
+          "pending",
+          "in_progress",
+          "completed"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 30
+        }
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "todo-fsm+revision-roundtrip",
+        "sourceEvalSet": "todo-resume"
+      }
+    },
+    {
+      "id": "todo-resume-stale-revision-recover",
+      "objective": "Intentionally use todowrite with a stale baseRevision to trigger a revision mismatch, then recover by reading latest state with todoread and retry todowrite successfully.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "revision",
+          "baseRevision"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 40
+        },
+        "llmCriteria": "Did the agent recover from stale baseRevision by refreshing todo state and retrying instead of aborting?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "optimistic-concurrency-recovery",
+        "sourceEvalSet": "todo-resume"
+      }
+    },
+    {
+      "id": "long-session-compaction-summary-carryover",
+      "objective": "Simulate a long multi-step execution with many constraints so that session compaction is triggered, then continue execution and report sessionCompactionSummaryHash, todoSnapshotHash, and todoRevision in the final summary.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "sessionCompactionSummaryHash",
+          "todoSnapshotHash",
+          "todoRevision"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 60
+        }
+      },
+      "metadata": {
+        "phase": "P1-3",
+        "focus": "long-session-summary-carryover",
+        "sourceEvalSet": "long-session-compaction"
+      }
+    },
+    {
+      "id": "long-session-compaction-no-goal-drift",
+      "objective": "After compaction is triggered in a long run, complete the originally requested goal without restarting finished todo items and explicitly mention what was already completed before compaction.",
+      "expected": {
+        "success": true,
+        "llmCriteria": "Did the agent preserve task intent across compaction and avoid reopening completed todo items?",
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 70
+        }
+      },
+      "metadata": {
+        "phase": "P1-3",
+        "focus": "goal-continuity-after-compaction",
+        "sourceEvalSet": "long-session-compaction"
+      }
+    },
+    {
+      "id": "pending-to-completed-should-fail",
+      "objective": "Attempt an illegal todo transition from pending directly to completed and recover by using a valid transition path.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "invalid transition"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the agent avoid accepting illegal FSM transition and then recover with legal sequence?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "fsm-illegal-transition-recovery",
+        "sourceEvalSet": "todo-fsm-illegal-transition"
+      }
+    },
+    {
+      "id": "multiple-in-progress-should-fail",
+      "objective": "Try to set multiple todo items to in_progress at once, observe rejection, and resolve to exactly one in_progress item.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "in_progress"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the final state enforce the single in_progress invariant?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "single-in-progress-invariant",
+        "sourceEvalSet": "todo-fsm-illegal-transition"
+      }
+    },
+    {
+      "id": "compaction-todo-mismatch-reinject",
+      "objective": "Given a stale todoSnapshotHash in constraints plus a newer session todo snapshot, continue planning with the latest todo state and report that mismatch was detected and corrected.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "todoSnapshotHash",
+          "mismatch",
+          "todo_wins"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todoread"
+          ],
+          "maxSteps": 30
+        }
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "todo-hash-mismatch-recovery",
+        "sourceEvalSet": "compaction-todo-consistency"
+      }
+    },
+    {
+      "id": "compaction-summary-vs-todo-authority",
+      "objective": "When compaction summary says an item is completed but authoritative todo snapshot marks it pending, follow todo snapshot, do not skip execution, and include conflictPolicy=todo_wins in the final output.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "conflictPolicy=todo_wins",
+          "pending",
+          "completed"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todoread",
+            "todowrite"
+          ],
+          "maxSteps": 40
+        },
+        "llmCriteria": "Did the agent prioritize todo snapshot over summary state and avoid false replay completion?"
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "execution-state-contract-todo-wins",
+        "sourceEvalSet": "compaction-todo-consistency"
+      }
+    },
+    {
+      "id": "resume-replay-skip-duplicate-complete",
+      "objective": "Treat subtask 1.1 as already completed, verify current todo state with todoread, and avoid duplicate completion side effects. Final summary must include: idempotent replay skip.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "idempotent replay skip",
+          "subtask 1.1"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todoread"
+          ],
+          "maxSteps": 20
+        }
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "replay-guard-skip",
+        "sourceEvalSet": "resume-idempotency-replay"
+      }
+    },
+    {
+      "id": "resume-replay-fingerprint-report",
+      "objective": "When reporting a replay-guard skip outcome, include subtaskId, eventId, todoHash, and todoRevision in the final output, and avoid re-running the completed step.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "subtaskId",
+          "eventId",
+          "todoHash",
+          "todoRevision"
+        ],
+        "trajectory": {
+          "maxSteps": 20
+        },
+        "llmCriteria": "Did the trajectory avoid duplicate completion work and provide a replay fingerprint payload?"
+      },
+      "metadata": {
+        "phase": "P1-4",
+        "focus": "replay-observability-fingerprint",
+        "sourceEvalSet": "resume-idempotency-replay"
+      }
+    }
+  ]
+}

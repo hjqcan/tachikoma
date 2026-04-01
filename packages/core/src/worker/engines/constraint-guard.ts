@@ -118,35 +118,6 @@ const PATH_LANGUAGE_HINTS: Record<string, string> = {
   'pipfile.lock': 'python',
 };
 
-const PACKAGE_FRONTEND_FAMILY: Record<string, string> = {
-  react: 'react',
-  'react-dom': 'react',
-  next: 'react',
-  vue: 'vue',
-  nuxt: 'vue',
-  svelte: 'svelte',
-  '@sveltejs/kit': 'svelte',
-  angular: 'angular',
-  '@angular/core': 'angular',
-  solid: 'solid',
-  'solid-js': 'solid',
-  astro: 'astro',
-};
-
-const PACKAGE_CSS_FAMILY: Record<string, string> = {
-  tailwindcss: 'tailwind',
-  bootstrap: 'bootstrap',
-  bulma: 'bulma',
-  antd: 'antd',
-  'ant-design': 'antd',
-  '@mui/material': 'mui',
-  '@mui/core': 'mui',
-  'material-ui': 'mui',
-  'chakra-ui': 'chakra',
-  '@chakra-ui/react': 'chakra',
-  daisyui: 'daisyui',
-};
-
 const SHELL_LANGUAGE_PATTERNS: { language: string; pattern: RegExp }[] = [
   { language: 'javascript', pattern: /\b(npm|yarn|pnpm|bun|npx|node|vite|next|nuxt)\b/i },
   { language: 'python', pattern: /\b(python|pip|pip3|poetry|uvicorn|fastapi|pytest)\b/i },
@@ -161,7 +132,6 @@ const GUARDED_TOOLS = new Set([
   'apply_patch',
   'replace_between_markers',
   'shell_run',
-  'package_install',
 ]);
 
 function escapeRegExp(text: string): string {
@@ -398,16 +368,6 @@ function inferFromCommand(command: string, signals: ToolCallSignals): void {
   }
 }
 
-function inferFromPackages(packages: string[], signals: ToolCallSignals): void {
-  for (const raw of packages) {
-    const pkg = raw.toLowerCase();
-    const frontendFamily = PACKAGE_FRONTEND_FAMILY[pkg];
-    if (frontendFamily) signals.frontendFamilies.add(frontendFamily);
-    const cssFamily = PACKAGE_CSS_FAMILY[pkg];
-    if (cssFamily) signals.cssFamilies.add(cssFamily);
-  }
-}
-
 function inferToolSignals(toolName: string, input: unknown): ToolCallSignals | null {
   if (!GUARDED_TOOLS.has(toolName)) {
     return null;
@@ -422,11 +382,6 @@ function inferToolSignals(toolName: string, input: unknown): ToolCallSignals | n
 
   if (toolName === 'shell_run' && data && typeof data.command === 'string') {
     inferFromCommand(data.command, signals);
-  }
-
-  if (toolName === 'package_install' && data && Array.isArray(data.packages)) {
-    const packages = data.packages.filter((p) => typeof p === 'string') as string[];
-    inferFromPackages(packages, signals);
   }
 
   const hasSignals =

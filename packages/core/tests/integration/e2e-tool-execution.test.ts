@@ -20,11 +20,7 @@ import {
   fileWriteTool,
   fileListTool,
   shellRunTool,
-  runTestsTool,
-  typeCheckTool,
   codeSearchTool,
-  packageInfoTool,
-  envGetTool,
 } from '../../src/tools';
 import { ToolLayer, ToolCategory, ToolPermission } from '../../src/tools/types';
 import type { ExecutionContext, Tool } from '../../src/types';
@@ -46,11 +42,7 @@ describe('End-to-End Tool Execution', () => {
       fileWriteTool,
       fileListTool,
       shellRunTool,
-      runTestsTool,
-      typeCheckTool,
       codeSearchTool,
-      packageInfoTool,
-      envGetTool,
     ];
 
     // 创建完整的registry（模拟生产环境）
@@ -230,6 +222,8 @@ describe('End-to-End Tool Execution', () => {
     });
 
     test('should collect execution metrics', async () => {
+      const testFile = join(testDir, 'metrics.txt');
+      await writeFile(testFile, 'metrics');
       const context: ExecutionContext = {
         taskId: 'metrics-test',
         agentId: 'metrics-agent',
@@ -237,7 +231,7 @@ describe('End-to-End Tool Execution', () => {
         workDir: testDir,
         env: {},
         permissions: {
-          allowed: ['env:read'],
+          allowed: ['fs:read'],
           denied: [],
           requireSandbox: false,
         },
@@ -249,8 +243,8 @@ describe('End-to-End Tool Execution', () => {
       };
 
       const result = await executor.execute(
-        envGetTool,
-        { keys: ['PATH', 'HOME'] },
+        fileReadTool,
+        { path: 'metrics.txt' },
         context
       );
 

@@ -16,6 +16,7 @@ import {
   DEFAULT_DELEGATION_DEFAULTS,
   DEFAULT_AGGREGATION_CONFIG,
   DEFAULT_CHECKPOINT_CONFIG,
+  DEFAULT_TODO_FSM_CONFIG,
   CONSERVATIVE_RETRY_POLICY,
   AGGRESSIVE_RETRY_POLICY,
   HIGH_CONCURRENCY_WORKER_POOL_CONFIG,
@@ -130,6 +131,9 @@ describe('Orchestrator 默认配置', () => {
       expect(DEFAULT_ORCHESTRATOR_CONFIG.delegation).toBeDefined();
       expect(DEFAULT_ORCHESTRATOR_CONFIG.aggregation).toBeDefined();
       expect(DEFAULT_ORCHESTRATOR_CONFIG.checkpoint).toBeDefined();
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction).toBeDefined();
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.todoFsm).toBeDefined();
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags).toBeDefined();
     });
 
     it('agent 配置应使用 Sonnet 模型', () => {
@@ -138,6 +142,27 @@ describe('Orchestrator 默认配置', () => {
         'claude-sonnet-4-20250514'
       );
       expect(DEFAULT_ORCHESTRATOR_CONFIG.agent.maxTokens).toBe(8192);
+    });
+
+    it('sessionCompaction 应启用 todo guard 与默认阈值', () => {
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction.enabled).toBe(true);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction.todoGuardEnabled).toBe(true);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction.maxConstraintChars).toBe(4000);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction.keepLastConstraints).toBe(6);
+    });
+
+    it('todoFsm 默认应为 warn 模式（strictMode=false）', () => {
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.todoFsm.strictMode).toBe(false);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.todoFsm).toEqual(DEFAULT_TODO_FSM_CONFIG);
+    });
+
+    it('featureFlags 应包含融合链路默认值', () => {
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.toolRuntimeV2.enabled).toBe(true);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.toolRuntimeV2.shadowMode).toBe(false);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.toolProfile.default).toBe('full');
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.syntheticToolResult.enabled).toBe(true);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.midExecutionSmoke.enabled).toBe(true);
+      expect(DEFAULT_ORCHESTRATOR_CONFIG.featureFlags.resume.replayGuard.enabled).toBe(true);
     });
   });
 });
@@ -237,6 +262,44 @@ describe('createOrchestratorConfig', () => {
     expect(config.planner.defaultMaxSubtasks).toBe(20);
     expect(config.planner.agent.temperature).toBe(0.1);
     expect(config.planner.agent.model).toBe(DEFAULT_PLANNER_CONFIG.agent.model);
+  });
+
+  it('应正确合并 sessionCompaction 配置', () => {
+    const config = createOrchestratorConfig({
+      sessionCompaction: {
+        enabled: false,
+        keepLastConstraints: 10,
+      },
+    });
+
+    expect(config.sessionCompaction.enabled).toBe(false);
+    expect(config.sessionCompaction.keepLastConstraints).toBe(10);
+    expect(config.sessionCompaction.todoGuardEnabled).toBe(true);
+  });
+
+  it('应正确合并 todoFsm 配置', () => {
+    const config = createOrchestratorConfig({
+      todoFsm: {
+        strictMode: true,
+      },
+    });
+
+    expect(config.todoFsm.strictMode).toBe(true);
+  });
+
+  it('应正确合并 featureFlags 配置', () => {
+    const config = createOrchestratorConfig({
+      featureFlags: {
+        toolProfile: { default: 'pi-core' },
+        syntheticToolResult: { enabled: false },
+        resume: { replayGuard: { enabled: false } },
+      },
+    });
+
+    expect(config.featureFlags.toolRuntimeV2.enabled).toBe(true);
+    expect(config.featureFlags.toolProfile.default).toBe('pi-core');
+    expect(config.featureFlags.syntheticToolResult.enabled).toBe(false);
+    expect(config.featureFlags.resume.replayGuard.enabled).toBe(false);
   });
 });
 
@@ -362,6 +425,44 @@ describe('validateOrchestratorConfig', () => {
     it('maxParseRetries 为负数时应抛出错误', () => {
       const config = getValidConfig();
       config.planner.maxParseRetries = -1;
+      expect(() => validateOrchestratorConfig(config)).toThrow(
+        OrchestratorConfigError
+      );
+    });
+  });
+
+  describe('Session Compaction 验证', () => {
+    it('keepLastConstraints 小于 1 时应抛出错误', () => {
+      const config = getValidConfig();
+      config.sessionCompaction.keepLastConstraints = 0;
+      expect(() => validateOrchestratorConfig(config)).toThrow(
+        OrchestratorConfigError
+      );
+    });
+
+    it('maxSummaryChars 小于 200 时应抛出错误', () => {
+      const config = getValidConfig();
+      config.sessionCompaction.maxSummaryChars = 100;
+      expect(() => validateOrchestratorConfig(config)).toThrow(
+        OrchestratorConfigError
+      );
+    });
+  });
+
+  describe('Todo FSM 验证', () => {
+    it('strictMode 非布尔值时应抛出错误', () => {
+      const config = getValidConfig();
+      (config.todoFsm as unknown as { strictMode: unknown }).strictMode = 'yes';
+      expect(() => validateOrchestratorConfig(config)).toThrow(
+        OrchestratorConfigError
+      );
+    });
+  });
+
+  describe('融合特性开关验证', () => {
+    it('toolProfile.default 非法值时应抛出错误', () => {
+      const config = getValidConfig();
+      (config.featureFlags.toolProfile as unknown as { default: string }).default = 'minimal';
       expect(() => validateOrchestratorConfig(config)).toThrow(
         OrchestratorConfigError
       );
@@ -615,6 +716,7 @@ describe('配置快照', () => {
     expect(DEFAULT_ORCHESTRATOR_CONFIG.delegation.mode).toBe('communication');
     expect(DEFAULT_ORCHESTRATOR_CONFIG.aggregation.strategy).toBe('merge');
     expect(DEFAULT_ORCHESTRATOR_CONFIG.checkpoint.enabled).toBe(true);
+    expect(DEFAULT_ORCHESTRATOR_CONFIG.sessionCompaction.enabled).toBe(true);
   });
 
   it('DEFAULT_RETRY_POLICY 应包含正确结构', () => {

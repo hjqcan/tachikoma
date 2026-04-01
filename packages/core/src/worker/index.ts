@@ -101,3 +101,6 @@ export type { DetectedPattern, FailureMemoryConfig, FailurePatternType } from '.
 // 工作区结构缓存（上下文注入）
 export { WorkspaceStructureCache, parseFileListOutput } from './workspace-cache';
 export type { CachedDirectory, WorkspaceCacheConfig } from './workspace-cache';
+
+// Tool runtime kernel (P0-1)
+export * from './tool-runtime';

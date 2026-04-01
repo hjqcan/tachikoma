@@ -104,7 +104,6 @@ export const BLOCK_FILE_EXTENSION = '.md';
  * 受信任的调用来源（允许绕过只读保护）
  */
 export const TRUSTED_SOURCES = [
-  'skillTool',
   'skill-command',
   'skill-blocks-sync',
   'system-init',
@@ -350,7 +349,7 @@ export interface BlockWriteOptions {
   /**
    * 是否强制写入只读块（仅限受信调用者）
    * 
-   * 只有 skillTool 和 /skill 命令才应设置此项
+   * 只有 /skill 命令等受信同步流程才应设置此项
    */
   forceReadOnly?: boolean;
   /**

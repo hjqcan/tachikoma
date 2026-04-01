@@ -342,6 +342,51 @@ describe('GenericAgentBackend', () => {
       expect(toolResultMessages.length).toBeGreaterThan(0);
     });
 
+    it('应将 ToolResult.success=false 视为 functional error 并下沉为失败 tool_result', async () => {
+      const mockClient = createMockLLMClient([
+        'Call a tool.\n<tool_use>\n<name>failing_tool</name>\n<input>{"path":"missing.txt"}</input>\n</tool_use>',
+        'Done.',
+      ]);
+
+      const failingTool = createMockTool('failing_tool', () => ({
+        success: false,
+        error: 'File missing',
+      }));
+
+      backend = new GenericAgentBackend({
+        provider: 'mock',
+        model: 'mock-model',
+        llmClient: mockClient,
+      });
+
+      const task: WorkerTask = {
+        id: 'test-task-functional-failure',
+        type: 'atomic',
+        objective: 'Handle functional tool failure',
+        // @ts-expect-error status field legacy
+        status: 'pending',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      const messages: WorkerMessage[] = [];
+      for await (const msg of backend.execute(task, [failingTool], {})) {
+        messages.push(msg);
+      }
+
+      const toolResults = messages.filter((m): m is Extract<WorkerMessage, { type: 'tool_result' }> => m.type === 'tool_result');
+      expect(toolResults.length).toBeGreaterThan(0);
+      expect(toolResults[0]?.success).toBe(false);
+
+      const payload = toolResults[0]?.result;
+      const parsed =
+        typeof payload === 'string'
+          ? (JSON.parse(payload) as Record<string, unknown>)
+          : (payload as Record<string, unknown>);
+      expect(parsed.code).toBe('TOOL_FUNCTIONAL_ERROR');
+      expect(parsed.isError).toBe(true);
+    });
+
     it('应支持中断执行', async () => {
       // 创建一个会多次回复的客户端
       const mockClient = createMockLLMClient([

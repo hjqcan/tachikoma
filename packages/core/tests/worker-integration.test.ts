@@ -7,10 +7,15 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test';
 import type { Tool } from '../src/types';
 import type { SubTask } from '../src/orchestrator/types';
-import type { ISessionFileManager, WorkerStatusFile, DecisionRecord } from '../src/orchestrator/session/types';
+import type {
+  ISessionFileManager,
+  WorkerStatusFile,
+  DecisionRecord,
+  SharedContextFile,
+} from '../src/orchestrator/session/types';
 import { WorkerExecutor, type WorkerExecutorConfig, type ExecutionResult } from '../src/worker/worker-executor';
 import { GenericAgentBackend } from '../src/worker/backends/generic-agent-backend';
-import type { WorkerMessage, WorkerExecutionOptions } from '../src/worker/types';
+import type { IWorkerBackend, WorkerMessage, WorkerExecutionOptions } from '../src/worker/types';
 
 // ============================================================================
 // Mock 工具
@@ -41,9 +46,21 @@ function createMockLLMClient(responses: string[]) {
 function createMockSessionManager(): ISessionFileManager & {
   statusUpdates: WorkerStatusFile[];
   decisions: DecisionRecord[];
+  sharedContextWrites: Array<Omit<SharedContextFile, 'sessionId'>>;
+  sharedContext: SharedContextFile;
 } {
   const statusUpdates: WorkerStatusFile[] = [];
   const decisions: DecisionRecord[] = [];
+  const sharedContextWrites: Array<Omit<SharedContextFile, 'sessionId'>> = [];
+  let sharedContext: SharedContextFile = {
+    sessionId: 'test-session',
+    objective: 'test objective',
+    constraints: [],
+    sharedKnowledge: {
+      data: {},
+      updatedAt: Date.now(),
+    },
+  };
 
   return {
     sessionId: 'test-session',
@@ -55,6 +72,10 @@ function createMockSessionManager(): ISessionFileManager & {
     },
     statusUpdates,
     decisions,
+    sharedContextWrites,
+    get sharedContext() {
+      return sharedContext;
+    },
 
     // 必要的方法实现
     initializeSession: mock(async () => {}),
@@ -91,8 +112,14 @@ function createMockSessionManager(): ISessionFileManager & {
     appendAction: mock(async () => {}),
     writePendingApproval: mock(async () => {}),
 
-    readSharedContext: mock(async () => null),
-    writeSharedContext: mock(async () => {}),
+    readSharedContext: mock(async () => sharedContext),
+    writeSharedContext: mock(async (context: Omit<SharedContextFile, 'sessionId'>) => {
+      sharedContextWrites.push(context);
+      sharedContext = {
+        sessionId: 'test-session',
+        ...context,
+      };
+    }),
     appendMessage: mock(async () => {}),
     readMessages: mock(async () => []),
 
@@ -104,6 +131,8 @@ function createMockSessionManager(): ISessionFileManager & {
   } as unknown as ISessionFileManager & {
     statusUpdates: WorkerStatusFile[];
     decisions: DecisionRecord[];
+    sharedContextWrites: Array<Omit<SharedContextFile, 'sessionId'>>;
+    sharedContext: SharedContextFile;
   };
 }
 
@@ -238,6 +267,87 @@ describe('WorkerExecutor 集成测试', () => {
       } finally {
         console.error = originalConsoleError;
       }
+    });
+
+    it('应将 todowrite 快照写入 shared context 并在下一轮注入约束', async () => {
+      const observedConstraints: string[][] = [];
+      let runCount = 0;
+      const backend: IWorkerBackend = {
+        provider: 'mock',
+        backendType: 'generic',
+        async *execute(task) {
+          observedConstraints.push([...task.constraints]);
+          runCount += 1;
+          yield { type: 'status', status: 'thinking', timestamp: Date.now() };
+          if (runCount === 1) {
+            yield {
+              type: 'tool_result',
+              tool: 'todowrite',
+              callId: `todo-call-${runCount}`,
+              result: JSON.stringify({
+                success: true,
+                data: {
+                  revision: 2,
+                  pendingCount: 1,
+                  counts: {
+                    pending: 1,
+                    in_progress: 0,
+                    completed: 0,
+                    blocked: 0,
+                    cancelled: 0,
+                  },
+                  todos: [
+                    {
+                      id: 'todo-1',
+                      content: 'Implement worker runtime sync',
+                      status: 'pending',
+                      priority: 'high',
+                    },
+                  ],
+                },
+              }),
+              success: true,
+              duration: 5,
+              timestamp: Date.now(),
+            };
+          }
+          yield { type: 'status', status: 'completed', timestamp: Date.now() };
+        },
+        getCapabilities: () => ['code-execution'],
+        isAvailable: () => true,
+        interrupt: async () => {},
+        dispose: async () => {},
+      };
+
+      const executor = new WorkerExecutor({
+        backendConfig: { provider: 'openai', model: 'gpt-4' },
+        sessionManager,
+        workerId: 'worker-todo-sync',
+      });
+      (executor as unknown as { backend: IWorkerBackend }).backend = backend;
+      (executor as unknown as { isInitialized: boolean }).isInitialized = true;
+
+      const firstSubtask = createTestSubTask({ id: 'subtask-todo-1', constraints: [] });
+      for await (const _msg of executor.execute(firstSubtask, [])) {
+        // Consume stream
+      }
+
+      const todoState = (sessionManager.sharedContext.sharedKnowledge.data as Record<string, unknown>)
+        .todoState as Record<string, unknown>;
+      expect(todoState).toBeDefined();
+      expect(todoState.revision).toBe(2);
+      expect(todoState.pendingCount).toBe(1);
+      expect(typeof todoState.hash).toBe('string');
+
+      const secondSubtask = createTestSubTask({ id: 'subtask-todo-2', constraints: [] });
+      for await (const _msg of executor.execute(secondSubtask, [])) {
+        // Consume stream
+      }
+
+      expect(observedConstraints.length).toBe(2);
+      expect(
+        observedConstraints[1]?.some((constraint) => constraint.includes('Shared todo snapshot:'))
+      ).toBe(true);
     });
   });
 

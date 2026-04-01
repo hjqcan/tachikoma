@@ -553,7 +553,6 @@ export class TaskMasterPlanEngine {
    *
    * 规则（用户确认）：
    * - 子任务的角色 = 父任务（root taskId）的角色
-   * - 父任务开始执行时可触发 expand_commit；expand 后原 worker 回到 idle，可复用
    *
    * 实现策略：
    * - 优先读取 taskmeta 中对“父任务 id”的 role assignment

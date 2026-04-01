@@ -1,0 +1,130 @@
+{
+  "master": {
+    "tasks": [],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-04-01T04:02:05.415Z",
+      "taskCount": 7,
+      "completedCount": 0,
+      "tags": [
+        "conv-c976ec25"
+      ]
+    }
+  },
+  "conv-c976ec25": {
+    "tasks": [
+      {
+        "id": "1",
+        "title": "Analyze the UI design of NetEase Cloud Music: identify color scheme (primary red...",
+        "description": "Analyze the UI design of NetEase Cloud Music: identify color scheme (primary red #C20C0C, accents), layout structure (sidebar navigation, header, content area, bottom player bar), and key UI components (playlist cards, song lists, player controls)",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [],
+        "details": "Document primary color #C20C0C and secondary colors\nIdentify sidebar layout with navigation items\nNote bottom player bar design with controls\nOutput design specification for subsequent UI tasks\n推荐工具：deep_research",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.137Z"
+      },
+      {
+        "id": "2",
+        "title": "Setup React + TailwindCSS project infrastructure: create Vite React project, con...",
+        "description": "Setup React + TailwindCSS project infrastructure: create Vite React project, configure tsconfig.json with vitest types, setup vitest.config.js with jsdom environment, remove vanilla Vite scaffolds (src/counter.ts, src/style.css, src/typescript.svg), ensure index.html entry matches main.tsx",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [],
+        "details": "Use Vite + React + TypeScript template\nInstall tailwindcss and configure tailwind.config.js\nConfigure tsconfig.json with types: ['vite/client', 'vitest/globals', '@testing-library/jest-dom']\nInstall vitest, @testing-library/react, @testing-library/jest-dom, @testing-library/user-event, jsdom\nRemove all default Vite scaffold content (logos, counters, 'Edit App.tsx' text)\nEnsure index.html has correct root div ID matching main.tsx\nDo NOT use default scaffold/template styling",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.138Z"
+      },
+      {
+        "id": "3",
+        "title": "Create Python mock API server: implement FastAPI/Flask server with mock endpoint...",
+        "description": "Create Python mock API server: implement FastAPI/Flask server with mock endpoints for music playlists, song details, and player data, return JSON responses mimicking NetEase Cloud Music API structure",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [],
+        "details": "Use FastAPI or Flask framework\nCreate mock data for playlists, songs, artists\nImplement endpoints: /api/playlists, /api/songs, /api/playlist/{id}/songs\nEnable CORS for frontend access\nProvide requirements.txt and startup script",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.138Z"
+      },
+      {
+        "id": "4",
+        "title": "Implement core UI components following NetEase Cloud Music design style: create ...",
+        "description": "Implement core UI components following NetEase Cloud Music design style: create Sidebar, Header, PlaylistCard, SongList, and PlayerBar components with red theme (#C20C0C) and proper layout structure",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [
+          "1",
+          "2"
+        ],
+        "details": "Use NetEase Cloud Music's color scheme (primary red #C20C0C)\nDo NOT use default scaffold/template styling\nImplement consistent export style (named exports throughout)\nComponents must be co-located with their test files\nUse TailwindCSS for all styling\nEnsure single BrowserRouter placement (only in main.tsx, NOT in App.tsx)\n推荐工具：apply_patch, file_write, apply_patch",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.138Z"
+      },
+      {
+        "id": "5",
+        "title": "Implement page layout and API integration following NetEase Cloud Music design s...",
+        "description": "Implement page layout and API integration following NetEase Cloud Music design style: create App.tsx with sidebar-content-player layout, integrate Python mock API using fetch/axios, display playlists and songs with proper data flow",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [
+          "3",
+          "4"
+        ],
+        "details": "Follow NetEase Cloud Music design style for layout\nUse NetEase Cloud Music's color scheme (#C20C0C)\nDo NOT wrap App.tsx with BrowserRouter (keep in main.tsx only)\nImplement proper error handling for API calls\nUse consistent import/export style matching subtask-4\nEnsure all imported modules/functions exist before referencing\n推荐工具：apply_patch, file_write, apply_patch",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.139Z"
+      },
+      {
+        "id": "6",
+        "title": "Write component and API integration tests: create co-located test files (Compone...",
+        "description": "Write component and API integration tests: create co-located test files (Component.test.tsx) for Sidebar, PlaylistCard, SongList, and PlayerBar using Vitest + Testing Library, verify props match actual component interfaces",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [
+          "4",
+          "5"
+        ],
+        "details": "Use Vitest ONLY (no Jest)\nTests MUST be co-located: Component.test.tsx next to Component.tsx\nNEVER create __tests__ folders\nFIRST read component source to extract exact props before writing tests\nInclude required imports: import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest'\nUse proper Mock typing: vi.fn() as Mock<[], Promise<Data>>\nConfigure vitest.config.js with environment: 'jsdom', globals: true\nDo NOT test props/methods that don't exist in component interface\n推荐工具：apply_patch, file_write, apply_patch",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.139Z"
+      },
+      {
+        "id": "7",
+        "title": "Build and smoke verification: run npm run build to verify frontend compiles, sta...",
+        "description": "Build and smoke verification: run npm run build to verify frontend compiles, start Python backend server, start frontend dev server, verify page renders with mock data and no console errors",
+        "status": "pending",
+        "priority": "medium",
+        "dependencies": [
+          "5",
+          "6"
+        ],
+        "details": "Run build command and verify zero errors\nStart Python backend and confirm it stays up\nStart frontend dev server and confirm it stays up\nVerify page renders with NetEase Cloud Music styling\nVerify API data fetch succeeds and displays correctly\nRun vitest and confirm all tests pass",
+        "testStrategy": "为关键逻辑补充必要的测试，并确保测试通过。",
+        "subtasks": [],
+        "createdAt": "2026-04-01T04:02:05.412Z",
+        "updatedAt": "2026-04-01T05:04:04.139Z"
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-04-01T05:04:04.139Z",
+      "taskCount": 7,
+      "completedCount": 0,
+      "tags": [
+        "conv-c976ec25"
+      ]
+    }
+  }
+}

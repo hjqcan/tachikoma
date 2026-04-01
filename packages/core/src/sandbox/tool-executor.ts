@@ -4,7 +4,7 @@
  * 提供通过 Sandbox 隔离执行工具的能力
  */
 
-import type { Tool } from '../types';
+import type { Tool, ExecutionContext } from '../types';
 import type { Sandbox, CommandResult } from './types';
 
 // ============================================================================
@@ -17,6 +17,8 @@ import type { Sandbox, CommandResult } from './types';
 export interface ToolExecutionOptions {
   /** 工作目录 */
   workDir: string;
+  /** 真实执行上下文（可选） */
+  executionContext?: ExecutionContext | undefined;
   /** 环境变量 */
   env?: Record<string, string> | undefined;
   /** 超时时间（毫秒） */
@@ -248,7 +250,7 @@ export class DefaultSandboxToolExecutor implements ISandboxToolExecutor {
         workDir: options.workDir,
         env: options.env || {},
       };
-      return await tool.execute(input, context);
+      return await tool.execute(input, options.executionContext ?? context);
     }
 
     // 回退到命令执行（适用于 shell 命令类工具）
@@ -290,7 +292,7 @@ export class DefaultSandboxToolExecutor implements ISandboxToolExecutor {
       env: options.env || {},
     };
 
-    return await tool.execute(input, context);
+    return await tool.execute(input, options.executionContext ?? context);
   }
 
   /**

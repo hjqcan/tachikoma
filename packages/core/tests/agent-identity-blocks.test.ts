@@ -321,7 +321,7 @@ describe('BlockWriter', () => {
 
       const result = await writer.write('skills', 'New skills content', {
         forceReadOnly: true,
-        source: 'skillTool',
+        source: 'skill-command',
       });
 
       expect(result.success).toBe(true);
@@ -421,7 +421,7 @@ describe('BlockWriter', () => {
 
       const result = await writer.delete('skills', {
         forceReadOnly: true,
-        source: 'skillTool',
+        source: 'skill-command',
       });
 
       expect(result.success).toBe(true);
@@ -530,10 +530,10 @@ describe('Security: P0/P1 fixes', () => {
         projectDir: path.join(tempDir, 'project'),
       });
 
-      // skillTool 是受信来源
+      // skill-command 是受信来源
       const result = await writer.write('skills', 'content', {
         forceReadOnly: true,
-        source: 'skillTool',
+        source: 'skill-command',
       });
 
       expect(result.success).toBe(true);
@@ -566,4 +566,3 @@ describe('BlockLoader + BlockWriter integration', () => {
     expect(block!.scope).toBe('global');
   });
 });
-

@@ -5,8 +5,9 @@
  */
 
 import { writeFile, appendFile, mkdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { FileWriteInput, FileWriteOutput, ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
@@ -21,6 +22,8 @@ import {
   dedupeTestSuffix,
 } from '../../worker/file-validator';
 import { LSP } from '../../lsp';
+import { buildTool } from '../build-tool';
+import { getFileWritePrompt } from './prompts/file-write-prompt';
 
 
 // Singleton BuildGateService instance
@@ -39,6 +42,35 @@ function getBuildGateService(): BuildGateService {
 function getOwnerId(context: ExecutionContext): string {
   const ctx = context as unknown as { workerId?: string; agentId?: string };
   return ctx.workerId ?? ctx.agentId ?? context.taskId ?? 'unknown';
+}
+
+function validateFileWasReadForWrite(
+  input: unknown,
+  context: ExecutionContext,
+): { result: true } | { result: false; message: string } {
+  if (!context.readFileState) {
+    return { result: true };
+  }
+
+  const filePath = (input as FileWriteInputExtended | undefined)?.path;
+  if (typeof filePath !== 'string' || filePath.trim().length === 0) {
+    return { result: true };
+  }
+
+  try {
+    const baseDir = context.effectiveCwd ?? context.workDir;
+    const absolutePath = validatePath(filePath, baseDir);
+    if (!existsSync(absolutePath) || context.readFileState.has(absolutePath)) {
+      return { result: true };
+    }
+  } catch {
+    return { result: true };
+  }
+
+  return {
+    result: false,
+    message: `Read the file with file_read before overwriting it with file_write: ${filePath}`,
+  };
 }
 
 /**
@@ -67,7 +99,7 @@ interface FileWriteOutputExtended extends FileWriteOutput {
 /**
  * file_write 工具定义
  */
-export const fileWriteTool: Tool = {
+export const fileWriteTool = buildTool({
   name: 'file_write',
   title: 'Write File',
   description: `写入内容到指定文件。
@@ -75,6 +107,11 @@ export const fileWriteTool: Tool = {
 - 父目录会自动创建
 - 路径相对于工作目录
 - 可选：validateAfterEdit=true 写入后验证类型检查，失败时自动回滚`,
+  searchHint: 'write create overwrite append file contents',
+  isReadOnly: () => false,
+  isConcurrencySafe: () => false,
+  prompt: getFileWritePrompt,
+  validateInput: async (input, context) => validateFileWasReadForWrite(input, context),
   inputSchema: {
     type: 'object',
     properties: {
@@ -315,6 +352,7 @@ export const fileWriteTool: Tool = {
 
       // Register modified file for VerificationGate scoping
       context.registerModifiedFile?.(absolutePath);
+      context.readFileState?.markRead?.(absolutePath, buffer.length);
 
       // OpenCode-style: Run LSP diagnostics and return errors to agent
       try {
@@ -358,4 +396,4 @@ export const fileWriteTool: Tool = {
       };
     }
   },
-};
+});

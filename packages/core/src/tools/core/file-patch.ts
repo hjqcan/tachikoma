@@ -7,8 +7,9 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { ToolResult } from '../types';
 import { ToolLayer, ToolCategory } from '../types';
 import { validatePath, ensureWorkDir } from './utils';
@@ -21,6 +22,8 @@ import {
   dedupeTestSuffix,
   validateFileContent,
 } from '../../worker/file-validator';
+import { buildTool } from '../build-tool';
+import { getFilePatchPrompt } from './prompts/file-patch-prompt';
 
 /**
  * 获取锁持有者ID
@@ -28,6 +31,35 @@ import {
 function getOwnerId(context: ExecutionContext): string {
   const ctx = context as unknown as { workerId?: string; agentId?: string };
   return ctx.workerId ?? ctx.agentId ?? context.taskId ?? 'unknown';
+}
+
+function validateFileWasReadForPatch(
+  input: unknown,
+  context: ExecutionContext,
+): { result: true } | { result: false; message: string } {
+  if (!context.readFileState) {
+    return { result: true };
+  }
+
+  const filePath = (input as ApplyPatchInput | undefined)?.path;
+  if (typeof filePath !== 'string' || filePath.trim().length === 0) {
+    return { result: true };
+  }
+
+  try {
+    const baseDir = context.effectiveCwd ?? context.workDir;
+    const absolutePath = validatePath(filePath, baseDir);
+    if (!existsSync(absolutePath) || context.readFileState.has(absolutePath)) {
+      return { result: true };
+    }
+  } catch {
+    return { result: true };
+  }
+
+  return {
+    result: false,
+    message: `Read the file with file_read before editing it with apply_patch: ${filePath}`,
+  };
 }
 
 // =============================================================================
@@ -401,7 +433,7 @@ function applyFreeformPatch(
 /**
  * apply_patch 工具定义
  */
-export const applyPatchTool: Tool = {
+export const applyPatchTool = buildTool({
   name: 'apply_patch',
   title: 'Apply Patch',
   description: `对文件应用增量补丁。支持两种模式：
@@ -432,6 +464,11 @@ Freeform 语法（非标准 unified diff）：
 注意：
 - patches 模式要求精确匹配（包括空格）
 - freeform 模式按行匹配，优先精确匹配；仅子串匹配会给出 warning`,
+  searchHint: 'edit existing file diff patch replace lines',
+  isReadOnly: () => false,
+  isConcurrencySafe: () => false,
+  prompt: getFilePatchPrompt,
+  validateInput: async (input, context) => validateFileWasReadForPatch(input, context),
   inputSchema: {
     type: 'object',
     properties: {
@@ -674,6 +711,7 @@ Freeform 语法（非标准 unified diff）：
 
         // Register modified file for VerificationGate scoping
         context.registerModifiedFile?.(absolutePath);
+        context.readFileState?.markRead?.(absolutePath, newBytes);
 
         return {
           success: true as const,
@@ -688,7 +726,7 @@ Freeform 语法（非标准 unified diff）：
       };
     }
   },
-};
+});
 
 // 导出解析函数用于测试
 export { parseFreeformPatch, applyHunk };

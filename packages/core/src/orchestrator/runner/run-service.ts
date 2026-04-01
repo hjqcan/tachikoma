@@ -13,6 +13,7 @@ import type { MemoryService } from '../../memory';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createLLMClient, type LLMClientConfig } from '../../planner';
+import type { SharedKnowledgeData } from '../session';
 // Agent Identity: automatic learning after task success
 import { CoreMemoryEvolver, getAgentIdFromEnv } from '../../agent-identity';
 // Skill Learning: learn skills from trajectory
@@ -22,6 +23,10 @@ import {
   actionRecordToTrajectory,
   type TrajectoryRecord,
 } from '../../skills/learning';
+import {
+  applySessionCompaction,
+  type SessionCompactionOptions,
+} from '../services/session-compaction-manager';
 
 export class RunService {
   constructor(
@@ -86,8 +91,9 @@ export class RunService {
             this.state.initExecutionState(Date.now());
           }
 
+          const planTask = await this.withTodoSnapshotConstraint(orchestratorTask);
           const planResult = await this.planEngine.executePlanPhase(
-            orchestratorTask,
+            planTask,
             { projectRoot: workDir, tag: sessionId },
             signal
           );
@@ -290,6 +296,92 @@ export class RunService {
     };
   }
 
+  private async withTodoSnapshotConstraint(task: OrchestratorTask): Promise<OrchestratorTask> {
+    const sessionManager = this.state.sessionManager;
+    if (!sessionManager) return task;
+    if (this.orchestratorConfig.sessionCompaction.todoGuardEnabled === false) return task;
+
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return task;
+
+    const data = (shared.sharedKnowledge?.data ?? {}) as SharedKnowledgeData;
+    const compactionOptions = this.buildSessionCompactionOptions();
+    const compacted = applySessionCompaction({
+      constraints: task.constraints ?? [],
+      data,
+      ...(compactionOptions ? { options: compactionOptions } : {}),
+    });
+    const snapshot = compacted.contract.todoState;
+    if (!snapshot) return task;
+
+    if (compacted.mismatch) {
+      const previousHashes = compacted.previousTodoHashes.filter((hash) => hash !== snapshot.hash);
+      if (
+        compacted.previousSummaryTodoHash &&
+        compacted.previousSummaryTodoHash !== snapshot.hash &&
+        !previousHashes.includes(compacted.previousSummaryTodoHash)
+      ) {
+        previousHashes.push(compacted.previousSummaryTodoHash);
+      }
+      this.emit('compaction:todo_mismatch', task.id, {
+        phase: 'plan',
+        expectedTodoHash: snapshot.hash,
+        previousTodoHashes: previousHashes,
+        todoRevision: snapshot.revision,
+      });
+    }
+    if (compacted.compactionApplied) {
+      this.emit('compaction:applied', task.id, {
+        phase: 'plan',
+        todoHash: snapshot.hash,
+        todoRevision: snapshot.revision,
+        constraintsBefore: (task.constraints ?? []).length,
+        constraintsAfter: compacted.constraints.length,
+      });
+    }
+
+    if (compacted.contractUpdated) {
+      await sessionManager.writeSharedContext({
+        objective: shared.objective,
+        constraints: shared.constraints,
+        sharedKnowledge: {
+          data: {
+            ...data,
+            ...(snapshot ? { todoState: snapshot } : {}),
+            executionStateContract: compacted.contract,
+          },
+          updatedAt: Date.now(),
+        },
+        ...(shared.workspace ? { workspace: shared.workspace } : {}),
+      }).catch(() => undefined);
+    }
+    if (!compacted.updated) return task;
+
+    return {
+      ...task,
+      constraints: compacted.constraints,
+    };
+  }
+
+  private buildSessionCompactionOptions(): SessionCompactionOptions | null {
+    const config = this.orchestratorConfig.sessionCompaction;
+    if (!config) return null;
+
+    if (config.enabled === false) {
+      return {
+        maxConstraintChars: Number.MAX_SAFE_INTEGER,
+        keepLastConstraints: Number.MAX_SAFE_INTEGER,
+      };
+    }
+
+    return {
+      maxConstraintChars: config.maxConstraintChars,
+      keepLastConstraints: config.keepLastConstraints,
+      maxSummaryItems: config.maxSummaryItems,
+      maxSummaryChars: config.maxSummaryChars,
+    };
+  }
+
   /**
    * Learn from successful task completion (Agent Identity + Skill Learning)
    *
@@ -464,5 +556,3 @@ function deriveStableSkillName(taskDescription: string): string {
   const base = slug.length > 0 ? slug : 'skill';
   return `auto-${base}-${hash}`;
 }
-
-

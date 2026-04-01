@@ -1,0 +1,40 @@
+{
+  "id": "pi-core-profile",
+  "name": "Pi Core Tool Profile Set",
+  "description": "Regression cases for enforcing pi-core tool profile and preflight tool hint sanitization.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "pi-core-hint-sanitization",
+      "objective": "Under pi-core profile, ignore unavailable recommended tools and finish the task using only read/write/edit/bash equivalents.",
+      "expected": {
+        "success": true,
+        "trajectory": {
+          "maxSteps": 30
+        },
+        "llmCriteria": "Did the agent stay within pi-core tools after preflight sanitization?"
+      },
+      "metadata": {
+        "phase": "P0-2",
+        "focus": "profile-enforcement"
+      }
+    },
+    {
+      "id": "pi-core-alias-resolution",
+      "objective": "Use pi-core aliases in constraints and execute successfully after alias mapping to Tachikoma native tools.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "pi-core"
+        ],
+        "trajectory": {
+          "maxSteps": 25
+        }
+      },
+      "metadata": {
+        "phase": "P0-2",
+        "focus": "alias-mapping"
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "id": "todo-fsm-illegal-transition",
+  "name": "Todo FSM Illegal Transition Set",
+  "description": "Regression cases for enforcing todo state machine transition rules and optimistic concurrency.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "pending-to-completed-should-fail",
+      "objective": "Attempt an illegal todo transition from pending directly to completed and recover by using a valid transition path.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "invalid transition"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the agent avoid accepting illegal FSM transition and then recover with legal sequence?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "fsm-illegal-transition-recovery"
+      }
+    },
+    {
+      "id": "multiple-in-progress-should-fail",
+      "objective": "Try to set multiple todo items to in_progress at once, observe rejection, and resolve to exactly one in_progress item.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "in_progress"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 35
+        },
+        "llmCriteria": "Did the final state enforce the single in_progress invariant?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "single-in-progress-invariant"
+      }
+    }
+  ]
+}

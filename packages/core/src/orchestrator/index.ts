@@ -53,6 +53,14 @@ export type {
   PlannerConfig,
   DelegationDefaults,
   RetryPolicyMode,
+  SessionCompactionConfig,
+  TodoFsmConfig,
+  ToolRuntimeV2Config,
+  ToolProfileConfig,
+  SyntheticToolResultConfig,
+  MidExecutionSmokeConfig,
+  ReplayGuardConfig,
+  FusionFeatureFlagsConfig,
   // 审批类型
   ApprovalPolicy,
   // 偏离检测类型
@@ -78,6 +86,9 @@ export {
   DEFAULT_DELEGATION_DEFAULTS,
   DEFAULT_AGGREGATION_CONFIG,
   DEFAULT_CHECKPOINT_CONFIG,
+  DEFAULT_SESSION_COMPACTION_CONFIG,
+  DEFAULT_TODO_FSM_CONFIG,
+  DEFAULT_FUSION_FEATURE_FLAGS,
   GIT_ENABLED_CHECKPOINT_CONFIG,
   DEFAULT_PLANNER_CONFIG,
   DEFAULT_ORCHESTRATOR_CONFIG,
@@ -225,7 +236,6 @@ export {
 
 export type {
   FileWriteArbitrationParams,
-  ExpandCommitArbitrationParams,
   DelayedApproval,
   TaskMasterCallbacks,
   SharedKnowledgeData,

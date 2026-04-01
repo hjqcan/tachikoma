@@ -16,6 +16,9 @@ import type {
   DeviationDetectionConfig,
   RetryPolicyMode,
   SkillLearningConfig,
+  SessionCompactionConfig,
+  TodoFsmConfig,
+  FusionFeatureFlagsConfig,
 } from './types';
 import type { MemoryConfig } from '../memory';
 import type { SkillDiscoveryConfig } from '../skills';
@@ -144,6 +147,64 @@ export const DEFAULT_SESSION_DIR_CONFIG: SessionDirConfig = {
 };
 
 // ============================================================================
+// Session Compaction 默认配置
+// ============================================================================
+
+/**
+ * 默认 Session Compaction 配置
+ */
+export const DEFAULT_SESSION_COMPACTION_CONFIG: SessionCompactionConfig = {
+  enabled: true,
+  todoGuardEnabled: true,
+  maxConstraintChars: 4_000,
+  keepLastConstraints: 6,
+  maxSummaryItems: 20,
+  maxSummaryChars: 1_600,
+};
+
+// ============================================================================
+// Todo FSM 默认配置
+// ============================================================================
+
+/**
+ * 默认 Todo FSM 配置
+ *
+ * 默认采用过渡策略：warn 模式（strictMode=false）。
+ * 需要 hard-block 时可显式开启 strictMode。
+ */
+export const DEFAULT_TODO_FSM_CONFIG: TodoFsmConfig = {
+  strictMode: false,
+};
+
+// ============================================================================
+// 融合特性开关默认配置
+// ============================================================================
+
+/**
+ * 默认融合特性开关配置
+ */
+export const DEFAULT_FUSION_FEATURE_FLAGS: FusionFeatureFlagsConfig = {
+  toolRuntimeV2: {
+    enabled: true,
+    shadowMode: false,
+  },
+  toolProfile: {
+    default: 'full',
+  },
+  syntheticToolResult: {
+    enabled: true,
+  },
+  midExecutionSmoke: {
+    enabled: true,
+  },
+  resume: {
+    replayGuard: {
+      enabled: true,
+    },
+  },
+};
+
+// ============================================================================
 // 审批策略默认配置
 // ============================================================================
 
@@ -242,6 +303,9 @@ export const DEFAULT_ORCHESTRATOR_CONFIG: OrchestratorConfig = {
   aggregation: DEFAULT_AGGREGATION_CONFIG,
   checkpoint: DEFAULT_CHECKPOINT_CONFIG,
   session: DEFAULT_SESSION_DIR_CONFIG,
+  sessionCompaction: DEFAULT_SESSION_COMPACTION_CONFIG,
+  todoFsm: DEFAULT_TODO_FSM_CONFIG,
+  featureFlags: DEFAULT_FUSION_FEATURE_FLAGS,
   approval: DEFAULT_APPROVAL_POLICY,
   deviationDetection: DEFAULT_DEVIATION_DETECTION_CONFIG,
   // 启用多 Agent 协作
@@ -279,6 +343,16 @@ interface PartialPlannerConfig {
   projectStructure?: PlannerConfig['projectStructure'];
 }
 
+interface PartialFusionFeatureFlagsConfig {
+  toolRuntimeV2?: Partial<FusionFeatureFlagsConfig['toolRuntimeV2']>;
+  toolProfile?: Partial<FusionFeatureFlagsConfig['toolProfile']>;
+  syntheticToolResult?: Partial<FusionFeatureFlagsConfig['syntheticToolResult']>;
+  midExecutionSmoke?: Partial<FusionFeatureFlagsConfig['midExecutionSmoke']>;
+  resume?: {
+    replayGuard?: Partial<FusionFeatureFlagsConfig['resume']['replayGuard']>;
+  };
+}
+
 /**
  * 部分 Orchestrator 配置类型
  */
@@ -290,6 +364,9 @@ export interface PartialOrchestratorConfig {
   aggregation?: Partial<AggregationConfig>;
   checkpoint?: Partial<CheckpointConfig>;
   session?: Partial<SessionDirConfig>;
+  sessionCompaction?: Partial<SessionCompactionConfig>;
+  todoFsm?: Partial<TodoFsmConfig>;
+  featureFlags?: PartialFusionFeatureFlagsConfig;
   approval?: Partial<ApprovalPolicy>;
   deviationDetection?: Partial<DeviationDetectionConfig>;
   memoryConfig?: MemoryConfig;
@@ -391,6 +468,42 @@ export function createOrchestratorConfig(
     session: {
       ...baseConfig.session,
       ...overrides.session,
+    },
+    sessionCompaction: {
+      ...baseConfig.sessionCompaction,
+      ...overrides.sessionCompaction,
+    },
+    todoFsm: {
+      ...baseConfig.todoFsm,
+      ...overrides.todoFsm,
+    },
+    featureFlags: {
+      ...baseConfig.featureFlags,
+      ...overrides.featureFlags,
+      toolRuntimeV2: {
+        ...baseConfig.featureFlags.toolRuntimeV2,
+        ...overrides.featureFlags?.toolRuntimeV2,
+      },
+      toolProfile: {
+        ...baseConfig.featureFlags.toolProfile,
+        ...overrides.featureFlags?.toolProfile,
+      },
+      syntheticToolResult: {
+        ...baseConfig.featureFlags.syntheticToolResult,
+        ...overrides.featureFlags?.syntheticToolResult,
+      },
+      midExecutionSmoke: {
+        ...baseConfig.featureFlags.midExecutionSmoke,
+        ...overrides.featureFlags?.midExecutionSmoke,
+      },
+      resume: {
+        ...baseConfig.featureFlags.resume,
+        ...overrides.featureFlags?.resume,
+        replayGuard: {
+          ...baseConfig.featureFlags.resume.replayGuard,
+          ...overrides.featureFlags?.resume?.replayGuard,
+        },
+      },
     },
     approval: {
       ...baseConfig.approval,
@@ -533,6 +646,74 @@ export function validateOrchestratorConfig(config: OrchestratorConfig): void {
     throw new OrchestratorConfigError(
       'interval must be non-negative',
       'checkpoint.interval'
+    );
+  }
+
+  // 验证 Session Compaction 配置
+  if (config.sessionCompaction.maxConstraintChars < 0) {
+    throw new OrchestratorConfigError(
+      'maxConstraintChars must be non-negative',
+      'sessionCompaction.maxConstraintChars'
+    );
+  }
+  if (config.sessionCompaction.keepLastConstraints < 1) {
+    throw new OrchestratorConfigError(
+      'keepLastConstraints must be at least 1',
+      'sessionCompaction.keepLastConstraints'
+    );
+  }
+  if (config.sessionCompaction.maxSummaryItems < 1) {
+    throw new OrchestratorConfigError(
+      'maxSummaryItems must be at least 1',
+      'sessionCompaction.maxSummaryItems'
+    );
+  }
+  if (config.sessionCompaction.maxSummaryChars < 200) {
+    throw new OrchestratorConfigError(
+      'maxSummaryChars must be at least 200',
+      'sessionCompaction.maxSummaryChars'
+    );
+  }
+  if (typeof config.todoFsm.strictMode !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'strictMode must be boolean',
+      'todoFsm.strictMode'
+    );
+  }
+  if (typeof config.featureFlags.toolRuntimeV2.enabled !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'enabled must be boolean',
+      'featureFlags.toolRuntimeV2.enabled'
+    );
+  }
+  if (typeof config.featureFlags.toolRuntimeV2.shadowMode !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'shadowMode must be boolean',
+      'featureFlags.toolRuntimeV2.shadowMode'
+    );
+  }
+  if (!['pi-core', 'full'].includes(config.featureFlags.toolProfile.default)) {
+    throw new OrchestratorConfigError(
+      'default must be one of: pi-core | full',
+      'featureFlags.toolProfile.default'
+    );
+  }
+  if (typeof config.featureFlags.syntheticToolResult.enabled !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'enabled must be boolean',
+      'featureFlags.syntheticToolResult.enabled'
+    );
+  }
+  if (typeof config.featureFlags.midExecutionSmoke.enabled !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'enabled must be boolean',
+      'featureFlags.midExecutionSmoke.enabled'
+    );
+  }
+  if (typeof config.featureFlags.resume.replayGuard.enabled !== 'boolean') {
+    throw new OrchestratorConfigError(
+      'enabled must be boolean',
+      'featureFlags.resume.replayGuard.enabled'
     );
   }
 

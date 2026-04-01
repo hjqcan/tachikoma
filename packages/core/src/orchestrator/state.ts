@@ -7,6 +7,7 @@
 import type { TaskResult } from '../types';
 import type { PlannerOutput, PlannerRole } from './types';
 import type { ISessionFileManager, PendingApprovalFile } from './session';
+import type { MidExecutionProbe } from './services/mid-execution-probe';
 
 // ============================================================================
 // 执行状态
@@ -107,9 +108,9 @@ export class OrchestratorState {
   roleDefinitions: PlannerRole[] = [];
 
   // 标记
-  pendingReplan = false;
-  expandedSubtaskIds = new Set<string>();
   refinedSubtaskIds = new Set<string>();
+  observerProbeQueue: MidExecutionProbe[] = [];
+  observerProbeSeen = new Set<string>();
 
   // 偏离检测
   workerInterventionCooldowns = new Map<string, number>();
@@ -120,9 +121,9 @@ export class OrchestratorState {
   resetForNewRun(): void {
     this.executionState = null;
     this.currentPlanOutput = null;
-    this.pendingReplan = false;
-    this.expandedSubtaskIds.clear();
     this.refinedSubtaskIds.clear();
+    this.observerProbeQueue = [];
+    this.observerProbeSeen.clear();
     this.approval = createApprovalState();
   }
 
@@ -178,6 +179,17 @@ export class OrchestratorState {
     if (this.executionState) {
       this.executionState.totalRetries++;
     }
+  }
+
+  enqueueObserverProbe(probe: MidExecutionProbe): boolean {
+    if (this.observerProbeSeen.has(probe.id)) return false;
+    this.observerProbeSeen.add(probe.id);
+    this.observerProbeQueue.push(probe);
+    return true;
+  }
+
+  dequeueObserverProbe(): MidExecutionProbe | undefined {
+    return this.observerProbeQueue.shift();
   }
 }
 

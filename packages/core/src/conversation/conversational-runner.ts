@@ -17,6 +17,11 @@ import type { OrchestratorEvent } from '../orchestrator/types';
 import { SessionStore } from './session-store';
 import { ConversationPromptBuilder } from './prompt-builder';
 import {
+  resolveFusionFeatureFlagsFromEnv,
+  resolveSessionCompactionConfigFromEnv,
+  resolveTodoFsmConfigFromEnv,
+} from './session-compaction-env';
+import {
   type ConversationalRunnerConfig,
   type SessionState,
   type StreamEvent,
@@ -997,6 +1002,10 @@ All other messages are sent to the AI for processing.`,
       cwd: resolve(this.config.workDir),
     });
 
+    const sessionCompactionOverrides = resolveSessionCompactionConfigFromEnv(process.env);
+    const todoFsmOverrides = resolveTodoFsmConfigFromEnv(process.env);
+    const featureFlagsOverrides = resolveFusionFeatureFlagsFromEnv(process.env);
+
     const orchestrator = new Orchestrator(`orch-${session.sessionId}`, {
       planner,
       config: {
@@ -1029,6 +1038,9 @@ All other messages are sent to the AI for processing.`,
             timeout: 1000, // 1秒超时
           },
         }),
+        ...(sessionCompactionOverrides && { sessionCompaction: sessionCompactionOverrides }),
+        ...(todoFsmOverrides && { todoFsm: todoFsmOverrides }),
+        ...(featureFlagsOverrides && { featureFlags: featureFlagsOverrides }),
       },
       // 传递 MCP 客户端（仅在已初始化时）
       ...(this.mcpClient && { mcpClient: this.mcpClient }),

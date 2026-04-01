@@ -22,6 +22,7 @@ function pickOrchestratorOptions(options?: AgentFactoryOptions): OrchestratorOpt
     ...(o.planner && { planner: o.planner }),
     ...(o.workerPool && { workerPool: o.workerPool }),
     ...(o.sessionManager && { sessionManager: o.sessionManager }),
+    ...(o.metrics && { metrics: o.metrics }),
     ...(o.orchestratorConfig && { config: o.orchestratorConfig }),
   };
 }

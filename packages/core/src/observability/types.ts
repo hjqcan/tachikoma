@@ -304,6 +304,16 @@ export const WORKER_METRICS = {
   EXECUTION_DURATION: 'worker.execution.duration',
   /** 工具调用次数 */
   TOOL_CALLS_COUNT: 'worker.tool_calls.count',
+  /** 工具预检不匹配次数（工具提示/能力漂移） */
+  TOOL_PREFLIGHT_MISMATCH_COUNT: 'worker.tool_preflight.mismatch_count',
+  /** synthetic tool_result 次数 */
+  TOOL_SYNTHETIC_RESULT_COUNT: 'worker.tool.synthetic_result_count',
+  /** recoverable 工具错误次数（tool_result + isError） */
+  TOOL_RECOVERABLE_ERROR_COUNT: 'worker.tool.recoverable_error_count',
+  /** fatal 工具错误次数（error message） */
+  TOOL_FATAL_ERROR_COUNT: 'worker.tool.fatal_error_count',
+  /** todo FSM 非法转移次数（strict 阻断 + warn 告警） */
+  TODO_FSM_INVALID_TRANSITION_COUNT: 'todo.fsm.invalid_transition_count',
   /** 思考轮次 */
   THINKING_ROUNDS: 'worker.thinking.rounds',
   /** Token 使用量 */
@@ -312,6 +322,24 @@ export const WORKER_METRICS = {
   APPROVAL_WAIT_DURATION: 'worker.approval.wait_duration',
   /** 错误次数 */
   ERRORS_COUNT: 'worker.errors.count',
+} as const;
+
+/**
+ * 预定义的 Orchestrator 指标
+ */
+export const ORCHESTRATOR_METRICS = {
+  /** resume/replan 命中幂等 replay guard 次数 */
+  TODO_RESUME_IDEMPOTENT_REPLAY_COUNT: 'todo.resume.idempotent_replay_count',
+  /** 中间态探测触发次数 */
+  MID_SMOKE_TRIGGER_COUNT: 'orchestrator.mid_smoke.trigger_count',
+  /** 中间态探测失败次数（预留） */
+  MID_SMOKE_FAIL_COUNT: 'orchestrator.mid_smoke.fail_count',
+  /** session compaction 触发次数 */
+  SESSION_COMPACTION_COUNT: 'session.compaction.count',
+  /** compaction 摘要与 todo 快照 hash 冲突次数 */
+  SESSION_COMPACTION_TODO_MISMATCH_COUNT: 'session.compaction.todo_mismatch_count',
+  /** 任务闭环成功率（滚动比率） */
+  TASK_CLOSURE_SUCCESS_RATE: 'task.closure.success_rate',
 } as const;
 
 /**

@@ -10,7 +10,6 @@ export {
 } from './approval-arbitration';
 export type {
   FileWriteArbitrationParams,
-  ExpandCommitArbitrationParams,
   DelayedApproval,
   TaskMasterCallbacks,
   ApprovalArbitrationConfig,
@@ -71,3 +70,22 @@ export type { DevServerConfig, DevServerHandle } from './dev-server-manager';
 
 export { SmokeGateService, createSmokeGateService } from './smoke-gate';
 export type { SmokeTestConfig, SmokeTestResult } from './smoke-gate';
+
+export {
+  detectMidExecutionProbe,
+  buildMidExecutionProbeConstraint,
+} from './mid-execution-probe';
+export type {
+  MidExecutionProbe,
+  MidExecutionProbeType,
+} from './mid-execution-probe';
+
+export {
+  collectTodoSnapshotHashes,
+} from './todo-snapshot-context';
+
+export {
+  applySessionCompaction,
+  normalizeExecutionStateContract,
+  resolveExecutionStateContract,
+} from './session-compaction-manager';

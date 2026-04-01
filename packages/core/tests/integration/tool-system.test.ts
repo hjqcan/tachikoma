@@ -20,11 +20,7 @@ import {
   fileWriteTool,
   fileListTool,
   shellRunTool,
-  runTestsTool,
-  typeCheckTool,
   codeSearchTool,
-  packageInfoTool,
-  envGetTool,
 } from '../../src/tools';
 import { ToolLayer } from '../../src/tools/types';
 import type { ExecutionContext, Tool } from '../../src/types';
@@ -46,11 +42,7 @@ describe('Tool System Integration Tests', () => {
       fileWriteTool,
       fileListTool,
       shellRunTool,
-      runTestsTool,
-      typeCheckTool,
       codeSearchTool,
-      packageInfoTool,
-      envGetTool,
     ];
 
     // 创建测试专用registry并注册所有工具

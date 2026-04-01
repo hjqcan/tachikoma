@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "roles": {
+    "byId": {
+      "generalist": {
+        "name": "通用执行者",
+        "capabilities": [
+          "role:generalist"
+        ],
+        "responsibilities": "根据 tasks.json 的任务描述执行实现与验证工作"
+      },
+      "frontend-engineer": {
+        "name": "Frontend Engineer",
+        "capabilities": [
+          "role:frontend-engineer",
+          "react",
+          "typescript",
+          "tailwindcss",
+          "vitest",
+          "testing-library"
+        ],
+        "responsibilities": "Analyze UI design specifications, configure React+Tailwind+Vite infrastructure, develop core UI components, implement page layout and API integration, write co-located Vitest tests, and execute build/smoke verification."
+      },
+      "backend-engineer": {
+        "name": "Backend Engineer",
+        "capabilities": [
+          "role:backend-engineer",
+          "python",
+          "fastapi",
+          "flask",
+          "rest-api"
+        ],
+        "responsibilities": "Develop and deploy the Python mock API server using FastAPI/Flask, structure mock data for playlists and songs, implement REST endpoints, and configure CORS for frontend access."
+      }
+    },
+    "assignments": {
+      "conv-c976ec25": {
+        "1": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        },
+        "2": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        },
+        "3": {
+          "roleId": "backend-engineer",
+          "requiredCapabilities": [
+            "role:backend-engineer"
+          ]
+        },
+        "4": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        },
+        "5": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        },
+        "6": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        },
+        "7": {
+          "roleId": "frontend-engineer",
+          "requiredCapabilities": [
+            "role:frontend-engineer"
+          ]
+        }
+      }
+    }
+  }
+}

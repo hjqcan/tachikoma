@@ -1,5 +1,6 @@
 import type { Tool } from '../../types';
 import type { WorkerTask } from '../types';
+import { getToolPromptText } from '../../tools/build-tool';
 
 type ToolDescriptionMode = 'names-only' | 'full-schema';
 
@@ -19,7 +20,7 @@ export function formatToolDescriptions(
 
   return tools
     .map((tool) => {
-      const description = tool.description?.trim() ?? '';
+      const description = getToolPromptText(tool);
       const shortDesc =
         description.length > maxDescriptionLength
           ? `${description.slice(0, maxDescriptionLength)}...`

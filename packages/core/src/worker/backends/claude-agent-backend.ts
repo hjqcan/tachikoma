@@ -19,10 +19,15 @@ import { ToolToMCPBridge } from '../../mcp/tool-bridge';
 import type { ToolBridgeConfig } from '../../mcp/tool-bridge';
 import { MemoryService } from '../../memory';
 import { BaseWorkerBackend, ToolCallBudgetExceededError, isRetryableError } from './base-backend';
-import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
+import { buildWorkerSystemPromptAsync } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 import { createSkillsManager, type SkillsManager, deriveConstraintPolicy, type ConstraintPolicy, resolveProjectContextConfig } from '../engines';
 import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
+import {
+  ToolRuntimeKernel,
+  createResolvedToolsetSnapshot,
+  createToolRuntimeLogMiddleware,
+} from '../tool-runtime';
 
 // 工具调用追踪器（防循环）
 import { ToolCallTracker } from '../tool-call-tracker';
@@ -137,9 +142,17 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     // 调用基类构造函数（不使用基类 Memory，保留本地实现）
     super(undefined, 'ClaudeAgentSDKBackend');
     this.config = config;
+    const toolRuntime = new ToolRuntimeKernel({
+      middlewares: [
+        createToolRuntimeLogMiddleware({
+          backend: 'ClaudeAgentSDKBackend',
+        }),
+      ],
+    });
     this.toolBridge = new ToolToMCPBridge({
       serverName: 'tachikoma-tools',
       workDir: process.cwd(),
+      toolRuntime,
     });
     
     // 初始化 MemoryService
@@ -548,7 +561,12 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     const sdkConfig = this.config.sdkOptions || {};
 
     // 构造 overrides 对象（过滤 undefined 以满足 exactOptionalPropertyTypes）
-    const overrides: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute'>> = {};
+    const overrides: Partial<
+      Pick<
+        ToolBridgeConfig,
+        'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute' | 'taskId' | 'toolset'
+      >
+    > = {};
     if (options.workDir !== undefined) {
       overrides.workDir = options.workDir;
     }
@@ -560,6 +578,8 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     if (constraintPolicy) {
       overrides.constraintPolicy = constraintPolicy;
     }
+    overrides.taskId = task.id;
+    overrides.toolset = options.toolPreflight?.resolvedToolset ?? createResolvedToolsetSnapshot(tools);
     const doomLoopGuard = this.buildDoomLoopGuard(options, task);
     if (doomLoopGuard) {
       overrides.beforeExecute = doomLoopGuard;
@@ -571,12 +591,14 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
     // Build unified system prompt with memory context (if available)
     // Filter undefined values for exactOptionalPropertyTypes
     const promptOptions: {
+      cwd?: string;
       memoryContext?: string;
       extraSystemPrompt?: string;
       identityContext?: string;
       provider?: string;
       model?: string;
     } = {
+      cwd: options.workDir ?? process.cwd(),
       provider: this.config.provider,
       model: this.config.model,
     };
@@ -605,7 +627,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
       }
     }
     
-    let systemPrompt = buildWorkerSystemPrompt(promptOptions);
+    let systemPrompt = await buildWorkerSystemPromptAsync(promptOptions);
     if (skillsManager) {
       // Pass task objective for skill recommendations with auto-activation
       systemPrompt = await skillsManager.renderSystemPromptSection(
@@ -614,7 +636,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         { 
           autoActivate: true,
           includeProjectContext: true,
-          availableToolNames: tools.map(tool => tool.name),
+          availableToolNames: options.toolPreflight?.availableSkillToolNames ?? tools.map(tool => tool.name),
           ...(taskParentObjective !== undefined && { parentObjective: taskParentObjective }),
         }
       );
@@ -711,20 +733,41 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
         // Our MCP bridge encodes failures as JSON with { success:false, error: ... }.
         let isSuccess = !isErrorFlag;
         let errorMsg: string | undefined;
-        if (typeof resultContent === 'string') {
+        let parsedPayload: Record<string, unknown> | null = null;
+        if (
+          resultContent &&
+          typeof resultContent === 'object' &&
+          !Array.isArray(resultContent)
+        ) {
+          parsedPayload = resultContent as Record<string, unknown>;
+        } else if (typeof resultContent === 'string') {
           try {
             const parsed = JSON.parse(resultContent) as unknown;
-            if (
-              parsed &&
-              typeof parsed === 'object' &&
-              (parsed as any).success === false
-            ) {
-              isSuccess = false;
-              const maybeError = (parsed as any).error;
-              errorMsg = typeof maybeError === 'string' ? maybeError : 'Tool returned success=false';
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              parsedPayload = parsed as Record<string, unknown>;
             }
           } catch {
             // Non-JSON output (e.g., plain text) -> treat as success unless SDK flagged error.
+          }
+        }
+        if (parsedPayload) {
+          const payloadSignalsFailure =
+            parsedPayload.success === false ||
+            parsedPayload.isError === true ||
+            parsedPayload.is_error === true ||
+            parsedPayload.errorType === 'functional_error' ||
+            parsedPayload.errorType === 'execution_failure';
+
+          if (payloadSignalsFailure) {
+            isSuccess = false;
+            const maybeError = parsedPayload.error;
+            const maybeMessage = parsedPayload.message;
+            errorMsg =
+              typeof maybeError === 'string'
+                ? maybeError
+                : typeof maybeMessage === 'string'
+                  ? maybeMessage
+                  : 'Tool returned unsuccessful payload.';
           }
         }
         if (!isSuccess && !errorMsg) {
@@ -733,6 +776,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
               ? resultContent
               : JSON.stringify(resultContent);
         }
+        const normalizedResult = parsedPayload ?? resultContent;
         
         // 记录工具调用结果到追踪器
         if (!isSuccess) {
@@ -747,7 +791,7 @@ export class ClaudeAgentSDKBackend extends BaseWorkerBackend {
           type: 'tool_result',
           tool: toolName,
           callId,
-          result: resultContent,
+          result: normalizedResult,
           success: isSuccess,
           duration: 0, // SDK 不提供持续时间
           timestamp,

@@ -5,9 +5,19 @@
  * 集成 SessionFileManager 实现审计日志
  */
 
+import { createHash } from 'node:crypto';
 import type { Tool } from '../types';
 import type { SubTask } from '../orchestrator/types';
-import type { ISessionFileManager, SharedContextFile, SyncLogEntry, WorkerStatusFile } from '../orchestrator/session/types';
+import type {
+  ISessionFileManager,
+  SharedContextFile,
+  SharedExecutionStateContract,
+  SharedKnowledgeData,
+  SharedTodoItem,
+  SharedTodoSnapshot,
+  SyncLogEntry,
+  WorkerStatusFile,
+} from '../orchestrator/session/types';
 import type {
   IWorkerBackend,
   WorkerMessage,
@@ -23,8 +33,8 @@ import type { MCPClientManager } from '../mcp';
 import { MCPToolRegistrar } from '../mcp';
 import { globalToolRegistry } from '../tools/registry';
 import { cleanupAllForTask } from '../tools/core/shell-run';
-import { cleanupServersForTask } from '../tools/core/dev-server';
 import { deriveConstraintPolicy, detectConstraintConflicts } from './engines';
+import { resolveToolProfile, runToolPreflight } from './tool-runtime';
 
 // ============================================================================
 // 类型定义
@@ -32,6 +42,7 @@ import { deriveConstraintPolicy, detectConstraintConflicts } from './engines';
 
 /** Worker 心跳间隔（避免长时间工具调用导致 stale） */
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const TODO_TOOLS = new Set(['todowrite', 'todoread']);
 
 /**
  * Worker 执行器配置
@@ -194,8 +205,15 @@ export class WorkerExecutor {
     if (injectedSharedConstraint) {
       rawConstraints.push(injectedSharedConstraint);
     }
-    const { constraints: sanitizedConstraints, removedToolHints } =
-      this.sanitizeConstraintsForTools(rawConstraints, tools);
+    const requestedToolProfile = resolveToolProfile(options.toolProfile, options.env);
+    const preflight = runToolPreflight({
+      tools,
+      constraints: rawConstraints,
+      profile: requestedToolProfile,
+    });
+    const runtimeTools = preflight.nativeTools;
+    const sanitizedConstraints = preflight.sanitizedConstraints;
+    const removedToolHints = preflight.removedToolHints;
 
     if (removedToolHints.length > 0) {
       const preview = removedToolHints.slice(0, 5).join(', ');
@@ -204,6 +222,25 @@ export class WorkerExecutor {
       console.info(
         `[WorkerExecutor] Removed unavailable tool hints from constraints: ${preview}${suffix}`
       );
+    }
+    if (preflight.notes.length > 0) {
+      for (const note of preflight.notes) {
+        this.logger.info('Tool preflight note', { workerId, note, profile: preflight.profile });
+      }
+    }
+    if (preflight.mismatchCount > 0) {
+      this.metrics.increment(
+        WORKER_METRICS.TOOL_PREFLIGHT_MISMATCH_COUNT,
+        preflight.mismatchCount,
+        { workerId, profile: preflight.profile }
+      );
+    }
+    if (preflight.profile !== requestedToolProfile) {
+      this.logger.warn('Tool profile adjusted by preflight', {
+        workerId,
+        requestedProfile: requestedToolProfile,
+        resolvedProfile: preflight.profile,
+      });
     }
 
     // 转换 SubTask 为 WorkerTask（注意：必须传递 parentObjective 以支持技能匹配上下文）
@@ -234,6 +271,16 @@ export class WorkerExecutor {
       workDir: this.config.workDir || process.cwd(),
       ...options,
       env: injectedEnv,
+      toolProfile: preflight.profile,
+      toolPreflight: {
+        profile: preflight.profile,
+        availableToolNames: preflight.availableToolNames,
+        availableSkillToolNames: preflight.availableSkillToolNames,
+        aliasMap: preflight.aliasMap,
+        mismatchCount: preflight.mismatchCount,
+        resolvedToolsetHash: preflight.resolvedToolset.hash,
+        resolvedToolset: preflight.resolvedToolset,
+      },
     };
 
     // 注入 intervention 检查回调
@@ -471,7 +518,7 @@ export class WorkerExecutor {
       }
 
       // 执行任务
-      for await (const msg of this.backend.execute(workerTask, tools, execOptions)) {
+      for await (const msg of this.backend.execute(workerTask, runtimeTools, execOptions)) {
         allMessages.push(msg);
 
         // 持久化消息到审计日志
@@ -495,6 +542,30 @@ export class WorkerExecutor {
             const toolTags = { workerId, tool: msg.tool, success: String(msg.success) };
             this.metrics.timing(WORKER_METRICS.EXECUTION_DURATION, msg.duration, toolTags);
             this.metrics.increment(WORKER_METRICS.TOOL_CALLS_COUNT, 1, toolTags);
+            const toolOutcome = this.inspectToolResultPayload(msg.result, msg.success);
+            if (toolOutcome.synthetic) {
+              this.metrics.increment(WORKER_METRICS.TOOL_SYNTHETIC_RESULT_COUNT, 1, {
+                workerId,
+                tool: msg.tool,
+              });
+            }
+            if (toolOutcome.isRecoverableError) {
+              this.metrics.increment(WORKER_METRICS.TOOL_RECOVERABLE_ERROR_COUNT, 1, {
+                workerId,
+                tool: msg.tool,
+              });
+            }
+            if (toolOutcome.invalidTodoFsmTransition) {
+              this.metrics.increment(
+                WORKER_METRICS.TODO_FSM_INVALID_TRANSITION_COUNT,
+                1,
+                {
+                  workerId,
+                  tool: msg.tool,
+                  ...(toolOutcome.todoFsmMode ? { mode: toolOutcome.todoFsmMode } : {}),
+                }
+              );
+            }
             if (msg.success) {
               successfulToolCalls++;
               this.logger.debug(`Tool result: ${msg.tool} succeeded`, { ...logContext, duration: msg.duration });
@@ -502,6 +573,17 @@ export class WorkerExecutor {
               failedToolCalls++;
               this.logger.warn(`Tool result: ${msg.tool} failed`, { ...logContext, duration: msg.duration });
               this.metrics.increment(WORKER_METRICS.ERRORS_COUNT, 1, { workerId });
+            }
+            break;
+          }
+          case 'error': {
+            const code = msg.code ?? '';
+            const looksLikeToolFatal =
+              code.startsWith('TOOL') ||
+              code.includes('SDK') ||
+              /tool/i.test(msg.error);
+            if (looksLikeToolFatal) {
+              this.metrics.increment(WORKER_METRICS.TOOL_FATAL_ERROR_COUNT, 1, { workerId });
             }
             break;
           }
@@ -571,7 +653,6 @@ export class WorkerExecutor {
         await stopHeartbeat();
         // Cleanup all shell resources (background processes + persistent shell sessions)
         await cleanupAllForTask(subtask.id);
-        cleanupServersForTask(subtask.id);
       } catch (cleanupError) {
         this.logger.warn('Failed to cleanup task processes', {
           ...logContext,
@@ -753,6 +834,13 @@ export class WorkerExecutor {
           },
         });
 
+        await this.syncTodoSnapshotFromToolResult(
+          sessionManager,
+          workerId,
+          subtaskId,
+          msg
+        );
+
         // 失败时记录决策日志
         if (!msg.success) {
           await sessionManager.appendDecision({
@@ -789,6 +877,242 @@ export class WorkerExecutor {
     }
   }
 
+  private async syncTodoSnapshotFromToolResult(
+    sessionManager: ISessionFileManager,
+    workerId: string,
+    subtaskId: string,
+    msg: Extract<WorkerMessage, { type: 'tool_result' }>
+  ): Promise<void> {
+    if (!msg.success) return;
+    if (!TODO_TOOLS.has(msg.tool)) return;
+
+    const sourceTool = msg.tool === 'todowrite' ? 'todowrite' : 'todoread';
+    const parsed = this.parseTodoSnapshotPayload(msg.result);
+    if (!parsed) return;
+
+    const shared = await sessionManager.readSharedContext().catch(() => null);
+    if (!shared) return;
+
+    const data = (shared.sharedKnowledge?.data ?? {}) as SharedKnowledgeData;
+    const existing =
+      this.normalizeExecutionStateContract(data.executionStateContract)?.todoState ??
+      this.normalizeSharedTodoSnapshot(data.todoState);
+    if (existing && existing.revision > parsed.revision) {
+      return;
+    }
+    if (
+      existing &&
+      existing.revision === parsed.revision &&
+      existing.hash === parsed.hash
+    ) {
+      return;
+    }
+
+    const todoState: SharedTodoSnapshot = {
+      revision: parsed.revision,
+      pendingCount: parsed.pendingCount,
+      counts: parsed.counts,
+      hash: parsed.hash,
+      todos: parsed.todos,
+      updatedAt: Date.now(),
+      updatedByWorkerId: workerId,
+      subtaskId,
+      sourceTool,
+    };
+
+    const existingContract = this.normalizeExecutionStateContract(data.executionStateContract);
+    const executionStateContract: SharedExecutionStateContract = {
+      todoState,
+      ...(existingContract?.summaryState
+        ? { summaryState: existingContract.summaryState }
+        : {}),
+      conflictPolicy: 'todo_wins',
+      updatedAt: Date.now(),
+    };
+
+    await sessionManager.writeSharedContext({
+      objective: shared.objective,
+      constraints: shared.constraints,
+      sharedKnowledge: {
+        data: {
+          ...data,
+          todoState,
+          executionStateContract,
+        },
+        updatedAt: Date.now(),
+      },
+      ...(shared.workspace ? { workspace: shared.workspace } : {}),
+    });
+  }
+
+  private normalizeSharedTodoSnapshot(value: unknown): SharedTodoSnapshot | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (typeof record.revision !== 'number' || !Number.isInteger(record.revision)) {
+      return null;
+    }
+    if (typeof record.pendingCount !== 'number' || !Number.isFinite(record.pendingCount)) {
+      return null;
+    }
+    if (typeof record.hash !== 'string' || record.hash.length === 0) {
+      return null;
+    }
+    return record as unknown as SharedTodoSnapshot;
+  }
+
+  private normalizeExecutionStateContract(value: unknown): SharedExecutionStateContract | null {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    const conflictPolicy = record.conflictPolicy === 'todo_wins' ? 'todo_wins' : null;
+    if (!conflictPolicy) return null;
+
+    const todoState = this.normalizeSharedTodoSnapshot(record.todoState);
+    const summaryState =
+      record.summaryState && typeof record.summaryState === 'object'
+        ? (record.summaryState as SharedExecutionStateContract['summaryState'])
+        : undefined;
+    const updatedAt =
+      typeof record.updatedAt === 'number' && Number.isFinite(record.updatedAt)
+        ? record.updatedAt
+        : Date.now();
+
+    return {
+      ...(todoState ? { todoState } : {}),
+      ...(summaryState ? { summaryState } : {}),
+      conflictPolicy,
+      updatedAt,
+    };
+  }
+
+  private parseTodoSnapshotPayload(
+    payload: unknown
+  ): {
+    revision: number;
+    pendingCount: number;
+    counts: Record<string, number>;
+    hash: string;
+    todos: SharedTodoItem[];
+  } | null {
+    const root = this.tryParseObject(payload);
+    if (!root) return null;
+
+    const nestedData = this.tryParseObject(root.data);
+    const candidate = nestedData ?? root;
+
+    const todos = this.normalizeTodoItems(candidate.todos);
+    const revisionRaw = candidate.revision;
+    const pendingRaw = candidate.pendingCount;
+
+    const revision =
+      typeof revisionRaw === 'number' && Number.isInteger(revisionRaw) && revisionRaw >= 0
+        ? revisionRaw
+        : 0;
+
+    const counts = this.normalizeTodoCounts(candidate.counts, todos);
+    const pendingCount =
+      typeof pendingRaw === 'number' && Number.isFinite(pendingRaw) && pendingRaw >= 0
+        ? pendingRaw
+        : (counts.pending ?? 0) + (counts.in_progress ?? 0);
+
+    if (pendingCount < 0) return null;
+    if (todos.length === 0 && revision === 0 && pendingCount === 0) return null;
+
+    const hashInput = JSON.stringify({
+      revision,
+      pendingCount,
+      counts,
+      todos,
+    });
+    const hash = createHash('sha1').update(hashInput).digest('hex').slice(0, 16);
+
+    return {
+      revision,
+      pendingCount,
+      counts,
+      hash,
+      todos,
+    };
+  }
+
+  private tryParseObject(value: unknown): Record<string, unknown> | null {
+    if (value && typeof value === 'object') {
+      return value as Record<string, unknown>;
+    }
+    if (typeof value !== 'string') return null;
+
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Ignore non-JSON payloads.
+    }
+    return null;
+  }
+
+  private normalizeTodoItems(value: unknown): SharedTodoItem[] {
+    if (!Array.isArray(value)) return [];
+    const normalized: SharedTodoItem[] = [];
+    for (const item of value) {
+      if (!item || typeof item !== 'object') continue;
+      const record = item as Record<string, unknown>;
+      const id = typeof record.id === 'string' ? record.id.trim() : '';
+      const content = typeof record.content === 'string' ? record.content.trim() : '';
+      const status = typeof record.status === 'string' ? record.status.trim() : '';
+      if (!id || !content || !status) continue;
+      const priority = typeof record.priority === 'string' ? record.priority : undefined;
+      normalized.push({
+        id,
+        content,
+        status,
+        ...(priority ? { priority } : {}),
+      });
+    }
+    return normalized;
+  }
+
+  private normalizeTodoCounts(
+    value: unknown,
+    todos: SharedTodoItem[]
+  ): Record<string, number> {
+    const counts: Record<string, number> = {
+      pending: 0,
+      in_progress: 0,
+      completed: 0,
+      blocked: 0,
+      cancelled: 0,
+    };
+
+    if (value && typeof value === 'object') {
+      for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) continue;
+        counts[key] = raw;
+      }
+    }
+
+    if (todos.length > 0) {
+      const derived: Record<string, number> = {
+        pending: 0,
+        in_progress: 0,
+        completed: 0,
+        blocked: 0,
+        cancelled: 0,
+      };
+      for (const todo of todos) {
+        derived[todo.status] = (derived[todo.status] ?? 0) + 1;
+      }
+      for (const [key, valueCount] of Object.entries(derived)) {
+        const existingCount = counts[key];
+        if (typeof existingCount !== 'number' || existingCount <= 0) {
+          counts[key] = valueCount;
+        }
+      }
+    }
+
+    return counts;
+  }
+
   private async buildSharedContextConstraint(
     sessionManager?: ISessionFileManager
   ): Promise<string | null> {
@@ -801,7 +1125,25 @@ export class WorkerExecutor {
   private formatSharedContextConstraint(shared: SharedContextFile): string | null {
     const data = shared.sharedKnowledge?.data;
     const syncLog = Array.isArray(data?.syncLog) ? data.syncLog.slice(-5) : [];
-    if (syncLog.length === 0) return null;
+    const contractTodo = (
+      (data as Record<string, unknown> | undefined)?.executionStateContract as
+        | Record<string, unknown>
+        | undefined
+    )?.todoState;
+    const todoState =
+      this.normalizeSharedTodoSnapshot(contractTodo) ??
+      this.normalizeSharedTodoSnapshot(data?.todoState);
+    const summaryState = (
+      (data as Record<string, unknown> | undefined)?.executionStateContract as
+        | Record<string, unknown>
+        | undefined
+    )?.summaryState as Record<string, unknown> | undefined;
+    const summaryText =
+      summaryState && typeof summaryState.summary === 'string'
+        ? summaryState.summary.trim()
+        : '';
+
+    if (syncLog.length === 0 && !todoState && !summaryText) return null;
 
     // 将共享内容压缩为可读摘要，避免爆 token（约 2k 字符上限）
     const lines: string[] = [];
@@ -825,91 +1167,113 @@ export class WorkerExecutor {
       }
     }
 
+    if (todoState) {
+      const counts = Object.entries(todoState.counts)
+        .filter(([, value]) => typeof value === 'number' && value > 0)
+        .map(([status, value]) => `${status}=${value}`)
+        .join(', ');
+
+      lines.push('');
+      lines.push('Shared todo snapshot:');
+      lines.push(
+        `- revision=${todoState.revision}, pending=${todoState.pendingCount}, hash=${todoState.hash}`
+      );
+      if (counts) {
+        lines.push(`- counts: ${counts}`);
+      }
+      if (todoState.todos.length > 0) {
+        const preview = todoState.todos
+          .slice(0, 5)
+          .map((todo) => `[${todo.status}] ${todo.content}`)
+          .join(' | ');
+        if (preview) {
+          lines.push(`- top todos: ${preview}`);
+        }
+      }
+    }
+
+    if (summaryText) {
+      lines.push('');
+      lines.push('Session compaction summary:');
+      lines.push(
+        `- hash=${typeof summaryState?.summaryHash === 'string' ? summaryState.summaryHash : 'unknown'}, policy=todo_wins`
+      );
+      lines.push(`- ${summaryText.split('\n').slice(0, 6).join(' | ')}`);
+    }
+
     const text = lines.join('\n').slice(0, 2000);
     return text.trim() ? text : null;
   }
 
-  private sanitizeConstraintsForTools(
-    constraints: string[],
-    tools: Tool[]
-  ): { constraints: string[]; removedToolHints: string[] } {
-    if (!Array.isArray(constraints) || constraints.length === 0) {
-      return { constraints: [], removedToolHints: [] };
-    }
-
-    const available = new Set(tools.map(tool => tool.name));
-    const removedToolHints: string[] = [];
-    const sanitized: string[] = [];
-
-    for (const constraint of constraints) {
-      if (typeof constraint !== 'string' || constraint.trim().length === 0) {
-        continue;
-      }
-
-      const lines = constraint.split('\n');
-      const keptLines: string[] = [];
-
-      for (const line of lines) {
-        const parsed = this.parseRecommendedToolHint(line);
-        if (!parsed) {
-          keptLines.push(line);
-          continue;
+  private inspectToolResultPayload(
+    result: unknown,
+    success: boolean
+  ): {
+    synthetic: boolean;
+    isRecoverableError: boolean;
+    invalidTodoFsmTransition: boolean;
+    todoFsmMode?: 'strict' | 'warn';
+  } {
+    let parsed: Record<string, unknown> | null = null;
+    if (result && typeof result === 'object') {
+      parsed = result as Record<string, unknown>;
+    } else if (typeof result === 'string') {
+      try {
+        const maybe = JSON.parse(result) as unknown;
+        if (maybe && typeof maybe === 'object') {
+          parsed = maybe as Record<string, unknown>;
         }
-
-        const availableTools = parsed.tools.filter(tool => available.has(tool));
-        const missingTools = parsed.tools.filter(tool => !available.has(tool));
-
-        if (availableTools.length === 0) {
-          removedToolHints.push(...missingTools);
-          continue;
-        }
-
-        if (missingTools.length > 0) {
-          removedToolHints.push(...missingTools);
-          keptLines.push(
-            `${parsed.label}${parsed.separator} ${availableTools.join(', ')} (unavailable: ${missingTools.join(', ')})`
-          );
-          continue;
-        }
-
-        keptLines.push(line);
-      }
-
-      if (keptLines.length > 0) {
-        sanitized.push(keptLines.join('\n'));
+      } catch {
+        // Ignore non-JSON result payload.
       }
     }
 
-    if (removedToolHints.length > 0) {
-      const unique = Array.from(new Set(removedToolHints));
-      sanitized.push(
-        `Note: recommended tools unavailable and removed: ${unique.join(', ')}. Use only the tools listed in "Available tools".`
+    const synthetic =
+      parsed?.synthetic === true ||
+      parsed?.isSynthetic === true;
+    const parsedIsError =
+      parsed?.isError === true ||
+      parsed?.is_error === true ||
+      parsed?.success === false;
+    const isRecoverableError = !success || parsedIsError;
+    const code = typeof parsed?.code === 'string' ? parsed.code : '';
+    const errorMessage = typeof parsed?.error === 'string' ? parsed.error : '';
+    const invalidByCode =
+      code === 'TODO_FSM_INVALID_TRANSITION' ||
+      code === 'TODO_FSM_MULTIPLE_IN_PROGRESS';
+    const invalidByMessage =
+      /Invalid todo status transition|Only one todo item may be in_progress/.test(errorMessage);
+
+    const nestedData =
+      parsed?.data && typeof parsed.data === 'object'
+        ? (parsed.data as Record<string, unknown>)
+        : null;
+    const warnings = Array.isArray(nestedData?.warnings) ? nestedData.warnings : [];
+    const invalidByWarnings = warnings.some((warning) => {
+      if (!warning || typeof warning !== 'object') return false;
+      const warningCode = (warning as Record<string, unknown>).code;
+      return (
+        warningCode === 'TODO_FSM_INVALID_TRANSITION' ||
+        warningCode === 'TODO_FSM_MULTIPLE_IN_PROGRESS'
       );
+    });
+    const invalidTodoFsmTransition = invalidByCode || invalidByMessage || invalidByWarnings;
+
+    let todoFsmMode: 'strict' | 'warn' | undefined;
+    if (nestedData?.fsm && typeof nestedData.fsm === 'object') {
+      const strictMode = (nestedData.fsm as Record<string, unknown>).strictMode;
+      if (strictMode === true) {
+        todoFsmMode = 'strict';
+      } else if (strictMode === false) {
+        todoFsmMode = 'warn';
+      }
+    } else if (invalidByCode || invalidByMessage) {
+      todoFsmMode = 'strict';
     }
 
-    return { constraints: sanitized, removedToolHints };
+    return { synthetic, isRecoverableError, invalidTodoFsmTransition, ...(todoFsmMode ? { todoFsmMode } : {}) };
   }
 
-  private parseRecommendedToolHint(
-    line: string
-  ): { label: string; separator: string; tools: string[] } | null {
-    const trimmed = line.trim();
-    if (!trimmed) return null;
-    const withoutBullet = trimmed.replace(/^[-*]\s+/, '');
-    const match = withoutBullet.match(
-      /^(推荐工具|recommended tools?|recommended tool)\s*([:：])\s*(.+)$/i
-    );
-    if (!match || !match[3]) return null;
-    const label = match[1];
-    const separator = match[2];
-    if (!label || !separator) return null;
-    const tools = match[3]
-      .split(/[,\s、，]+/)
-      .map(tool => tool.trim())
-      .filter(tool => tool.length > 0);
-    if (tools.length === 0) return null;
-    return { label, separator, tools };
-  }
 }
 
 // ============================================================================

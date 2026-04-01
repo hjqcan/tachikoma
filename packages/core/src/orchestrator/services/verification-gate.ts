@@ -5,7 +5,7 @@
  * - Type checking (tsc, pyright, mypy)
  * - Build verification (npm run build)
  * - Test execution (vitest, jest, bun test)
- * - E2E browser verification (browser_verify tool)
+ * - E2E browser verification (internal Playwright service)
  */
 
 import { ProjectDetector, type ProjectConfig } from './project-detector';
@@ -726,7 +726,7 @@ export class VerificationGateService {
     });
     
     const command =
-      result.command === 'lsp_diagnostics' && projectConfig.typeCheckCommand
+      result.command === 'lsp_check' && projectConfig.typeCheckCommand
         ? projectConfig.typeCheckCommand
         : result.command ?? projectConfig.typeCheckCommand;
 
@@ -1565,7 +1565,7 @@ export class VerificationGateService {
         passed: false,
         errors: errors.concat(selectorErrors),
         warnings: [],
-        command: `browser_verify ${options.devServerUrl}`,
+        command: `browser_check ${options.devServerUrl}`,
         duration: Date.now() - startTime,
         summary: browserResult.error ?? 'Browser verification failed',
       };
@@ -1576,7 +1576,7 @@ export class VerificationGateService {
       passed: true,
       errors: [],
       warnings: [],
-      command: `browser_verify ${options.devServerUrl}`,
+      command: `browser_check ${options.devServerUrl}`,
       duration: Date.now() - startTime,
       summary: 'Browser verification passed',
     };

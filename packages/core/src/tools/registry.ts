@@ -10,6 +10,7 @@ import { PermissionValidator } from './permission-validator';
 import { ToolExecutor } from './tool-executor';
 import type { PermissionValidationResult } from './permission-validator';
 import { ToolNotFoundError } from './errors';
+import { getToolPromptText } from './build-tool';
 
 /**
  * 工具定义（用于渐进披露）
@@ -36,6 +37,8 @@ export { PermissionDeniedError, ToolNotFoundError } from './errors';
 export class ToolRegistry {
   /** 工具存储（按名称索引） */
   private tools: Map<string, Tool> = new Map();
+  /** 工具别名映射（alias -> primary name） */
+  private aliases: Map<string, string> = new Map();
   /** 权限校验器 */
   private validator: PermissionValidator;
   /** 工具执行器 */
@@ -56,6 +59,11 @@ export class ToolRegistry {
     if (this.tools.has(tool.name)) {
       throw new Error(`工具名称已存在: ${tool.name}`);
     }
+    for (const alias of tool.aliases ?? []) {
+      if (this.tools.has(alias) || this.aliases.has(alias)) {
+        throw new Error(`工具别名已存在: ${alias}`);
+      }
+    }
     
     // 基本校验：检查必要字段
     if (!tool.name || !tool.description) {
@@ -63,6 +71,9 @@ export class ToolRegistry {
     }
     
     this.tools.set(tool.name, tool);
+    for (const alias of tool.aliases ?? []) {
+      this.aliases.set(alias, tool.name);
+    }
   }
 
   /**
@@ -83,7 +94,17 @@ export class ToolRegistry {
    * @returns 是否成功注销
    */
   unregister(name: string): boolean {
-    return this.tools.delete(name);
+    const primaryName = this.aliases.get(name) ?? name;
+    const tool = this.tools.get(primaryName);
+    if (!tool) {
+      return false;
+    }
+
+    for (const alias of tool.aliases ?? []) {
+      this.aliases.delete(alias);
+    }
+
+    return this.tools.delete(primaryName);
   }
 
   /**
@@ -93,7 +114,8 @@ export class ToolRegistry {
    * @returns 工具实例，如果不存在返回 undefined
    */
   getByName(name: string): Tool | undefined {
-    return this.tools.get(name);
+    const primaryName = this.aliases.get(name) ?? name;
+    return this.tools.get(primaryName);
   }
 
   /**
@@ -183,7 +205,7 @@ export class ToolRegistry {
     return tools.map((tool) => {
       const definition: ToolDefinition = {
         name: tool.name,
-        description: tool.description,
+        description: getToolPromptText(tool),
       };
 
       // 只在值存在时才添加可选字段

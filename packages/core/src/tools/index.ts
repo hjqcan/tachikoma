@@ -5,41 +5,20 @@
  */
 
 import type { Tool } from '../types';
+import { getToolPromptText } from './build-tool';
 
 import {
   fileReadTool,
   fileWriteTool,
   fileListTool,
   shellRunTool,
-  shellBgTool,
   codeSearchTool,
   applyPatchTool,
-  replaceBetweenMarkersTool,
-  lspTool,
-  lspDiagnosticsTool,
-  runTestsTool,
-  typeCheckTool,
-  packageInfoTool,
-  packageInstallTool,
-  envGetTool,
   todoWriteTool,
   todoReadTool,
-  // devServerTool 从 core 导入但不放入 baseTools
-  devServerTool,
 } from './core';
 
-// RAG 工具导入
-import { knowledgeRetrievalTool } from './rag';
-import { knowledgeUpsertTool } from './rag/upsert';
-
-// 网络/Agent 工具导入
-import { webSearchTool } from './core/web-search';
-import { deepResearchTool } from './core/deep-research';
 import { spawnSubagentTool } from './core/spawn-subagent';
-import { submitResultTool } from './core/submit-result';
-import { expandCommitTool } from './core/expand-commit';
-import { createSkillTool } from './core/create-skill';
-import { skillTool } from './core/skill-tool';
 
 // 类型导出
 export type {
@@ -64,30 +43,12 @@ export type {
   // 补丁工具类型
   ApplyPatchInput,
   ApplyPatchOutput,
-  ReplaceBetweenMarkersInput,
-  ReplaceBetweenMarkersOutput,
-  LspToolInput,
-  LspToolOutput,
-  LspDiagnosticsInput,
-  LspDiagnosticsOutput,
-  LspOperation,
   TodoItem,
   TodoWriteInput,
   TodoWriteOutput,
   TodoReadInput,
   TodoReadOutput,
-  // 扩展工具类型
-  RunTestsInput,
-  RunTestsOutput,
-  TypeCheckInput,
-  TypeCheckOutput,
-  PackageInfoInput,
-  PackageInfoOutput,
-  PackageInstallInput,
-  PackageInstallOutput,
   PackageManager,
-  EnvGetInput,
-  EnvGetOutput,
   ScriptRunInput,
   ScriptRunOutput,
   // MCP 标准类型
@@ -120,18 +81,8 @@ export {
   fileWriteTool,
   fileListTool,
   shellRunTool,
-  devServerTool,
   codeSearchTool,
   applyPatchTool,
-  replaceBetweenMarkersTool,
-  lspTool,
-  lspDiagnosticsTool,
-  // 扩展工具
-  runTestsTool,
-  typeCheckTool,
-  packageInfoTool,
-  packageInstallTool,
-  envGetTool,
   todoWriteTool,
   todoReadTool,
   // 安全工具函数
@@ -145,19 +96,8 @@ export {
   detectPackageManager,
 } from './core';
 
-// RAG工具导出
-export { knowledgeRetrievalTool } from './rag';
-export { knowledgeUpsertTool } from './rag/upsert';
-
-// 新增工具导出 (使用已导入的变量)
-export {
-  webSearchTool,
-  deepResearchTool,
-  spawnSubagentTool,
-  submitResultTool,
-  createSkillTool,
-  skillTool,
-};
+// Agent 核心工具导出
+export { spawnSubagentTool };
 
 // 6.8 MCP Layer 3
 export {
@@ -172,83 +112,42 @@ export {
 } from '../mcp';
 
 /**
- * 基础工具集（无外部依赖，离线可用，低风险）
+ * 基础工具集（Claude Code 核心子集）
  *
- * 这些工具只依赖本地文件系统和Shell，不需要网络或外部服务
- * 不包含长期进程管理（devServer）或浏览器自动化
+ * 默认只暴露最小必要工具面，避免把一堆低价值工具塞给模型。
  */
 export const baseTools: Tool[] = [
-  // 文件系统工具
   fileReadTool,
   fileWriteTool,
   fileListTool,
-  // Shell工具
   shellRunTool,
-  shellBgTool,
-  // 代码工具
   codeSearchTool,
   applyPatchTool,
-  replaceBetweenMarkersTool,
-  lspTool,
-  lspDiagnosticsTool,
-  // 扩展工具
-  runTestsTool,
-  typeCheckTool,
-  packageInfoTool,
-  packageInstallTool,
-  envGetTool,
-  // RAG 工具（本地向量存储）
-  knowledgeRetrievalTool,
-  knowledgeUpsertTool,
 ];
 
 /**
- * Agent 工具集（子任务/结果提交）
- *
- * 这些工具需要与 Orchestrator 配合使用
- * - spawn_subagent: 创建子任务到 subtasks 目录
- * - submit_result: 提交结果到 artifacts 目录
- * - create_skill: 动态创建新技能
+ * Agent 工具集（同样保持最小集）
  */
 export const agentTools: Tool[] = [
   spawnSubagentTool,
-  submitResultTool,
-  expandCommitTool,
   todoWriteTool,
   todoReadTool,
-  createSkillTool,
-  skillTool,  // Skill 生命周期管理
 ];
 
 /**
- * 网络工具集（需要网络访问）
+ * 预留扩展工具集
  *
- * ⚠️ 需要配置：
- * - SEARCH_API_KEY: 搜索API密钥
- * - SEARCH_PROVIDER: 提供商 (brave/serp/tavily)
- *
- * 无API Key时会fallback到DuckDuckGo（结果有限）
+ * 当前默认不暴露额外网络工具，避免模型工具面继续膨胀。
  */
-export const networkTools: Tool[] = [
-  webSearchTool,
-  deepResearchTool,
-];
+export const networkTools: Tool[] = [];
 
 /**
- * 开发服务器工具集（高副作用，需显式启用）
- *
- * 这些工具涉及长期进程管理和端口监听，具有较高副作用
- * 需要通过 getToolsByCapability({ devServer: true }) 显式启用
+ * 当前不从公共入口暴露 dev server 专用工具。
  */
-export const devTools: Tool[] = [
-  devServerTool,
-];
+export const devTools: Tool[] = [];
 
 /**
- * 默认工具集（基础 + Agent 工具）
- *
- * 只包含基础工具 + Agent工具，不包含网络/浏览器工具
- * 避免在禁网/无依赖环境下调用失败
+ * 默认工具集（最小 Claude Code 风格工具集）
  */
 export const coreTools: Tool[] = [
   ...baseTools,
@@ -256,10 +155,7 @@ export const coreTools: Tool[] = [
 ];
 
 /**
- * 完整工具集（包含基础 + Agent + 网络工具）
- *
- * ⚠️ 注意：
- * - 浏览器工具（Playwright）属于可选依赖，请从 `@tachikoma/core/tools/browser` 显式导入并自行合并
+ * 完整工具集（当前与默认工具集一致）
  */
 export const allTools: Tool[] = [
   ...baseTools,
@@ -270,9 +166,9 @@ export const allTools: Tool[] = [
 /**
  * 按能力获取工具集
  *
- * @param capabilities.network - 启用网络工具（web_search, deep_research）
+ * @param capabilities.network - 预留参数，当前无额外网络工具
  * @param capabilities.agent - 启用 Agent 工具（默认 true）
- * @param capabilities.devServer - 启用开发服务器工具（默认 false，高副作用）
+ * @param capabilities.devServer - 预留参数，当前无额外 devServer 工具
  */
 export function getToolsByCapability(capabilities: {
   network?: boolean;
@@ -290,8 +186,6 @@ export function getToolsByCapability(capabilities: {
   if (capabilities.devServer) {
     tools.push(...devTools);
   }
-  // Browser tools are opt-in and live in a separate module to avoid pulling Playwright
-  // into bundles that don't need it (e.g. CLI single-run).
 
   return tools;
 }
@@ -320,7 +214,7 @@ export function getToolDefinitions(): {
 }[] {
   return coreTools.map((tool) => ({
     name: tool.name,
-    description: tool.description,
+    description: getToolPromptText(tool),
     inputSchema: tool.inputSchema,
   }));
 }

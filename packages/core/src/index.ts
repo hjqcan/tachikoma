@@ -178,6 +178,7 @@ export {
   noopObservability,
   // 预定义指标
   WORKER_METRICS,
+  ORCHESTRATOR_METRICS,
   SANDBOX_METRICS,
 } from './observability';
 

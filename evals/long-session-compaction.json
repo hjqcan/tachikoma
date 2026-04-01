@@ -1,0 +1,50 @@
+{
+  "id": "long-session-compaction",
+  "name": "Long Session Compaction Set",
+  "description": "Regression cases for long-running sessions where context compaction must preserve todo execution semantics.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "long-session-compaction-summary-carryover",
+      "objective": "Simulate a long multi-step execution with many constraints so that session compaction is triggered, then continue execution and report sessionCompactionSummaryHash, todoSnapshotHash, and todoRevision in the final summary.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "sessionCompactionSummaryHash",
+          "todoSnapshotHash",
+          "todoRevision"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 60
+        }
+      },
+      "metadata": {
+        "phase": "P1-3",
+        "focus": "long-session-summary-carryover"
+      }
+    },
+    {
+      "id": "long-session-compaction-no-goal-drift",
+      "objective": "After compaction is triggered in a long run, complete the originally requested goal without restarting finished todo items and explicitly mention what was already completed before compaction.",
+      "expected": {
+        "success": true,
+        "llmCriteria": "Did the agent preserve task intent across compaction and avoid reopening completed todo items?",
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 70
+        }
+      },
+      "metadata": {
+        "phase": "P1-3",
+        "focus": "goal-continuity-after-compaction"
+      }
+    }
+  ]
+}

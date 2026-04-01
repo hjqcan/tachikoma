@@ -179,7 +179,7 @@ export class WorkerAgent extends BaseAgent {
       abortSignal: signal,
       ...(this.options.executionOptions ?? {}),
       // auto-approve（测试/无人值守模式）：不禁用审批机制，而是把默认决策改为 approve，
-      // 以便 Orchestrator 仍可通过“审批文件协议”做内部仲裁（如：文件锁/expand_commit）。
+      // 以便 Orchestrator 仍可通过“审批文件协议”做内部仲裁（如：文件锁）。
       ...(noApproval && {
         keyDecisionPolicy: {
           enabled: true,

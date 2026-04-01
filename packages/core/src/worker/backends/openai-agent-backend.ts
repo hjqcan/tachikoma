@@ -28,7 +28,7 @@ import type {
 import { DEFAULT_RESOURCE_LIMITS } from '../types';
 import type { RetryPolicy, Tool } from '../../types';
 import { isKeyDecision, isKeyDecisionAsync } from '../key-decision';
-import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
+import { buildWorkerSystemPromptAsync } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 import {
   createSkillsManager,
@@ -38,6 +38,13 @@ import {
   checkToolCallAgainstConstraints,
   type ConstraintPolicy,
 } from '../engines';
+import {
+  ToolRuntimeKernel,
+  createResolvedToolsetSnapshot,
+  createToolRuntimeLogMiddleware,
+  createSyntheticToolFailureOutput,
+  resolveToolRuntimeFeatureFlags,
+} from '../tool-runtime';
 
 // 共享基础层
 import {
@@ -57,7 +64,7 @@ import {
 import { ToolCallTracker } from '../tool-call-tracker';
 
 // 工具输入验证器（参数预检）
-import { validateToolInput, generateValidationError } from '../tool-input-validator';
+import { validateToolInput } from '../tool-input-validator';
 
 // 失败记忆系统（上下文注入）
 import { FailureMemory } from '../failure-memory';
@@ -66,6 +73,8 @@ import { FailureMemory } from '../failure-memory';
 import { WorkspaceStructureCache, parseFileListOutput } from '../workspace-cache';
 import { resolve } from 'node:path';
 import { IdentityUpdater, getAgentIdFromEnv } from '../../agent-identity';
+import { getToolPromptText } from '../../tools/build-tool';
+import { ReadFileStateCache } from '../../tools/read-file-state';
 
 const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetries: 5,  // Codex-style: allow multiple reconnection attempts
@@ -123,6 +132,61 @@ function calculateRetryDelay(retryPolicy: RetryPolicy, attemptNumber: number): n
   const jitter = delay * 0.1 * (Math.random() * 2 - 1);
   const finalDelay = Math.round(delay + jitter);
   return maxDelay ? Math.min(finalDelay, maxDelay) : finalDelay;
+}
+
+interface FunctionalToolFailure {
+  failed: boolean;
+  code: string;
+  error: string;
+}
+
+function parseFunctionalToolFailure(output: unknown): FunctionalToolFailure {
+  if (!output || typeof output !== 'object') {
+    return {
+      failed: false,
+      code: '',
+      error: '',
+    };
+  }
+
+  const record = output as Record<string, unknown>;
+  const hasFailureFlag =
+    record.success === false ||
+    record.isError === true ||
+    record.is_error === true ||
+    record.errorType === 'functional_error';
+
+  if (!hasFailureFlag) {
+    return {
+      failed: false,
+      code: '',
+      error: '',
+    };
+  }
+
+  const meta =
+    record.meta && typeof record.meta === 'object'
+      ? (record.meta as Record<string, unknown>)
+      : null;
+  const codeFromMeta = meta && typeof meta.code === 'string' ? meta.code.trim() : '';
+  const code =
+    typeof record.code === 'string' && record.code.trim().length > 0
+      ? record.code
+      : codeFromMeta.length > 0
+        ? codeFromMeta
+        : 'TOOL_FUNCTIONAL_ERROR';
+  const error =
+    typeof record.error === 'string' && record.error.trim().length > 0
+      ? record.error
+      : typeof record.message === 'string' && record.message.trim().length > 0
+        ? record.message
+        : 'Tool returned unsuccessful result.';
+
+  return {
+    failed: true,
+    code,
+    error,
+  };
 }
 
 // ============================================================================
@@ -471,11 +535,19 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
 
   // 工具映射（name -> Tool）用于执行
   private toolMap = new Map<string, Tool>();
+  private readonly toolRuntime: ToolRuntimeKernel;
 
   constructor(config: OpenAIAgentsBackendConfig) {
     super(config.memoryConfig, 'OpenAIAgentsBackend');
     this.config = config;
     this.sdkChecker = new SDKAvailabilityChecker('@openai/agents');
+    this.toolRuntime = new ToolRuntimeKernel({
+      middlewares: [
+        createToolRuntimeLogMiddleware({
+          backend: 'OpenAIAgentsBackend',
+        }),
+      ],
+    });
 
     // 不写入全局 env，避免多后端并行时污染
     // API Key 和 baseURL 在 run() 时通过 OpenAI 客户端传入
@@ -602,7 +674,11 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
           // 注入工作区结构上下文（如果有）
           const workspaceContext = workspaceCache.generateContext();
           
-          const baseSystemPrompt = await this.buildSystemPrompt(memoryContext, toolArgsRetryHint);
+          const baseSystemPrompt = await this.buildSystemPrompt(
+            memoryContext,
+            toolArgsRetryHint,
+            options.workDir ?? process.cwd(),
+          );
           const contextParts = [baseSystemPrompt];
           if (failureWarnings) {
             contextParts.push(failureWarnings);
@@ -618,7 +694,7 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
             { 
               autoActivate: true,
               includeProjectContext: true,
-              availableToolNames: tools.map(tool => tool.name),
+              availableToolNames: options.toolPreflight?.availableSkillToolNames ?? tools.map(tool => tool.name),
               ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }),
             }
           );
@@ -994,7 +1070,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
    */
   private async buildSystemPrompt(
     memoryContext: string,
-    extraSystemPrompt?: string | null
+    extraSystemPrompt?: string | null,
+    cwd = process.cwd()
   ): Promise<string> {
     // Letta-code style: inject identity context right after base prompt
     let identityContext: string | null = null;
@@ -1018,7 +1095,8 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       }
     }
 
-    return buildWorkerSystemPrompt({
+    return buildWorkerSystemPromptAsync({
+      cwd,
       memoryContext,
       provider: this.config.provider,
       model: this.config.model,
@@ -1065,7 +1143,20 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
     workspaceCache?: WorkspaceStructureCache
   ): unknown[] {
     // Build one shared execution context per run so effectiveCwd updates persist across tools.
-    const executionContext = this.buildExecutionContext(task, options);
+    const executionContext = this.buildExecutionContext(task, options) as unknown as {
+      taskId: string;
+      agentId: string;
+      traceId: string;
+      workDir: string;
+      effectiveCwd?: string;
+      updateCwd?: (newCwd: string) => void;
+      registerModifiedFile?: (filePath: string) => void;
+      env: Record<string, string>;
+      readFileState: ReadFileStateCache;
+    };
+    executionContext.readFileState = new ReadFileStateCache();
+    const resolvedToolset = options.toolPreflight?.resolvedToolset ?? createResolvedToolsetSnapshot(tools);
+    const runtimeFlags = resolveToolRuntimeFeatureFlags(options.env);
 
     return tools.map((tachikomaTool) => {
       // 转换 inputSchema 为 Zod schema
@@ -1076,195 +1167,314 @@ export class OpenAIAgentsBackend extends BaseWorkerBackend {
       // 创建 SDK tool
       return sdkTool({
         name: tachikomaTool.name,
-        description: tachikomaTool.description,
+        description: getToolPromptText(tachikomaTool),
         parameters: zodParameters,
         execute: async (params: unknown) => {
-          // 调用 Tachikoma Tool.execute，使用 try/catch 封装错误
-          let cacheKey: string | null = null;
-          
-          // 检查是否为重复调用（防循环）
-          if (toolCallTracker) {
-            const duplicateCheck = toolCallTracker.checkDuplicate(tachikomaTool.name, params);
-            if (duplicateCheck.shouldBlock) {
-              // 阻止执行并返回警告
-              const output = JSON.stringify({
-                success: false,
-                error: duplicateCheck.warning ?? 'Blocked: repeated failed call',
-                tool: tachikomaTool.name,
-                code: 'DUPLICATE_CALL_BLOCKED',
-                duplicateCount: duplicateCheck.count,
-                failureCount: duplicateCheck.failureCount,
-              });
-              return output;
-            } else if (duplicateCheck.warning) {
-              // 仅记录警告，不阻止执行
-              console.warn(`[ToolCallTracker] ${duplicateCheck.warning}`);
-            }
-          }
+          const runtimeResult = await this.toolRuntime.execute({
+            taskId: task.id,
+            toolName: tachikomaTool.name,
+            input: params,
+            toolset: resolvedToolset,
+            metadata: {
+              backend: this.backendType,
+              provider: this.provider,
+              toolRuntimeV2Enabled: runtimeFlags.toolRuntimeV2Enabled,
+              toolRuntimeV2ShadowMode: runtimeFlags.toolRuntimeV2ShadowMode,
+            },
+            errorCode: 'TOOL_EXECUTION_ERROR',
+            recoverUnhandledErrors:
+              runtimeFlags.toolRuntimeV2Enabled &&
+              runtimeFlags.syntheticToolResultEnabled,
+            execute: async (runtimeCall) => {
+              const runtimeInput = runtimeCall.input;
+              let cacheKey: string | null = null;
 
-          if (toolCallTracker) {
-            const doomDecision = await this.checkDoomLoopAndApprove({
-              tracker: toolCallTracker,
-              toolName: tachikomaTool.name,
-              args: params,
-              options,
-              taskId: task.id,
-            });
-            if (!doomDecision.allowed) {
-              return JSON.stringify({
-                success: false,
-                error: doomDecision.message,
-                tool: tachikomaTool.name,
-                code: 'DOOM_LOOP_BLOCKED',
-                duplicateCount: doomDecision.count,
-              });
-            }
-          }
-          
-          // 参数预验证：检查必需参数是否存在
-          const inputSchema = tachikomaTool.inputSchema as Record<string, unknown>;
-          const validation = validateToolInput(inputSchema, params);
-          if (!validation.valid) {
-            // 记录验证失败
-            const errorMsg = validation.hint ?? 'Missing required parameters';
-            toolCallTracker?.record(tachikomaTool.name, params, false, errorMsg);
-            return generateValidationError(tachikomaTool.name, validation, inputSchema);
-          }
-          
-          try {
-            cacheKey = toolResultCache
-              ? this.buildToolCallKey(tachikomaTool.name, params)
-              : null;
-            if (useToolResultCache && cacheKey && toolResultCache?.has(cacheKey)) {
-              // 记录缓存命中（成功）
-              toolCallTracker?.record(tachikomaTool.name, params, true);
-              return toolResultCache.get(cacheKey) as string;
-            }
+              // 检查是否为重复调用（防循环）
+              if (toolCallTracker) {
+                const duplicateCheck = toolCallTracker.checkDuplicate(tachikomaTool.name, runtimeInput);
+                if (duplicateCheck.shouldBlock) {
+                  // 阻止执行并返回警告
+                  const output = JSON.stringify(
+                    createSyntheticToolFailureOutput({
+                      toolName: tachikomaTool.name,
+                      code: 'DUPLICATE_CALL_BLOCKED',
+                      error: duplicateCheck.warning ?? 'Blocked: repeated failed call',
+                      kind: 'functional',
+                      details: {
+                        duplicateCount: duplicateCheck.count,
+                        failureCount: duplicateCheck.failureCount,
+                      },
+                    })
+                  );
+                  return {
+                    success: false,
+                    isError: true,
+                    output,
+                  };
+                } else if (duplicateCheck.warning) {
+                  // 仅记录警告，不阻止执行
+                  console.warn(`[ToolCallTracker] ${duplicateCheck.warning}`);
+                }
+              }
 
-            onToolExecute?.(tachikomaTool.name, params);
-            if (constraintPolicy) {
-              const violation = checkToolCallAgainstConstraints(
-                tachikomaTool.name,
-                params,
-                constraintPolicy
-              );
-              if (violation) {
-                const output = JSON.stringify({
-                  success: false,
-                  error: violation.message,
-                  tool: tachikomaTool.name,
-                  code: 'CONSTRAINT_VIOLATION',
-                  category: violation.category,
-                  detected: violation.detected,
-                  allowed: violation.allowed,
+              if (toolCallTracker) {
+                const doomDecision = await this.checkDoomLoopAndApprove({
+                  tracker: toolCallTracker,
+                  toolName: tachikomaTool.name,
+                  args: runtimeInput,
+                  options,
+                  taskId: task.id,
                 });
+                if (!doomDecision.allowed) {
+                  return {
+                    success: false,
+                    isError: true,
+                    output: JSON.stringify(
+                      createSyntheticToolFailureOutput({
+                        toolName: tachikomaTool.name,
+                        code: 'DOOM_LOOP_BLOCKED',
+                        error: doomDecision.message,
+                        kind: 'functional',
+                        details: { duplicateCount: doomDecision.count },
+                      })
+                    ),
+                  };
+                }
+              }
+
+              // 参数预验证：检查必需参数是否存在
+              const inputSchema = tachikomaTool.inputSchema as Record<string, unknown>;
+              const validation = validateToolInput(inputSchema, runtimeInput);
+              if (!validation.valid) {
+                // 记录验证失败
+                const errorMsg = validation.hint ?? 'Missing required parameters';
+                toolCallTracker?.record(tachikomaTool.name, runtimeInput, false, errorMsg);
+                const validationFailure = createSyntheticToolFailureOutput({
+                  toolName: tachikomaTool.name,
+                  code: 'TOOL_VALIDATION_ERROR',
+                  error: errorMsg,
+                  kind: 'functional',
+                  hint:
+                    validation.hint ??
+                    'Fix required fields and schema mismatches before retrying this tool call.',
+                  details: {
+                    missingRequired: validation.missingRequired,
+                    invalidFields: validation.invalidFields,
+                  },
+                });
+                return {
+                  success: false,
+                  isError: true,
+                  output: JSON.stringify(validationFailure),
+                };
+              }
+
+              try {
+                cacheKey = toolResultCache
+                  ? this.buildToolCallKey(tachikomaTool.name, runtimeInput)
+                  : null;
+                if (useToolResultCache && cacheKey && toolResultCache?.has(cacheKey)) {
+                  // 记录缓存命中（成功）
+                  toolCallTracker?.record(tachikomaTool.name, runtimeInput, true);
+                  return {
+                    success: true,
+                    isError: false,
+                    output: toolResultCache.get(cacheKey) as string,
+                  };
+                }
+
+                onToolExecute?.(tachikomaTool.name, runtimeInput);
+                if (constraintPolicy) {
+                  const violation = checkToolCallAgainstConstraints(
+                    tachikomaTool.name,
+                    runtimeInput,
+                    constraintPolicy
+                  );
+                  if (violation) {
+                    const output = JSON.stringify(
+                      createSyntheticToolFailureOutput({
+                        toolName: tachikomaTool.name,
+                        code: 'CONSTRAINT_VIOLATION',
+                        error: violation.message,
+                        kind: 'functional',
+                        details: {
+                          category: violation.category,
+                          detected: violation.detected,
+                          allowed: violation.allowed,
+                        },
+                      })
+                    );
+                    if (cacheKey) {
+                      toolResultCache?.set(cacheKey, output);
+                    }
+                    // 记录约束违规（失败）
+                    toolCallTracker?.record(tachikomaTool.name, runtimeInput, false, violation.message);
+                    return {
+                      success: false,
+                      isError: true,
+                      output,
+                    };
+                  }
+                }
+                const sizeCheck = checkToolInputSize(tachikomaTool.name, runtimeInput, maxToolInputBytes);
+                if (!sizeCheck.ok) {
+                  const errorMsg = sizeCheck.message ?? 'Tool input too large.';
+                  const output = JSON.stringify(
+                    createSyntheticToolFailureOutput({
+                      toolName: tachikomaTool.name,
+                      code: 'TOOL_INPUT_TOO_LARGE',
+                      error: errorMsg,
+                      kind: 'functional',
+                      details: {
+                        size: sizeCheck.size,
+                        limit: maxToolInputBytes,
+                      },
+                    })
+                  );
+                  if (cacheKey) {
+                    toolResultCache?.set(cacheKey, output);
+                  }
+                  // 记录大小超限（失败）
+                  toolCallTracker?.record(tachikomaTool.name, runtimeInput, false, errorMsg);
+                  return {
+                    success: false,
+                    isError: true,
+                    output,
+                  };
+                }
+                if (tachikomaTool.validateInput) {
+                  const toolValidation = await tachikomaTool.validateInput(
+                    runtimeInput,
+                    executionContext,
+                  );
+                  if (!toolValidation.result) {
+                    const output = JSON.stringify(
+                      createSyntheticToolFailureOutput({
+                        toolName: tachikomaTool.name,
+                        code: 'TOOL_VALIDATION_ERROR',
+                        error: toolValidation.message,
+                        kind: 'functional',
+                      })
+                    );
+                    if (cacheKey) {
+                      toolResultCache?.set(cacheKey, output);
+                    }
+                    toolCallTracker?.record(
+                      tachikomaTool.name,
+                      runtimeInput,
+                      false,
+                      toolValidation.message,
+                    );
+                    return {
+                      success: false,
+                      isError: true,
+                      output,
+                    };
+                  }
+                }
+                const result = await tachikomaTool.execute(
+                  runtimeInput,
+                  executionContext
+                );
+
+                // Workspace cache wiring: capture file_list results for next-round context injection.
+                if (workspaceCache && tachikomaTool.name === 'file_list') {
+                  const paramsObj =
+                    (runtimeInput && typeof runtimeInput === 'object')
+                      ? (runtimeInput as Record<string, unknown>)
+                      : {};
+                  const rawPath = typeof paramsObj.path === 'string' ? paramsObj.path : '.';
+                  const baseDir =
+                    typeof executionContext.effectiveCwd === 'string'
+                      ? executionContext.effectiveCwd
+                      : (executionContext.workDir ?? process.cwd());
+                  const resolvedPath = resolve(baseDir, rawPath);
+
+                  const parsed = parseFileListOutput(result);
+                  if (parsed) {
+                    workspaceCache.recordDirectoryListing(
+                      resolvedPath,
+                      parsed.subdirectories,
+                      parsed.files
+                    );
+                  } else if (typeof result === 'object' && result !== null) {
+                    const resultObj = result as Record<string, unknown>;
+                    const success = typeof resultObj.success === 'boolean' ? resultObj.success : undefined;
+                    const error = typeof resultObj.error === 'string' ? resultObj.error : '';
+                    if (
+                      success === false &&
+                      /directory not found|does not exist|enoent/i.test(error)
+                    ) {
+                      workspaceCache.recordNonExistent(resolvedPath);
+                    }
+                  }
+                }
+
+                // SDK 要求返回 string
+                let output = typeof result === 'string' ? result : JSON.stringify(result);
+                let isSuccess = true;
+                let errorMsg: string | undefined;
+
+                const functionalFailure = parseFunctionalToolFailure(result);
+                if (functionalFailure.failed) {
+                  isSuccess = false;
+                  errorMsg = functionalFailure.error;
+                  output = JSON.stringify(
+                    createSyntheticToolFailureOutput({
+                      toolName: tachikomaTool.name,
+                      code: functionalFailure.code,
+                      error: functionalFailure.error,
+                      kind: 'functional',
+                    })
+                  );
+                  failureMemory?.recordFailure(tachikomaTool.name, runtimeInput, functionalFailure.error);
+                }
+
                 if (cacheKey) {
                   toolResultCache?.set(cacheKey, output);
                 }
-                // 记录约束违规（失败）
-                toolCallTracker?.record(tachikomaTool.name, params, false, violation.message);
-                return output;
-              }
-            }
-            const sizeCheck = checkToolInputSize(tachikomaTool.name, params, maxToolInputBytes);
-            if (!sizeCheck.ok) {
-              const errorMsg = sizeCheck.message ?? 'Tool input too large.';
-              const output = JSON.stringify({
-                success: false,
-                error: errorMsg,
-                tool: tachikomaTool.name,
-                code: 'TOOL_INPUT_TOO_LARGE',
-                size: sizeCheck.size,
-                limit: maxToolInputBytes,
-              });
-              if (cacheKey) {
-                toolResultCache?.set(cacheKey, output);
-              }
-              // 记录大小超限（失败）
-              toolCallTracker?.record(tachikomaTool.name, params, false, errorMsg);
-              return output;
-            }
-            const result = await tachikomaTool.execute(
-              params,
-              executionContext
-            );
 
-            // Workspace cache wiring: capture file_list results for next-round context injection.
-            if (workspaceCache && tachikomaTool.name === 'file_list') {
-              const paramsObj =
-                (params && typeof params === 'object') ? (params as Record<string, unknown>) : {};
-              const rawPath = typeof paramsObj.path === 'string' ? paramsObj.path : '.';
-              const baseDir =
-                typeof executionContext.effectiveCwd === 'string'
-                  ? executionContext.effectiveCwd
-                  : (executionContext.workDir ?? process.cwd());
-              const resolvedPath = resolve(baseDir, rawPath);
+                toolCallTracker?.record(tachikomaTool.name, runtimeInput, isSuccess, errorMsg);
 
-              const parsed = parseFileListOutput(result);
-              if (parsed) {
-                workspaceCache.recordDirectoryListing(
-                  resolvedPath,
-                  parsed.subdirectories,
-                  parsed.files
+                return {
+                  success: isSuccess,
+                  isError: !isSuccess,
+                  output,
+                };
+              } catch (error) {
+                const err = error as Error;
+                if (err.name === 'ToolCallBudgetExceededError') {
+                  this.abortExecution();
+                  throw err;
+                }
+                // 返回结构化错误
+                console.error(`[OpenAIAgentsBackend] Tool ${tachikomaTool.name} error:`, err);
+                const output = JSON.stringify(
+                  createSyntheticToolFailureOutput({
+                    toolName: tachikomaTool.name,
+                    code: 'TOOL_EXECUTION_ERROR',
+                    error: err.message,
+                    kind: 'execution',
+                  })
                 );
-              } else if (typeof result === 'object' && result !== null) {
-                const resultObj = result as Record<string, unknown>;
-                const success = typeof resultObj.success === 'boolean' ? resultObj.success : undefined;
-                const error = typeof resultObj.error === 'string' ? resultObj.error : '';
-                if (
-                  success === false &&
-                  /directory not found|does not exist|enoent/i.test(error)
-                ) {
-                  workspaceCache.recordNonExistent(resolvedPath);
+                if (cacheKey) {
+                  toolResultCache?.set(cacheKey, output);
                 }
-              }
-            }
-
-            // SDK 要求返回 string
-            const output = typeof result === 'string' ? result : JSON.stringify(result);
-            if (cacheKey) {
-              toolResultCache?.set(cacheKey, output);
-            }
-            
-            // 检查结果是否为失败（用于 tracker 记录）
-            let isSuccess = true;
-            let errorMsg: string | undefined;
-            if (typeof result === 'object' && result !== null) {
-              const resultObj = result as Record<string, unknown>;
-              if (resultObj.success === false || resultObj.error) {
-                isSuccess = false;
-                errorMsg = typeof resultObj.error === 'string' ? resultObj.error : undefined;
+                // 记录异常（失败）
+                toolCallTracker?.record(tachikomaTool.name, runtimeInput, false, err.message);
                 // 记录到失败记忆系统进行模式分析
-                if (errorMsg) {
-                  failureMemory?.recordFailure(tachikomaTool.name, params, errorMsg);
-                }
+                failureMemory?.recordFailure(tachikomaTool.name, runtimeInput, err.message);
+                return {
+                  success: false,
+                  isError: true,
+                  output,
+                };
               }
-            }
-            toolCallTracker?.record(tachikomaTool.name, params, isSuccess, errorMsg);
-            
-            return output;
-          } catch (error) {
-            const err = error as Error;
-            if (err.name === 'ToolCallBudgetExceededError') {
-              this.abortExecution();
-              throw err;
-            }
-            // 返回结构化错误
-            console.error(`[OpenAIAgentsBackend] Tool ${tachikomaTool.name} error:`, err);
-            const output = JSON.stringify({
-              success: false,
-              error: err.message,
-              tool: tachikomaTool.name,
-            });
-            if (cacheKey) {
-              toolResultCache?.set(cacheKey, output);
-            }
-            // 记录异常（失败）
-            toolCallTracker?.record(tachikomaTool.name, params, false, err.message);
-            // 记录到失败记忆系统进行模式分析
-            failureMemory?.recordFailure(tachikomaTool.name, params, err.message);
-            return output;
-          }
+            },
+          });
+          return typeof runtimeResult.output === 'string'
+            ? runtimeResult.output
+            : JSON.stringify(runtimeResult.output);
         },
         // 设置审批标记
         // 仅当 requireApproval=true 或 keyDecisionPolicy.enabled=true 时才设置 needsApproval

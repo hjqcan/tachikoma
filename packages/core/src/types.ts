@@ -293,6 +293,16 @@ export interface ExecutionContext {
    * 收集的路径用于限定 VerificationGate 的检查范围。
    */
   registerModifiedFile?: (filePath: string) => void;
+  /**
+   * 已读取文件状态缓存（可选）
+   *
+   * 用于实现“先读后改”规则。支持工具在成功读取/写入后回写最新状态。
+   */
+  readFileState?: {
+    has(path: string): boolean;
+    markRead?(path: string, size: number, hash?: string): void;
+    invalidate?(path: string): void;
+  };
   /** 环境变量 */
   env: Record<string, string>;
 
@@ -454,6 +464,91 @@ export interface Tool {
    * ```
    */
   isMutating?: (input: unknown, context: ExecutionContext) => boolean | Promise<boolean>;
+
+  // ========== Claude Code 安全元数据（可选，渐进迁移） ==========
+
+  /**
+   * 工具别名（重命名向后兼容）
+   *
+   * 工具可以通过这些名字查找，除了主 name 之外。
+   */
+  aliases?: string[];
+
+  /**
+   * 是否启用
+   *
+   * @default true
+   */
+  isEnabled?: () => boolean;
+
+  /**
+   * 是否可并行调用（fail-closed: default false = 不安全）
+   *
+   * 返回 true 表示此工具可与其他工具并行执行。
+   * 用于优化并行工具调用策略。
+   */
+  isConcurrencySafe?: (input?: unknown) => boolean;
+
+  /**
+   * 是否只读（fail-closed: default false = 有写入）
+   *
+   * 返回 true 表示此工具不会修改任何状态。
+   * 用于权限检查和审批流程优化。
+   */
+  isReadOnly?: (input?: unknown) => boolean;
+
+  /**
+   * 是否破坏性操作（default: false）
+   *
+   * 仅在工具执行不可逆操作时设置（删除、覆盖、发送等）。
+   */
+  isDestructive?: (input?: unknown) => boolean;
+
+  /**
+   * 工具结果最大字符数，超出时持久化到磁盘
+   *
+   * @default 50_000
+   */
+  maxResultSizeChars?: number;
+
+  /**
+   * 搜索提示词（用于 ToolSearch 按需加载时的关键词匹配）
+   *
+   * 3-10 个词，无句号。使用 tool name 之外的术语。
+   */
+  searchHint?: string;
+
+  /**
+   * 输入校验（在 execute 之前调用）
+   *
+   * 用于实现"先读后改"等安全规则。
+   * 返回 { result: false, message } 时工具调用被拒绝，message 返回给 LLM。
+   *
+   * @example
+   * ```ts
+   * validateInput: async (input, context) => {
+   *   const path = (input as any)?.path;
+   *   if (context.readFileState && !context.readFileState.has(path)) {
+   *     return { result: false, message: 'Read the file first.' };
+   *   }
+   *   return { result: true };
+   * }
+   * ```
+   */
+  validateInput?: (
+    input: unknown,
+    context: ExecutionContext & { readFileState?: { has(path: string): boolean } },
+  ) => Promise<{ result: true } | { result: false; message: string }> | { result: true } | { result: false; message: string };
+
+  /**
+   * 工具使用手册（给 LLM 看的详细说明）
+   *
+   * Claude Code 的核心设计：每个工具都有独立的、写给 AI 的使用手册，
+   * 包含使用规则、注意事项、示例等。比 description 更详细。
+   *
+   * 当 prompt() 存在时，工具系统会用它替代 description 传给 LLM。
+   */
+  prompt?: () => string | Promise<string>;
 
   // ========== 执行方法 ==========
   

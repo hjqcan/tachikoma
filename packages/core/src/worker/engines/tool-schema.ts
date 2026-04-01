@@ -8,6 +8,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import type { Tool } from '../../types';
+import { getToolPromptText } from '../../tools/build-tool';
 
 // ============================================================================
 // 类型定义
@@ -160,7 +161,7 @@ export function convertToolToAITool(
   
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const toolConfig: any = {
-    description: tachikoma.description,
+    description: getToolPromptText(tachikoma),
     ...(tachikoma.title ? { title: tachikoma.title } : {}),
     inputSchema,
     outputSchema,

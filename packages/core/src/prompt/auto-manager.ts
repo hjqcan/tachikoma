@@ -306,7 +306,7 @@ export class SmartCompactionDecider {
       /error|exception|fail/i,
       /success|complete|done/i,
       /file_write|file_create/i,
-      /run_tests|test_result/i,
+      /test|verification|build/i,
       /important|critical|必须|关键/i,
     ];
 

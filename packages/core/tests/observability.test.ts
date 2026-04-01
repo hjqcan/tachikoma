@@ -16,6 +16,7 @@ import {
   createObservability,
   noopObservability,
   WORKER_METRICS,
+  ORCHESTRATOR_METRICS,
   SANDBOX_METRICS,
 } from '../src/observability';
 
@@ -319,6 +320,30 @@ describe('预定义指标名称', () => {
     expect(WORKER_METRICS.THINKING_ROUNDS).toBe('worker.thinking.rounds');
     expect(WORKER_METRICS.TOKENS_USED).toBe('worker.tokens.used');
     expect(WORKER_METRICS.ERRORS_COUNT).toBe('worker.errors.count');
+    expect(WORKER_METRICS.TODO_FSM_INVALID_TRANSITION_COUNT).toBe(
+      'todo.fsm.invalid_transition_count'
+    );
+  });
+
+  it('ORCHESTRATOR_METRICS 应包含预期字段', () => {
+    expect(ORCHESTRATOR_METRICS.TODO_RESUME_IDEMPOTENT_REPLAY_COUNT).toBe(
+      'todo.resume.idempotent_replay_count'
+    );
+    expect(ORCHESTRATOR_METRICS.MID_SMOKE_TRIGGER_COUNT).toBe(
+      'orchestrator.mid_smoke.trigger_count'
+    );
+    expect(ORCHESTRATOR_METRICS.MID_SMOKE_FAIL_COUNT).toBe(
+      'orchestrator.mid_smoke.fail_count'
+    );
+    expect(ORCHESTRATOR_METRICS.SESSION_COMPACTION_COUNT).toBe(
+      'session.compaction.count'
+    );
+    expect(ORCHESTRATOR_METRICS.SESSION_COMPACTION_TODO_MISMATCH_COUNT).toBe(
+      'session.compaction.todo_mismatch_count'
+    );
+    expect(ORCHESTRATOR_METRICS.TASK_CLOSURE_SUCCESS_RATE).toBe(
+      'task.closure.success_rate'
+    );
   });
 
   it('SANDBOX_METRICS 应包含预期字段', () => {

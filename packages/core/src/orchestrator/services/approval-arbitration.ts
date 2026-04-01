@@ -1,7 +1,7 @@
 /**
  * 审批仲裁服务
  *
- * 负责处理 Worker 的审批请求，包括文件写入仲裁和展开提交仲裁
+ * 负责处理 Worker 的审批请求，包括文件写入仲裁
  * 从 Orchestrator 类中提取
  */
 
@@ -29,15 +29,6 @@ export interface FileWriteArbitrationParams {
 }
 
 /**
- * 展开提交仲裁参数
- */
-export interface ExpandCommitArbitrationParams {
-  workerId: string;
-  approval: PendingApprovalFile;
-  input: Record<string, unknown> | undefined;
-}
-
-/**
  * 延迟审批信息
  */
 export interface DelayedApproval {
@@ -52,13 +43,6 @@ export interface DelayedApproval {
 export interface TaskMasterCallbacks {
   getRefForCurrentTask(): { projectRoot: string; file: string; tag: string } | null;
   addDependency(subtaskId: string, predecessor: string): Promise<void>;
-  expandSubtask(
-    targetId: string,
-    subtasks: { title: string; description: string; details: string; testStrategy: string }[],
-    options: { projectRoot: string; file: string; tag: string; force?: boolean; strategy: 'serial' | 'parallel' }
-  ): Promise<void>;
-  markPendingReplan(): void;
-  addExpandedSubtask(subtaskId: string): void;
   getRoleAssignment(targetId: string): { roleId?: string; requiredCapabilities?: string[] } | null;
   writeRoleAssignment(tag: string, subtaskId: string, roleId: string, caps: string[]): Promise<void>;
   recordOriginalStatus(subtaskId: string, status: string): void;
@@ -81,8 +65,7 @@ export interface ApprovalArbitrationConfig {
  *
  * 负责处理 Worker 发起的审批请求，实现：
  * 1. 文件写入串行化（防止并发写入冲突）
- * 2. 展开提交处理（支持 Task Master 子任务扩展）
- * 3. 策略驱动的自动审批/拒绝
+ * 2. 策略驱动的自动审批/拒绝
  *
  * @example
  * ```ts
@@ -186,16 +169,6 @@ export class ApprovalArbitrationService {
         approval,
         action: extracted.action,
         affectedFiles: extracted.affectedFiles,
-      });
-      return;
-    }
-
-    // 处理展开提交仲裁
-    if (extracted.action === 'expand_commit') {
-      await this.handleExpandCommitArbitration({
-        workerId,
-        approval,
-        input: extracted.input,
       });
       return;
     }
@@ -378,95 +351,6 @@ export class ApprovalArbitrationService {
     }
 
     this.subtaskWriteFiles.delete(subtaskId);
-  }
-
-  /**
-   * 处理展开提交仲裁
-   */
-  async handleExpandCommitArbitration(
-    params: ExpandCommitArbitrationParams
-  ): Promise<void> {
-    const { workerId, approval, input } = params;
-
-    if (!this.taskMasterCallbacks) {
-      await this.approvePendingApproval(
-        workerId,
-        approval,
-        false,
-        'TaskMaster callbacks not configured for expand_commit'
-      );
-      return;
-    }
-
-    const ref = this.taskMasterCallbacks.getRefForCurrentTask();
-    if (!ref) {
-      await this.approvePendingApproval(
-        workerId,
-        approval,
-        false,
-        'No tasks.json reference available for expand_commit'
-      );
-      return;
-    }
-
-    const inputObj = input ?? {};
-    const rawTargetId = typeof inputObj.targetId === 'string' ? inputObj.targetId.trim() : '';
-    const targetId = rawTargetId || approval.subtaskId;
-
-    const rawStrategy = typeof inputObj.strategy === 'string' ? inputObj.strategy : '';
-    const strategy: 'serial' | 'parallel' = rawStrategy === 'parallel' ? 'parallel' : 'serial';
-    const force = inputObj.force === true;
-
-    const rawSubs = inputObj.subtasks;
-    if (!Array.isArray(rawSubs) || rawSubs.length < 2) {
-      await this.approvePendingApproval(
-        workerId,
-        approval,
-        false,
-        'expand_commit requires subtasks (array) with length >= 2'
-      );
-      return;
-    }
-
-    const generated = rawSubs.map((s) => {
-      const obj = s && typeof s === 'object' ? (s as Record<string, unknown>) : {};
-      return {
-        title: typeof obj.title === 'string' ? obj.title.trim() : '',
-        description: typeof obj.description === 'string' ? obj.description.trim() : '',
-        details: typeof obj.details === 'string' ? obj.details : '',
-        testStrategy: typeof obj.testStrategy === 'string' ? obj.testStrategy : '',
-      };
-    });
-
-    if (generated.some((g) => !g.title || !g.description)) {
-      await this.approvePendingApproval(
-        workerId,
-        approval,
-        false,
-        'expand_commit subtasks must include non-empty title and description'
-      );
-      return;
-    }
-
-    // 执行展开操作
-    await this.taskMasterCallbacks.expandSubtask(targetId, generated, {
-      projectRoot: ref.projectRoot,
-      file: ref.file,
-      tag: ref.tag,
-      force,
-      strategy,
-    });
-
-    // 标记需要重规划
-    this.taskMasterCallbacks.markPendingReplan();
-    this.taskMasterCallbacks.addExpandedSubtask(approval.subtaskId);
-
-    await this.approvePendingApproval(
-      workerId,
-      approval,
-      true,
-      `expand_commit applied: ${targetId} -> subtasks (strategy: ${strategy})`
-    );
   }
 
   /**

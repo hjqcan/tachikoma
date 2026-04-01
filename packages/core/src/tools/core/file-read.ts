@@ -6,7 +6,7 @@
  */
 
 import { readFile, stat } from 'node:fs/promises';
-import type { Tool, ExecutionContext } from '../../types';
+import type { ExecutionContext } from '../../types';
 import type { FileReadInput, FileReadOutput, ToolResult } from '../types';
 import {
   validatePath,
@@ -16,6 +16,8 @@ import {
   truncateOutput,
 } from './utils';
 import { DEFAULT_RESOURCE_LIMITS } from '../constants';
+import { buildTool } from '../build-tool';
+import { getFileReadPrompt } from './prompts/file-read-prompt';
 
 // =============================================================================
 // Constants (inspired by Codex)
@@ -354,7 +356,7 @@ function formatOutputLines(records: LineRecord[], showLineNumbers = true): strin
 /**
  * file_read 工具定义
  */
-export const fileReadTool: Tool = {
+export const fileReadTool = buildTool({
   name: 'file_read',
   title: 'Read File',
   description: `读取指定文件的内容。路径相对于工作目录。
@@ -380,6 +382,10 @@ export const fileReadTool: Tool = {
 // 读取第 50-100 行
 { "path": "app.ts", "offset": 50, "limit": 50, "mode": "slice" }
 \`\`\``,
+  searchHint: 'read source file contents lines snippet indentation block',
+  isReadOnly: () => true,
+  isConcurrencySafe: () => true,
+  prompt: getFileReadPrompt,
   inputSchema: {
     type: 'object',
     properties: {
@@ -536,6 +542,7 @@ export const fileReadTool: Tool = {
         const content = buffer.toString('base64');
         const truncatedContent = truncateOutput(content, maxOutputSize);
         const truncated = truncatedContent.length !== content.length;
+        context.readFileState?.markRead?.(absolutePath, fileStat.size);
 
         return {
           success: true,
@@ -612,6 +619,7 @@ export const fileReadTool: Tool = {
           // 截断检查
           const truncatedContent = truncateOutput(textContent, maxOutputSize);
           const truncated = truncatedContent.length !== textContent.length;
+          context.readFileState?.markRead?.(absolutePath, fileStat.size);
 
           return {
             success: true,
@@ -648,6 +656,7 @@ export const fileReadTool: Tool = {
       // 截断检查
       const truncatedContent = truncateOutput(content, maxOutputSize);
       const truncated = truncatedContent.length !== content.length;
+      context.readFileState?.markRead?.(absolutePath, fileStat.size);
 
       return {
         success: true,
@@ -676,4 +685,4 @@ export const fileReadTool: Tool = {
       };
     }
   },
-};
+});

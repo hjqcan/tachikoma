@@ -18,10 +18,6 @@
       "import": "./dist/tools/index.js",
       "types": "./dist/tools/index.d.ts"
     },
-    "./tools/browser": {
-      "import": "./dist/tools/browser.js",
-      "types": "./dist/tools/browser.d.ts"
-    },
     "./sandbox": {
       "import": "./dist/sandbox/index.js",
       "types": "./dist/sandbox/index.d.ts"

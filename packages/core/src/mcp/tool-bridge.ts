@@ -14,6 +14,14 @@ import {
   checkToolCallAgainstConstraints,
   type ConstraintPolicy,
 } from '../worker/engines';
+import {
+  ToolRuntimeKernel,
+  createResolvedToolsetSnapshot,
+  createToolRuntimeLogMiddleware,
+  createSyntheticToolFailureOutput,
+  resolveToolRuntimeFeatureFlags,
+  type ResolvedToolset,
+} from '../worker/tool-runtime';
 
 // ============================================================================
 // 类型定义
@@ -58,6 +66,20 @@ export interface ToolBridgeConfig {
     allowed: boolean;
     message?: string;
   }>;
+  /** 任务 ID（用于工具运行时生命周期标识） */
+  taskId?: string;
+  /** 可选：外部注入的工具快照 */
+  toolset?: ResolvedToolset;
+  /** 可选：外部注入的工具运行时内核 */
+  toolRuntime?: ToolRuntimeKernel;
+}
+
+interface ResolvedToolBridgeConfig extends Required<
+  Omit<ToolBridgeConfig, 'beforeExecute' | 'toolset' | 'toolRuntime'>
+> {
+  beforeExecute?: ToolBridgeConfig['beforeExecute'];
+  toolset?: ResolvedToolset;
+  toolRuntime: ToolRuntimeKernel;
 }
 
 // ============================================================================
@@ -83,21 +105,28 @@ export interface ToolBridgeConfig {
  * ```
  */
 export class ToolToMCPBridge {
-  private readonly config: Required<Omit<ToolBridgeConfig, 'beforeExecute'>> & {
-    beforeExecute?: ToolBridgeConfig['beforeExecute'];
-  };
+  private readonly config: ResolvedToolBridgeConfig;
   private sdkAvailable: boolean | null = null;
 
   constructor(config: ToolBridgeConfig = {}) {
-    const resolved: Required<Omit<ToolBridgeConfig, 'beforeExecute'>> & {
-      beforeExecute?: ToolBridgeConfig['beforeExecute'];
-    } = {
+    const resolved: ResolvedToolBridgeConfig = {
       serverName: config.serverName ?? 'tachikoma-tools',
       includeMetadata: config.includeMetadata ?? true,
       workDir: config.workDir ?? process.cwd(),
       env: config.env ?? {},
       maxToolInputBytes: config.maxToolInputBytes ?? DEFAULT_WORKER_LIMITS.maxToolInputBytes,
       constraintPolicy: config.constraintPolicy ?? null,
+      taskId: config.taskId ?? 'mcp-bridge',
+      toolRuntime:
+        config.toolRuntime ??
+        new ToolRuntimeKernel({
+          middlewares: [
+            createToolRuntimeLogMiddleware({
+              backend: 'ToolToMCPBridge',
+            }),
+          ],
+        }),
+      ...(config.toolset !== undefined && { toolset: config.toolset }),
     };
     if (typeof config.beforeExecute === 'function') {
       resolved.beforeExecute = config.beforeExecute;
@@ -130,7 +159,12 @@ export class ToolToMCPBridge {
    */
   async convertToMCPServers(
     tools: Tool[],
-    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute'>>
+    overrides?: Partial<
+      Pick<
+        ToolBridgeConfig,
+        'workDir' | 'env' | 'maxToolInputBytes' | 'constraintPolicy' | 'beforeExecute' | 'taskId' | 'toolset'
+      >
+    >
   ): Promise<unknown[]> {
     if (!tools || tools.length === 0) {
       return [];
@@ -168,8 +202,20 @@ export class ToolToMCPBridge {
       const constraintPolicy =
         overrides?.constraintPolicy ?? this.config.constraintPolicy ?? null;
       const beforeExecute = overrides?.beforeExecute ?? this.config.beforeExecute;
+      const toolset =
+        overrides?.toolset ??
+        this.config.toolset ??
+        createResolvedToolsetSnapshot(tools);
       const mcpTools = tools.map((t) =>
-        this.createMCPTool(t, tool, context, maxToolInputBytes, constraintPolicy, beforeExecute)
+        this.createMCPTool(
+          t,
+          tool,
+          context,
+          maxToolInputBytes,
+          constraintPolicy,
+          beforeExecute,
+          toolset
+        )
       );
 
       // 创建 MCP Server
@@ -206,99 +252,134 @@ export class ToolToMCPBridge {
     beforeExecute?: (toolName: string, args: Record<string, unknown>) => Promise<{
       allowed: boolean;
       message?: string;
-    }>
+    }>,
+    toolset?: ResolvedToolset
   ): unknown {
+    const runtimeFlags = resolveToolRuntimeFeatureFlags(context.env);
     // 使用 SDK 的 tool() 函数创建 MCP Tool
     return toolFactory(
       tachikoma.name,
       tachikoma.description,
       tachikoma.inputSchema ?? { type: 'object', properties: {} },
       async (args: Record<string, unknown>): Promise<string> => {
-        try {
-          if (beforeExecute) {
-            const guard = await beforeExecute(tachikoma.name, args);
-            if (!guard.allowed) {
-              return JSON.stringify(
-                {
-                  success: false,
-                  error: guard.message ?? 'Tool execution blocked by guard.',
-                  tool: tachikoma.name,
-                  code: 'TOOL_EXECUTION_BLOCKED',
-                },
-                null,
-                2
-              );
-            }
-          }
-          if (constraintPolicy) {
-            const violation = checkToolCallAgainstConstraints(
-              tachikoma.name,
-              args,
-              constraintPolicy
-            );
-            if (violation) {
-              return JSON.stringify(
-                {
-                  success: false,
-                  error: violation.message,
-                  tool: tachikoma.name,
-                  code: 'CONSTRAINT_VIOLATION',
-                  category: violation.category,
-                  detected: violation.detected,
-                  allowed: violation.allowed,
-                },
-                null,
-                2
-              );
-            }
-          }
-          const sizeCheck = checkToolInputSize(tachikoma.name, args, maxToolInputBytes);
-          if (!sizeCheck.ok) {
-            return JSON.stringify(
-              {
-                success: false,
-                error: sizeCheck.message ?? 'Tool input too large.',
-                tool: tachikoma.name,
-                code: 'TOOL_INPUT_TOO_LARGE',
-                size: sizeCheck.size,
-                limit: maxToolInputBytes,
-              },
-              null,
-              2
-            );
-          }
-          const result = await tachikoma.execute(args, context) as ToolResult;
+        const runtimeResult = await this.config.toolRuntime.execute({
+          taskId: context.taskId,
+          toolName: tachikoma.name,
+          input: args,
+          toolset: toolset ?? createResolvedToolsetSnapshot([tachikoma]),
+          metadata: {
+            backend: 'claude-agent-sdk',
+            bridgeServer: this.config.serverName,
+            toolRuntimeV2Enabled: runtimeFlags.toolRuntimeV2Enabled,
+            toolRuntimeV2ShadowMode: runtimeFlags.toolRuntimeV2ShadowMode,
+          },
+          errorCode: 'TOOL_EXECUTION_ERROR',
+          recoverUnhandledErrors:
+            runtimeFlags.toolRuntimeV2Enabled &&
+            runtimeFlags.syntheticToolResultEnabled,
+          execute: async (runtimeCall) => {
+            const runtimeArgs =
+              runtimeCall.input && typeof runtimeCall.input === 'object'
+                ? (runtimeCall.input as Record<string, unknown>)
+                : {};
 
-          if (result.success) {
-            // 成功：返回 JSON 字符串
-            return typeof result.data === 'string'
-              ? result.data
-              : JSON.stringify(result.data, null, 2);
-          } else {
-            // 失败：返回错误信息
-            return JSON.stringify(
-              {
+            if (beforeExecute) {
+              const guard = await beforeExecute(tachikoma.name, runtimeArgs);
+              if (!guard.allowed) {
+                return {
+                  success: false,
+                  isError: true,
+                  output: createSyntheticToolFailureOutput({
+                    toolName: tachikoma.name,
+                    code: 'TOOL_EXECUTION_BLOCKED',
+                    error: guard.message ?? 'Tool execution blocked by guard.',
+                    kind: 'functional',
+                  }),
+                };
+              }
+            }
+
+            if (constraintPolicy) {
+              const violation = checkToolCallAgainstConstraints(
+                tachikoma.name,
+                runtimeArgs,
+                constraintPolicy
+              );
+              if (violation) {
+                return {
+                  success: false,
+                  isError: true,
+                  output: createSyntheticToolFailureOutput({
+                    toolName: tachikoma.name,
+                    code: 'CONSTRAINT_VIOLATION',
+                    error: violation.message,
+                    kind: 'functional',
+                    details: {
+                      category: violation.category,
+                      detected: violation.detected,
+                      allowed: violation.allowed,
+                    },
+                  }),
+                };
+              }
+            }
+
+            const sizeCheck = checkToolInputSize(tachikoma.name, runtimeArgs, maxToolInputBytes);
+            if (!sizeCheck.ok) {
+              return {
                 success: false,
-                error: result.error ?? 'Unknown error',
-                tool: tachikoma.name,
-                code: 'TOOL_EXECUTION_ERROR',
-              },
-              null,
-              2
-            );
-          }
-        } catch (error) {
-          return JSON.stringify(
-            {
+                isError: true,
+                output: createSyntheticToolFailureOutput({
+                  toolName: tachikoma.name,
+                  code: 'TOOL_INPUT_TOO_LARGE',
+                  error: sizeCheck.message ?? 'Tool input too large.',
+                  kind: 'functional',
+                  details: {
+                    size: sizeCheck.size,
+                    limit: maxToolInputBytes,
+                  },
+                }),
+              };
+            }
+
+            const result = await tachikoma.execute(runtimeArgs, context) as ToolResult;
+
+            if (result.success) {
+              return {
+                success: true,
+                isError: false,
+                output:
+                  typeof result.data === 'string'
+                    ? result.data
+                    : JSON.stringify(result.data, null, 2),
+              };
+            }
+
+            const meta =
+              result.meta && typeof result.meta === 'object'
+                ? (result.meta as Record<string, unknown>)
+                : null;
+            const codeFromMeta =
+              meta && typeof meta.code === 'string' && meta.code.trim().length > 0
+                ? meta.code
+                : null;
+
+            return {
               success: false,
-              error: error instanceof Error ? error.message : String(error),
-              tool: tachikoma.name,
-              code: 'TOOL_EXECUTION_ERROR',
-            },
-            null,
-            2
-          );
-        }
+              isError: true,
+              output: createSyntheticToolFailureOutput({
+                toolName: tachikoma.name,
+                code: codeFromMeta ?? 'TOOL_FUNCTIONAL_ERROR',
+                error: result.error ?? 'Unknown error',
+                kind: 'functional',
+              }),
+            };
+          },
+        });
+
+        return typeof runtimeResult.output === 'string'
+          ? runtimeResult.output
+          : JSON.stringify(runtimeResult.output, null, 2);
       }
     );
   }
@@ -307,15 +388,16 @@ export class ToolToMCPBridge {
    * 构建执行上下文
    */
   private buildContext(
-    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env'>>
+    overrides?: Partial<Pick<ToolBridgeConfig, 'workDir' | 'env' | 'taskId'>>
   ): ExecutionContext {
     const workDir = overrides?.workDir ?? this.config.workDir;
     const env = { ...this.config.env, ...(overrides?.env ?? {}) };
+    const taskId = overrides?.taskId ?? this.config.taskId;
     // Preserve effectiveCwd across tool calls for this bridged session (P1-A).
     const cwdState = { current: workDir };
 
     return {
-      taskId: 'mcp-bridge',
+      taskId,
       agentId: 'mcp-bridge',
       traceId: `bridge-${Date.now()}`,
       workDir,

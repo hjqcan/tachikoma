@@ -1,0 +1,55 @@
+{
+  "id": "todo-resume",
+  "name": "Todo Resume Regression Set",
+  "description": "Regression cases for todo FSM, revision roundtrip, and resume-oriented recovery.",
+  "version": "1.0.0",
+  "cases": [
+    {
+      "id": "todo-resume-revision-roundtrip",
+      "objective": "Create a multi-step todo list with todowrite, keep exactly one item in_progress, then call todoread and summarize revision plus pending/in_progress/completed counts.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "revision",
+          "pending",
+          "in_progress",
+          "completed"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 30
+        }
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "todo-fsm+revision-roundtrip"
+      }
+    },
+    {
+      "id": "todo-resume-stale-revision-recover",
+      "objective": "Intentionally use todowrite with a stale baseRevision to trigger a revision mismatch, then recover by reading latest state with todoread and retry todowrite successfully.",
+      "expected": {
+        "success": true,
+        "contains": [
+          "revision",
+          "baseRevision"
+        ],
+        "trajectory": {
+          "requiredTools": [
+            "todowrite",
+            "todoread"
+          ],
+          "maxSteps": 40
+        },
+        "llmCriteria": "Did the agent recover from stale baseRevision by refreshing todo state and retrying instead of aborting?"
+      },
+      "metadata": {
+        "phase": "P1-1",
+        "focus": "optimistic-concurrency-recovery"
+      }
+    }
+  ]
+}

@@ -33,7 +33,7 @@ import {
   type ISandboxToolExecutor,
 } from '../../sandbox/tool-executor';
 import { isKeyDecisionAsync } from '../key-decision';
-import { buildWorkerSystemPrompt } from '../prompts/system-prompt';
+import { buildWorkerSystemPromptAsync } from '../prompts/system-prompt';
 import { buildTaskPrompt } from '../prompts/task-prompt';
 // Agent Identity 模块（Letta-code style CoreMemory injection）
 import {
@@ -94,12 +94,22 @@ import {
   // Interaction Engine
   InteractionEngine,
 } from '../engines';
+import {
+  ToolRuntimeKernel,
+  createResolvedToolsetSnapshot,
+  createToolRuntimeLogMiddleware,
+  createSyntheticToolFailureOutput,
+  resolveToolRuntimeFeatureFlags,
+  type ResolvedToolset,
+} from '../tool-runtime';
 
 // 工具调用追踪器（防循环）
 import { ToolCallTracker } from '../tool-call-tracker';
 
 // 失败记忆系统（上下文注入）
 import { FailureMemory } from '../failure-memory';
+import { findToolByName } from '../../tools/build-tool';
+import { ReadFileStateCache } from '../../tools/read-file-state';
 
 // ============================================================================
 // 常量
@@ -123,6 +133,61 @@ export class GenericBackendError extends Error {
     super(message);
     this.name = 'GenericBackendError';
   }
+}
+
+interface FunctionalToolFailure {
+  failed: boolean;
+  code: string;
+  error: string;
+}
+
+function parseFunctionalToolFailure(output: unknown): FunctionalToolFailure {
+  if (!output || typeof output !== 'object') {
+    return {
+      failed: false,
+      code: '',
+      error: '',
+    };
+  }
+
+  const record = output as Record<string, unknown>;
+  const hasFailureFlag =
+    record.success === false ||
+    record.isError === true ||
+    record.is_error === true ||
+    record.errorType === 'functional_error';
+
+  if (!hasFailureFlag) {
+    return {
+      failed: false,
+      code: '',
+      error: '',
+    };
+  }
+
+  const meta =
+    record.meta && typeof record.meta === 'object'
+      ? (record.meta as Record<string, unknown>)
+      : null;
+  const codeFromMeta = meta && typeof meta.code === 'string' ? meta.code.trim() : '';
+  const code =
+    typeof record.code === 'string' && record.code.trim().length > 0
+      ? record.code
+      : codeFromMeta.length > 0
+        ? codeFromMeta
+        : 'TOOL_FUNCTIONAL_ERROR';
+  const error =
+    typeof record.error === 'string' && record.error.trim().length > 0
+      ? record.error
+      : typeof record.message === 'string' && record.message.trim().length > 0
+        ? record.message
+        : 'Tool returned unsuccessful result.';
+
+  return {
+    failed: true,
+    code,
+    error,
+  };
 }
 
 // ============================================================================
@@ -175,6 +240,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private llmExecutor: LLMExecutor;
   private skillsManager: SkillsManager;
   private interactionEngine: InteractionEngine;
+  private readonly toolRuntime: ToolRuntimeKernel;
   private abortController: AbortController | null = null;
   private isExecuting = false;
   private sandboxNeedsInit = false; // 是否需要初始化
@@ -244,6 +310,13 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     );
 
     this.interactionEngine = new InteractionEngine();
+    this.toolRuntime = new ToolRuntimeKernel({
+      middlewares: [
+        createToolRuntimeLogMiddleware({
+          backend: 'GenericAgentBackend',
+        }),
+      ],
+    });
 
     // 初始化协作管理器
     if (config.collaborationConfig?.enabled) {
@@ -344,6 +417,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
 
     // 构建审批用执行上下文（每个任务只初始化一次）
     const approvalContext = this.buildExecutionContext(task, options);
+    const readFileState = new ReadFileStateCache();
+    const toolExecutionContext = approvalContext as ExecutionContext & {
+      modifiedFiles: string[];
+      readFileState: ReadFileStateCache;
+    };
+    toolExecutionContext.readFileState = readFileState;
 
     // 启动协作管理器并注入 peer-assist 工具（仅首次执行时启动）
     let tools = providedTools;
@@ -493,13 +572,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     }
 
     // Build dynamic system prompt with identity context
-    const baseSystemPrompt = identityContext
-      ? buildWorkerSystemPrompt({
-          identityContext,
-          provider: this.config.provider,
-          model: this.config.model,
-        })
-      : buildWorkerSystemPrompt({ provider: this.config.provider, model: this.config.model });
+    const baseSystemPrompt = await buildWorkerSystemPromptAsync({
+      cwd: workDir,
+      provider: this.config.provider,
+      model: this.config.model,
+      ...(identityContext ? { identityContext } : {}),
+    });
 
     // Pass task objective for skill recommendations with auto-activation
     const systemPromptWithSkills = await this.skillsManager.renderSystemPromptSection(
@@ -507,7 +585,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       task.objective,
       {
         autoActivate: true,
-        availableToolNames: tools.map(tool => tool.name),
+        availableToolNames: options.toolPreflight?.availableSkillToolNames ?? tools.map(tool => tool.name),
         ...(task.parentObjective !== undefined && { parentObjective: task.parentObjective }),
       }
     );
@@ -674,7 +752,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
           pendingToolCalls = [];
 
           // 获取执行器回调
-          const callbacks = this.createToolExecutorCallbacks(tools, options, approvalContext);
+          const callbacks = this.createToolExecutorCallbacks(tools, options, toolExecutionContext);
 
           // 获取并行执行配置
           const parallelConfig = options.parallelExecution ?? DEFAULT_PARALLEL_EXECUTION_CONFIG;
@@ -962,7 +1040,7 @@ export class GenericAgentBackend extends BaseWorkerBackend {
 	            timestamp: Date.now(),
 	          };
 
-            const graceCallbacks = this.createToolExecutorCallbacks(tools, options, approvalContext);
+            const graceCallbacks = this.createToolExecutorCallbacks(tools, options, toolExecutionContext);
             const iterator = executeSequentialGenerator(pendingToolCalls, graceCallbacks, {
               maxToolCalls: limits.maxToolCalls,
               currentToolCount: totalToolCalls
@@ -1305,18 +1383,26 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private createToolExecutorCallbacks(
     tools: Tool[],
     options: WorkerExecutionOptions,
-    executionContext: ExecutionContext
+    executionContext: ExecutionContext & { readFileState?: ReadFileStateCache }
   ): ToolExecutorCallbacks {
+    const resolvedToolset = options.toolPreflight?.resolvedToolset ?? createResolvedToolsetSnapshot(tools);
     return {
       executeTool: async (call) => {
-        const result = await this.executeTool(call, tools, options);
+        const result = await this.executeTool(
+          call,
+          tools,
+          options,
+          executionContext.taskId,
+          resolvedToolset,
+          executionContext
+        );
         return {
           success: result.success,
           output: result.output,
         };
       },
       requiresApproval: async (call) => {
-        const tool = tools.find((t) => t.name === call.name);
+        const tool = findToolByName(tools, call.name);
         const decision = await isKeyDecisionAsync(
           call.name, 
           call.input, 
@@ -1356,10 +1442,14 @@ export class GenericAgentBackend extends BaseWorkerBackend {
   private async executeTool(
     call: ParsedToolCall,
     tools: Tool[],
-    options: WorkerExecutionOptions
+    options: WorkerExecutionOptions,
+    taskId: string,
+    toolset: ResolvedToolset,
+    executionContext: ExecutionContext & { readFileState?: ReadFileStateCache }
   ): Promise<{ success: boolean; output: unknown }> {
+    const runtimeFlags = resolveToolRuntimeFeatureFlags(options.env);
     // 查找工具
-    let tool = tools.find((t) => t.name === call.name);
+    let tool = findToolByName(tools, call.name);
 
     // Fallback: 尝试从全局注册表查找（用于动态创建的 Skill）
     if (!tool) {
@@ -1372,7 +1462,12 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     if (!tool) {
       return {
         success: false,
-        output: `Tool not found: ${call.name}`,
+        output: createSyntheticToolFailureOutput({
+          toolName: call.name,
+          code: 'TOOL_NOT_FOUND',
+          error: `Tool not found: ${call.name}`,
+          kind: 'functional',
+        }),
       };
     }
 
@@ -1385,7 +1480,16 @@ export class GenericAgentBackend extends BaseWorkerBackend {
         console.warn(`[GenericAgentBackend] ToolCallTracker blocked call: ${call.name}`);
         return {
           success: false,
-          output: warning,
+          output: createSyntheticToolFailureOutput({
+            toolName: call.name,
+            code: 'DUPLICATE_CALL_BLOCKED',
+            error: warning,
+            kind: 'functional',
+            details: {
+              duplicateCount: duplicateCheck.count,
+              failureCount: duplicateCheck.failureCount,
+            },
+          }),
         };
       }
       // 如果是重复调用但未被阻止，记录警告日志
@@ -1404,7 +1508,13 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       if (!doomDecision.allowed) {
         return {
           success: false,
-          output: doomDecision.message,
+          output: createSyntheticToolFailureOutput({
+            toolName: call.name,
+            code: 'DOOM_LOOP_BLOCKED',
+            error: doomDecision.message,
+            kind: 'functional',
+            details: { duplicateCount: doomDecision.count },
+          }),
         };
       }
     }
@@ -1417,7 +1527,17 @@ export class GenericAgentBackend extends BaseWorkerBackend {
         this.toolCallTracker?.record(call.name, call.input, false, violation.message);
         return {
           success: false,
-          output: violation.message,
+          output: createSyntheticToolFailureOutput({
+            toolName: call.name,
+            code: 'CONSTRAINT_VIOLATION',
+            error: violation.message,
+            kind: 'functional',
+            details: {
+              category: violation.category,
+              detected: violation.detected,
+              allowed: violation.allowed,
+            },
+          }),
         };
       }
     }
@@ -1432,24 +1552,108 @@ export class GenericAgentBackend extends BaseWorkerBackend {
       this.toolCallTracker?.record(call.name, call.input, false, errorMsg);
       return {
         success: false,
-        output: errorMsg,
+        output: createSyntheticToolFailureOutput({
+          toolName: call.name,
+          code: 'TOOL_INPUT_TOO_LARGE',
+          error: errorMsg,
+          kind: 'functional',
+          details: {
+            size: sizeCheck.size,
+            limit: maxToolInputBytes,
+          },
+        }),
       };
+    }
+
+    if (tool.validateInput) {
+      const validation = await tool.validateInput(call.input, executionContext);
+      if (!validation.result) {
+        this.failureMemory?.recordFailure(call.name, call.input, validation.message);
+        this.toolCallTracker?.record(call.name, call.input, false, validation.message);
+        return {
+          success: false,
+          output: createSyntheticToolFailureOutput({
+            toolName: call.name,
+            code: 'TOOL_VALIDATION_ERROR',
+            error: validation.message,
+            kind: 'functional',
+          }),
+        };
+      }
     }
 
     // 创建工具执行器（使用 sandbox 如果可用）
     const toolExecutor: ISandboxToolExecutor = createSandboxToolExecutor(this.sandbox);
 
-    // 执行工具
-    const result = await toolExecutor.execute(tool, call.input, {
-      workDir: options.workDir || process.cwd(),
-      timeout: 60000, // 1 分钟超时
-      ...(options.env && { env: options.env }),
-      ...(options.securityPolicy && { securityPolicy: options.securityPolicy }),
+    const runtimeResult = await this.toolRuntime.execute({
+      taskId,
+      callId: call.callId,
+      toolName: call.name,
+      input: call.input,
+      toolset,
+      metadata: {
+        backend: this.backendType,
+        provider: this.provider,
+        toolRuntimeV2Enabled: runtimeFlags.toolRuntimeV2Enabled,
+        toolRuntimeV2ShadowMode: runtimeFlags.toolRuntimeV2ShadowMode,
+      },
+      errorCode: 'TOOL_EXECUTION_ERROR',
+      recoverUnhandledErrors:
+        runtimeFlags.toolRuntimeV2Enabled && runtimeFlags.syntheticToolResultEnabled,
+      execute: async (runtimeCall) => {
+        const result = await toolExecutor.execute(tool, runtimeCall.input, {
+          workDir: options.workDir || process.cwd(),
+          executionContext,
+          timeout: 60000, // 1 分钟超时
+          ...(options.env && { env: options.env }),
+          ...(options.securityPolicy && { securityPolicy: options.securityPolicy }),
+        });
+
+        if (!result.success) {
+          const errorMessage =
+            typeof result.error === 'string'
+              ? result.error
+              : JSON.stringify(result.error);
+          return {
+            success: false,
+            isError: true,
+            output: createSyntheticToolFailureOutput({
+              toolName: call.name,
+              code: 'TOOL_EXECUTION_ERROR',
+              error: errorMessage,
+              kind: 'execution',
+            }),
+          };
+        }
+
+        const functionalFailure = parseFunctionalToolFailure(result.result);
+        if (functionalFailure.failed) {
+          return {
+            success: false,
+            isError: true,
+            output: createSyntheticToolFailureOutput({
+              toolName: call.name,
+              code: functionalFailure.code,
+              error: functionalFailure.error,
+              kind: 'functional',
+            }),
+          };
+        }
+
+        return {
+          success: true,
+          isError: false,
+          output: result.result,
+        };
+      },
     });
 
     // 记录工具调用结果到追踪器
-    if (!result.success) {
-      const errorMsg = typeof result.error === 'string' ? result.error : JSON.stringify(result.error);
+    if (!runtimeResult.success) {
+      const errorMsg =
+        typeof runtimeResult.output === 'string'
+          ? runtimeResult.output
+          : JSON.stringify(runtimeResult.output);
       this.failureMemory?.recordFailure(call.name, call.input, errorMsg);
       this.toolCallTracker?.record(call.name, call.input, false, errorMsg);
     } else {
@@ -1457,8 +1661,8 @@ export class GenericAgentBackend extends BaseWorkerBackend {
     }
 
     return {
-      success: result.success,
-      output: result.success ? result.result : result.error,
+      success: runtimeResult.success,
+      output: runtimeResult.output,
     };
   }
 

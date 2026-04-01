@@ -798,7 +798,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
   ): Promise<boolean> {
     try {
       // Orchestrator 仲裁点：这些工具可能需要“长时间等待锁/写回”，不应被较短的 approvalTimeout 误触发
-      const arbitrationTools = new Set(['apply_patch', 'file_write', 'expand_commit']);
+      const arbitrationTools = new Set(['apply_patch', 'file_write']);
       const isArbitrationTool = arbitrationTools.has(request.action);
       const effectiveTimeout = isArbitrationTool ? Math.max(timeout, 12 * 60 * 60 * 1000) : timeout; // >= 12h
       const effectiveDefaultDecision: 'approve' | 'reject' = isArbitrationTool ? 'reject' : defaultDecision;
@@ -819,7 +819,7 @@ export abstract class BaseWorkerBackend implements IWorkerBackend {
         description: request.description,
         details: {
           ...(affectedFiles ? { affectedFiles } : {}),
-          // 始终携带 action/toolName，供 Orchestrator 识别（文件锁/expand_commit 等内部流程需要）
+          // 始终携带 action/toolName，供 Orchestrator 识别（文件锁等内部流程需要）
           metadata: { ...(request.details ?? {}), action: request.action },
           impactScope: 'high',
           reversible: false,
