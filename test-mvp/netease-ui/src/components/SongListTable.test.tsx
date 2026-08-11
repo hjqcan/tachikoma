@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { SongListTable } from './SongListTable';
 import type { Song } from '../types';
@@ -51,7 +51,7 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     expect(screen.getByText('歌曲')).toBeInTheDocument();
@@ -69,7 +69,7 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     expect(screen.getByText('晴天')).toBeInTheDocument();
@@ -87,7 +87,7 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     // 253s → 4:13, 237s → 3:57, 210s → 3:30
@@ -98,13 +98,7 @@ describe('SongListTable', () => {
 
   it('shows loading state', () => {
     render(
-      <SongListTable
-        songs={[]}
-        playingSongId={null}
-        onPlaySong={() => {}}
-        isLoading
-        error={null}
-      />,
+      <SongListTable songs={[]} playingSongId={null} onPlaySong={() => {}} isLoading error={null} />
     );
 
     expect(screen.getByText('加载中...')).toBeInTheDocument();
@@ -118,7 +112,7 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error="加载失败"
-      />,
+      />
     );
 
     expect(screen.getByText('加载失败')).toBeInTheDocument();
@@ -132,7 +126,7 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     expect(screen.getByText('暂无歌曲')).toBeInTheDocument();
@@ -146,13 +140,15 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     // The playing song row should have the playing state classes
     const rows = container.querySelectorAll('[class*="grid"]');
     // Find the row containing "七里香"
-    const qixiangRow = Array.from(rows).find((row) => row.textContent?.includes('七里香') && !row.textContent?.includes('歌曲'));
+    const qixiangRow = Array.from(rows).find(
+      (row) => row.textContent?.includes('七里香') && !row.textContent?.includes('歌曲')
+    );
     expect(qixiangRow?.className).toContain('bg-[#FCF0F0]');
     expect(qixiangRow?.className).toContain('text-[#C20C0C]');
   });
@@ -166,7 +162,7 @@ describe('SongListTable', () => {
         onPlaySong={onPlay}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByText('晴天'));
@@ -181,12 +177,14 @@ describe('SongListTable', () => {
         onPlaySong={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     // Row numbers are rendered before each song
     const allNumbers = screen.getAllByText(/\d+/);
-    const rowNumbers = allNumbers.filter((el) => ['1', '2', '3'].includes(el.textContent?.trim() || ''));
+    const rowNumbers = allNumbers.filter((el) =>
+      ['1', '2', '3'].includes(el.textContent?.trim() || '')
+    );
     expect(rowNumbers[0].textContent?.trim()).toBe('1');
     expect(rowNumbers[1].textContent?.trim()).toBe('2');
     expect(rowNumbers[2].textContent?.trim()).toBe('3');

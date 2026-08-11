@@ -3,8 +3,7 @@
 
 # 包管理器配置
 [install]
-# 使用 bun.lockb 锁定依赖版本
-lockfile = "bun.lockb"
+# 使用 Bun 1.3 的文本锁文件 bun.lock
 
 # 安装优化
 production = false

@@ -7,6 +7,7 @@
  * @module a2a/agent-card
  */
 
+import { A2A_PROTOCOL_VERSION } from '@a2a-js/sdk';
 import type { AgentCard, AgentSkill } from '@a2a-js/sdk';
 
 // ============================================================================
@@ -25,7 +26,6 @@ export interface AgentCardConfig {
   capabilities?: {
     streaming?: boolean;
     pushNotifications?: boolean;
-    stateTransitionHistory?: boolean;
   };
   /** Provider information (url is required) */
   provider?: {
@@ -52,6 +52,9 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
       'Implement a binary search algorithm in TypeScript',
       'Build a React component for a login form',
     ],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
   {
     id: 'code_review',
@@ -62,6 +65,9 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
       'Review this function for potential bugs',
       'Suggest improvements for this class design',
     ],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
   {
     id: 'code_refactoring',
@@ -72,6 +78,9 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
       'Refactor this code to use async/await',
       'Extract common logic into reusable functions',
     ],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
   {
     id: 'debugging',
@@ -82,16 +91,19 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
       'Why is this function returning undefined?',
       'Find the bug causing this test to fail',
     ],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
   {
     id: 'documentation',
     name: 'Documentation',
     description: 'Generate or improve code documentation',
     tags: ['coding', 'documentation', 'comments'],
-    examples: [
-      'Add JSDoc comments to this module',
-      'Generate README for this project',
-    ],
+    examples: ['Add JSDoc comments to this module', 'Generate README for this project'],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
   {
     id: 'task_orchestration',
@@ -102,6 +114,9 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
       'Implement a complete user authentication system',
       'Create a full-stack CRUD application',
     ],
+    inputModes: ['text/plain'],
+    outputModes: ['text/plain'],
+    securityRequirements: [],
   },
 ];
 
@@ -123,12 +138,7 @@ export const DEFAULT_TACHIKOMA_SKILLS: AgentSkill[] = [
  * ```
  */
 export function createTachikomaAgentCard(config: AgentCardConfig): AgentCard {
-  const {
-    baseUrl,
-    customSkills = [],
-    capabilities = {},
-    provider,
-  } = config;
+  const { baseUrl, customSkills = [], capabilities = {}, provider } = config;
 
   // Merge custom skills with defaults (custom skills override by id)
   const customSkillIds = new Set(customSkills.map((s) => s.id));
@@ -142,21 +152,31 @@ export function createTachikomaAgentCard(config: AgentCardConfig): AgentCard {
     description:
       'AI coding assistant with multi-agent orchestration capabilities. ' +
       'Specializes in code generation, review, refactoring, and complex task decomposition.',
-    url: `${baseUrl}/a2a`,
-    protocolVersion: '0.3.0',
+    supportedInterfaces: [
+      {
+        url: `${baseUrl}/a2a`,
+        protocolBinding: 'JSONRPC',
+        protocolVersion: A2A_PROTOCOL_VERSION,
+        tenant: '',
+      },
+    ],
     version: '0.1.0',
     capabilities: {
       streaming: capabilities.streaming ?? true,
       pushNotifications: capabilities.pushNotifications ?? false,
-      stateTransitionHistory: capabilities.stateTransitionHistory ?? true,
+      extensions: [],
+      extendedAgentCard: false,
     },
     skills: mergedSkills,
-    defaultInputModes: ['text'],
-    defaultOutputModes: ['text'],
+    defaultInputModes: ['text/plain'],
+    defaultOutputModes: ['text/plain'],
     provider: provider ?? {
       organization: 'Tachikoma',
       url: 'https://github.com/your-org/tachikoma',
     },
+    securitySchemes: {},
+    securityRequirements: [],
+    signatures: [],
   };
 }
 
@@ -167,10 +187,7 @@ export function createTachikomaAgentCard(config: AgentCardConfig): AgentCard {
 /**
  * Find a skill by ID
  */
-export function findSkillById(
-  agentCard: AgentCard,
-  skillId: string
-): AgentSkill | undefined {
+export function findSkillById(agentCard: AgentCard, skillId: string): AgentSkill | undefined {
   return agentCard.skills.find((s) => s.id === skillId);
 }
 
@@ -199,9 +216,9 @@ export function validateAgentCard(card: unknown): card is AgentCard {
   return (
     typeof c.name === 'string' &&
     typeof c.description === 'string' &&
-    typeof c.url === 'string' &&
     typeof c.version === 'string' &&
     typeof c.capabilities === 'object' &&
+    Array.isArray(c.supportedInterfaces) &&
     Array.isArray(c.skills) &&
     Array.isArray(c.defaultInputModes) &&
     Array.isArray(c.defaultOutputModes)

@@ -10,6 +10,7 @@ import { mkdir, readFile, writeFile, readdir, rm, rename } from 'node:fs/promise
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ChatProvider, ChatSessionState, ChatSessionSummary } from './types';
+import { getChatSessionMessages } from './transcript';
 
 const SESSION_FILE_SUFFIX = '.json';
 /** 会话 ID 只允许安全字符，防止路径穿越 */
@@ -48,7 +49,7 @@ export class ChatSessionStore {
       updatedAt: now,
       provider: init.provider,
       model: init.model,
-      messages: [],
+      transcript: [],
       ...(init.title && { title: init.title }),
     };
     await this.save(state);
@@ -67,7 +68,7 @@ export class ChatSessionStore {
       const parsed = JSON.parse(raw) as ChatSessionState;
       if (
         typeof parsed.sessionId !== 'string' ||
-        !Array.isArray(parsed.messages) ||
+        !Array.isArray(parsed.transcript) ||
         typeof parsed.provider !== 'string' ||
         typeof parsed.model !== 'string'
       ) {
@@ -109,7 +110,7 @@ export class ChatSessionStore {
         updatedAt: state.updatedAt,
         provider: state.provider,
         model: state.model,
-        messageCount: state.messages.length,
+        messageCount: getChatSessionMessages(state).length,
         ...(state.title && { title: state.title }),
       });
     }

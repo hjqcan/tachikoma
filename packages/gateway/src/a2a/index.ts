@@ -14,16 +14,15 @@ export type {
   AgentSkill,
   Message,
   Task,
-  TaskState,
   TaskStatus,
   Artifact,
-  MessageSendParams,
+  SendMessageRequest,
   SendMessageResponse,
   A2AConfig,
 } from './types';
 
 // SDK Constants
-export { AGENT_CARD_PATH, DEFAULT_A2A_CONFIG } from './types';
+export { AGENT_CARD_PATH, DEFAULT_A2A_CONFIG, Role, TaskState } from './types';
 
 // Agent Card utilities
 export {
@@ -46,21 +45,11 @@ export {
   generateMessageId,
   generateTaskId,
 } from './client';
-export type {
-  A2AClient,
-  A2AClientConfig,
-  A2ARequestOptions,
-  A2AMessage,
-  A2ATask,
-} from './client';
+export type { A2AClient, A2AClientConfig, A2ARequestOptions, A2AMessage, A2ATask } from './client';
 
 // Server utilities (SDK-based)
 export { TachikomaAgentExecutor } from './executor';
-export type {
-  TachikomaExecutorConfig,
-  TaskExecutor,
-  TaskExecutionEvent,
-} from './executor';
+export type { TachikomaExecutorConfig, TaskExecutor, TaskExecutionEvent } from './executor';
 
 // Converters
 export {

@@ -8,6 +8,7 @@
 export * from './types';
 export * from './providers';
 export * from './session-store';
+export * from './transcript';
 export * from './system-prompt';
 export * from './chat-engine';
 export * from './memory';

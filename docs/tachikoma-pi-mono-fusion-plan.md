@@ -1,5 +1,11 @@
 # Tachikoma x pi-mono 深度融合实施方案
 
+> **状态：历史方案，停止推进（2026-08-11）。** ChatEngine 的模型↔工具循环已改为直接使用
+> `@earendil-works/pi-agent-core` 和 `@earendil-works/pi-coding-agent` 0.84.1。本文提出的自研 Tool
+> Runtime Kernel、Event Stream Loop 和跨 backend 重写不再是目标；旧
+> `orchestrate`/worker 实现只作为遗留编排面，不应继续扩展同类循环。默认 `run`
+> 已由同一个 ChatEngine 执行。现行方向见 `docs/tachikoma-spiral-roadmap.md`。
+
 ## 1. 背景与目标
 
 Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最终无法闭环”的问题。核心根因是工具调用链路在不同 backend 中分散实现、容错策略不一致、验证时机偏后，导致模型在错误出现时缺乏稳定自修闭环。
@@ -52,6 +58,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 新增核心层：`Tool Runtime Kernel`
 
 建议目录：
+
 - `/packages/core/src/worker/tool-runtime/`
 
 核心职责：
@@ -79,7 +86,8 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 
 ### Phase P0-1: 工具执行中间件与 Event Stream 统一化（最高优先级）
 
-目标：引入跨 backend 统一的 `beforeToolCall/afterToolResult` 生命周期，并重构为基于 Event Stream 的状态机。
+目标：引入跨 backend 统一的 `beforeToolCall/afterToolResult` 生命周期，并重构为基于 Event
+Stream 的状态机。
 
 参考：`pi-mono/packages/agent/src/agent-loop.ts`
 
@@ -98,6 +106,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 - OpenAI/Generic/Claude backend 改为调用同一 runtime 执行器。
 
 里程碑：
+
 - M1: 影子模式（仅记录，不改变执行结果）。
 - M2: Generic backend 完整接管。
 - M3: OpenAI/Claude backend 接管。
@@ -106,7 +115,8 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 
 ### Phase P0-2: 工具单一真源 + Preflight (Tools vs Skills)
 
-目标：确保“可用工具清单 -> prompt/skills/constraints/backend”严格一致，并明确区分 Native Tools 与 Semantic Skills。
+目标：确保“可用工具清单 -> prompt/skills/constraints/backend”严格一致，并明确区分 Native
+Tools 与 Semantic Skills。
 
 改造项：
 
@@ -121,6 +131,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
   - 工具别名映射（`read/write/edit/bash` -> Tachikoma 具体工具名）。
 
 验收标准：
+
 - 不再出现“prompt 提示可用但 runtime 不存在”的工具调用。
 - 明确区分原子工具与语义技能的边界。
 
@@ -134,7 +145,8 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 
 错误分级：
 
-- **Functional Error (isError=true)**: 工具执行成功，但结果是错误信息 (e.g. grep not found, file not exist)。模型可根据反馈修正。
+- **Functional Error (isError=true)**: 工具执行成功，但结果是错误信息 (e.g. grep not found, file not
+  exist)。模型可根据反馈修正。
 - **Execution Failure (Fatal)**: 工具执行过程崩溃 (e.g. timeout, auth failed)。需基础设施层处理。
 
 改造项：
@@ -148,6 +160,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 - 针对 SDK `Tool ... not found` 统一捕获并下沉。
 
 验收标准：
+
 - Recoverable 场景下子任务继续执行并有后续修复动作。
 - 日志中清晰区分是模型用错了工具（Functional）还是工具坏了（Execution）。
 
@@ -158,6 +171,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 目标：让多步骤任务有稳定、可恢复、可审计的执行进度。**这是 Tachikoma 优于 pi-mono 隐式状态的关键差异点。**
 
 现状复用：
+
 - `/packages/core/src/tools/core/todo.ts`
 
 改造项：
@@ -172,6 +186,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 - 在 UI/日志中统一展示 pending/in_progress/completed 计数。
 
 验收标准：
+
 - 中断后恢复能准确继承 todo 进度。
 - 非法状态转移在影子模式下记录告警，在 strict 模式下阻断并返回可恢复错误。
 - 重放同一事件不会重复推进 todo（幂等通过）。
@@ -194,6 +209,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 - 检查项：Dev server 启动、HTTP health、页面渲染等。
 
 验收标准：
+
 - 联调类失败更早暴露，且通过自然对话引导模型修复，而非硬性打断。
 
 ---
@@ -216,6 +232,7 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
   - 比对不一致时，强制回注入真实 Todo 快照并记录 `compaction.todo_mismatch`。
 
 验收标准：
+
 - 长时间运行的任务不会因为 Context Window 耗尽而崩溃。
 - 压缩后模型仍能保持对任务目标的专注。
 - 压缩前后 Todo 语义一致；冲突时执行态仍以 Todo 快照为准。
@@ -252,9 +269,9 @@ Tachikoma 当前在复杂生成任务中存在“子任务看似完成，但最�
 ```ts
 // packages/core/src/worker/tool-runtime/types.ts
 export interface ResolvedToolset {
-  nativeTools: Tool[];     // 原子工具
+  nativeTools: Tool[]; // 原子工具
   semanticSkills: Skill[]; // 语义技能
-  profile: "pi-core" | "full";
+  profile: 'pi-core' | 'full';
   capabilities: Record<string, boolean>;
   hash: string;
 }
@@ -391,4 +408,6 @@ feature flags 建议：
 
 ## 12. 结论
 
-该方案不是“增加更多规则”，而是把 Tachikoma 的执行内核从“分散、弱一致”改为“统一、可恢复、可观测”的体系化闭环。通过引入 **Event Stream Kernel**、**System Observer** 和 **Session Compaction**，我们将构建一个既具备 pi-mono 稳定性，又拥有 Tachikoma 特色状态管理的强大 Agent 运行时。
+该方案不是“增加更多规则”，而是把 Tachikoma 的执行内核从“分散、弱一致”改为“统一、可恢复、可观测”的体系化闭环。通过引入
+**Event Stream Kernel**、**System Observer** 和 **Session
+Compaction**，我们将构建一个既具备 pi-mono 稳定性，又拥有 Tachikoma 特色状态管理的强大 Agent 运行时。

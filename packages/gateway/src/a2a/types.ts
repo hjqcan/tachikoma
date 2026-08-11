@@ -22,47 +22,33 @@ export type {
   // Messages
   Message,
   Part,
-  TextPart,
-  FilePart,
-  DataPart,
-  FileWithBytes,
-  FileWithUri,
   // Tasks
   Task,
-  TaskState,
   TaskStatus,
-  TaskIdParams,
-  TaskQueryParams,
   Artifact,
   // Push Notifications
-  PushNotificationConfig,
+  AuthenticationInfo,
   TaskPushNotificationConfig,
-  PushNotificationAuthenticationInfo,
   // Security
   SecurityScheme,
   OAuth2SecurityScheme,
   HTTPAuthSecurityScheme,
   APIKeySecurityScheme,
   // Requests/Responses
-  MessageSendParams,
-  MessageSendConfiguration,
+  SendMessageRequest,
+  SendMessageConfiguration,
   SendMessageResponse,
-  SendStreamingMessageResponse,
-  GetTaskResponse,
-  CancelTaskResponse,
-  // JSON-RPC
-  JSONRPCRequest,
-  JSONRPCResponse,
-  JSONRPCErrorResponse,
-  JSONRPCError,
+  StreamResponse,
+  GetTaskRequest,
+  CancelTaskRequest,
+  ListTasksRequest,
+  ListTasksResponse,
+  SubscribeToTaskRequest,
   // Extensions
   Extensions,
 } from '@a2a-js/sdk';
 
-export {
-  AGENT_CARD_PATH,
-  HTTP_EXTENSION_HEADER,
-} from '@a2a-js/sdk';
+export { AGENT_CARD_PATH, HTTP_EXTENSION_HEADER, Role, TaskState } from '@a2a-js/sdk';
 
 // ============================================================================
 // Tachikoma-specific A2A configuration

@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { join, extname, isAbsolute, resolve, relative } from 'node:path';
+import { Diagnostic } from 'vscode-languageserver-types';
 import { LSP } from '../../lsp';
 
 // ============================================================================
@@ -92,7 +93,7 @@ export class BuildGateService {
    */
   async check(workDir: string, options: BuildGateCheckOptions = {}): Promise<BuildGateResult> {
     const startTime = Date.now();
-    const projectType = options.projectType ?? await this.detectProjectType(workDir);
+    const projectType = options.projectType ?? (await this.detectProjectType(workDir));
 
     console.info(`[BuildGate] Detected project type: ${projectType} in ${workDir}`);
 
@@ -117,10 +118,20 @@ export class BuildGateService {
         break;
       case 'javascript':
         // JavaScript projects without TypeScript just need syntax check
-        result = { passed: true, errors: [], warnings: [], summary: 'No type check needed for JavaScript' };
+        result = {
+          passed: true,
+          errors: [],
+          warnings: [],
+          summary: 'No type check needed for JavaScript',
+        };
         break;
       default:
-        result = { passed: true, errors: [], warnings: [], summary: 'Unknown project type, skipping build gate' };
+        result = {
+          passed: true,
+          errors: [],
+          warnings: [],
+          summary: 'Unknown project type, skipping build gate',
+        };
     }
 
     result.duration = Date.now() - startTime;
@@ -129,7 +140,9 @@ export class BuildGateService {
     if (result.passed) {
       console.info(`[BuildGate] PASSED in ${result.duration}ms`);
     } else {
-      console.warn(`[BuildGate] FAILED with ${result.errors.length} errors in ${result.duration}ms`);
+      console.warn(
+        `[BuildGate] FAILED with ${result.errors.length} errors in ${result.duration}ms`
+      );
     }
 
     return result;
@@ -187,9 +200,12 @@ export class BuildGateService {
       // Get all diagnostics
       const rawDiagnostics = await LSP.diagnostics(workDir, env);
       const diagnostics = this.filterDiagnostics(rawDiagnostics, workDir);
-      const droppedDiagnostics = Object.keys(rawDiagnostics).length - Object.keys(diagnostics).length;
+      const droppedDiagnostics =
+        Object.keys(rawDiagnostics).length - Object.keys(diagnostics).length;
       if (droppedDiagnostics > 0) {
-        console.info(`[BuildGate] Ignored ${droppedDiagnostics} stale diagnostics for missing/out-of-scope files`);
+        console.info(
+          `[BuildGate] Ignored ${droppedDiagnostics} stale diagnostics for missing/out-of-scope files`
+        );
       }
       const allErrors: BuildError[] = [];
       const allWarnings: BuildError[] = [];
@@ -198,7 +214,9 @@ export class BuildGateService {
 
       const logDiagnostics = (label: string, items: BuildError[], limit = 10) => {
         if (items.length === 0) return;
-        console.info(`[BuildGate] LSP ${label}: showing ${Math.min(items.length, limit)} of ${items.length}`);
+        console.info(
+          `[BuildGate] LSP ${label}: showing ${Math.min(items.length, limit)} of ${items.length}`
+        );
         for (const item of items.slice(0, limit)) {
           const loc = `${item.file}:${item.line}:${item.column}`;
           const code = item.code ? ` ${item.code}` : '';
@@ -209,15 +227,16 @@ export class BuildGateService {
       for (const [file, fileDiagnostics] of Object.entries(diagnostics)) {
         for (const diag of fileDiagnostics) {
           const codeValue = diag.code !== undefined ? String(diag.code) : undefined;
+          const diagnosticMessage = Diagnostic.getMessageString(diag);
           const isCommonJsModuleHint =
             codeValue === '80001' ||
             DOWNGRADE_LSP_DIAGNOSTIC_CODES.has(codeValue ?? '') ||
-            diag.message.includes(COMMONJS_MODULE_HINT);
+            diagnosticMessage.includes(COMMONJS_MODULE_HINT);
           const baseSeverity = diag.severity === 1 ? 'error' : 'warning';
           const severity = isCommonJsModuleHint ? 'warning' : baseSeverity;
           const source = typeof diag.source === 'string' ? diag.source : undefined;
           const sourceKey = source ? source.toLowerCase() : undefined;
-          const message = source ? `[${source}] ${diag.message}` : diag.message;
+          const message = source ? `[${source}] ${diagnosticMessage}` : diagnosticMessage;
           const buildError: BuildError = {
             file,
             line: diag.range.start.line + 1,
@@ -249,7 +268,9 @@ export class BuildGateService {
         const sources = Array.from(lintSourceCounts.entries())
           .map(([sourceKey, count]) => `${sourceKey}:${count}`)
           .join(', ');
-        console.info(`[BuildGate] Ignoring ${lintDiagnostics.length} lint diagnostics from LSP (${sources})`);
+        console.info(
+          `[BuildGate] Ignoring ${lintDiagnostics.length} lint diagnostics from LSP (${sources})`
+        );
         logDiagnostics('lint', lintDiagnostics);
       }
 
@@ -263,7 +284,9 @@ export class BuildGateService {
         if (status.length === 0) {
           console.info('[BuildGate] No LSP clients connected, falling back to tsc');
         } else {
-          console.info('[BuildGate] LSP returned zero diagnostics, falling back to tsc for verification');
+          console.info(
+            '[BuildGate] LSP returned zero diagnostics, falling back to tsc for verification'
+          );
         }
         return null; // Signal to use fallback
       }
@@ -332,12 +355,10 @@ export class BuildGateService {
       const parsedErrors = this.parseTypeScriptErrors(output, workDir);
       const errors = this.ensureErrorsFromOutput(parsedErrors, output, workDir, 'TypeScript');
 
-      const errorCount = errors.filter(e => e.severity === 'error').length;
-      const warningCount = errors.filter(e => e.severity === 'warning').length;
+      const errorCount = errors.filter((e) => e.severity === 'error').length;
+      const warningCount = errors.filter((e) => e.severity === 'warning').length;
 
-      const passed = this.config.failOnWarnings 
-        ? errors.length === 0 
-        : errorCount === 0;
+      const passed = this.config.failOnWarnings ? errors.length === 0 : errorCount === 0;
 
       if (!passed) {
         this.logParsedDiagnostics('TypeScript', errors);
@@ -345,18 +366,19 @@ export class BuildGateService {
 
       return {
         passed,
-        errors: errors.filter(e => e.severity === 'error').slice(0, this.config.maxErrors),
-        warnings: errors.filter(e => e.severity === 'warning').slice(0, this.config.maxErrors),
-        summary: passed 
-          ? 'TypeScript check passed' 
+        errors: errors.filter((e) => e.severity === 'error').slice(0, this.config.maxErrors),
+        warnings: errors.filter((e) => e.severity === 'warning').slice(0, this.config.maxErrors),
+        summary: passed
+          ? 'TypeScript check passed'
           : `TypeScript check failed: ${errorCount} errors, ${warningCount} warnings`,
         command,
       };
     } catch (error) {
       // tsc returns non-zero exit code on errors, which is expected
-      const output = error instanceof Error && 'stdout' in error 
-        ? String((error as { stdout: string }).stdout) 
-        : String(error);
+      const output =
+        error instanceof Error && 'stdout' in error
+          ? String((error as { stdout: string }).stdout)
+          : String(error);
       const parsedErrors = this.parseTypeScriptErrors(output, workDir);
       const errors = this.ensureErrorsFromOutput(parsedErrors, output, workDir, 'TypeScript');
 
@@ -364,8 +386,8 @@ export class BuildGateService {
 
       return {
         passed: false,
-        errors: errors.filter(e => e.severity === 'error').slice(0, this.config.maxErrors),
-        warnings: errors.filter(e => e.severity === 'warning').slice(0, this.config.maxErrors),
+        errors: errors.filter((e) => e.severity === 'error').slice(0, this.config.maxErrors),
+        warnings: errors.filter((e) => e.severity === 'warning').slice(0, this.config.maxErrors),
         summary: `TypeScript check failed: ${errors.length} errors`,
         command,
       };
@@ -379,8 +401,7 @@ export class BuildGateService {
     // Try mypy first, fall back to pyright
     const hasPyright = existsSync(join(workDir, 'pyrightconfig.json'));
     const command =
-      commandOverride ??
-      (hasPyright ? 'npx pyright' : 'python -m mypy . --ignore-missing-imports');
+      commandOverride ?? (hasPyright ? 'npx pyright' : 'python -m mypy . --ignore-missing-imports');
 
     try {
       const output = await this.runCommand(command, workDir);
@@ -389,30 +410,36 @@ export class BuildGateService {
         ? this.parsePyrightErrors(output, workDir)
         : this.parseMypyErrors(output, workDir);
 
-      const errorCount = errors.filter(e => e.severity === 'error').length;
+      const errorCount = errors.filter((e) => e.severity === 'error').length;
 
       return {
         passed: errorCount === 0,
-        errors: errors.filter(e => e.severity === 'error').slice(0, this.config.maxErrors),
-        warnings: errors.filter(e => e.severity === 'warning').slice(0, this.config.maxErrors),
-        summary: errorCount === 0 
-          ? 'Python type check passed' 
-          : `Python type check failed: ${errorCount} errors`,
+        errors: errors.filter((e) => e.severity === 'error').slice(0, this.config.maxErrors),
+        warnings: errors.filter((e) => e.severity === 'warning').slice(0, this.config.maxErrors),
+        summary:
+          errorCount === 0
+            ? 'Python type check passed'
+            : `Python type check failed: ${errorCount} errors`,
         command,
       };
     } catch (_error) {
       // Type checker not installed - this is a degraded state, warn clearly
-      console.warn('[BuildGate] Python type checker (mypy/pyright) not available. Install with: pip install mypy');
+      console.warn(
+        '[BuildGate] Python type checker (mypy/pyright) not available. Install with: pip install mypy'
+      );
       return {
         passed: true, // Allow to proceed but with warning
         errors: [],
-        warnings: [{
-          file: workDir,
-          line: 0,
-          column: 0,
-          message: 'Python type checker not available. Install mypy or pyright for proper type checking.',
-          severity: 'warning' as const,
-        }],
+        warnings: [
+          {
+            file: workDir,
+            line: 0,
+            column: 0,
+            message:
+              'Python type checker not available. Install mypy or pyright for proper type checking.',
+            severity: 'warning' as const,
+          },
+        ],
         summary: 'Python type checker not available (mypy/pyright not installed)',
         command,
       };
@@ -421,7 +448,7 @@ export class BuildGateService {
 
   /**
    * Parse TypeScript compiler output into structured errors
-   * 
+   *
    * Format: file(line,col): error TS1234: message
    */
   private parseTypeScriptErrors(output: string, workDir: string): BuildError[] {
@@ -468,7 +495,7 @@ export class BuildGateService {
 
   /**
    * Parse mypy output into structured errors
-   * 
+   *
    * Format: file:line: error: message
    */
   private parseMypyErrors(output: string, workDir: string): BuildError[] {
@@ -538,19 +565,25 @@ export class BuildGateService {
     const trimmed = output.trim();
     if (!trimmed) return parsedErrors;
     const message = `${label} output:\n${this.truncateOutput(trimmed)}`;
-    console.warn(`[BuildGate] ${label} output did not match expected error format, emitting raw output.`);
-    return [{
-      file: workDir,
-      line: 0,
-      column: 0,
-      message,
-      severity: 'error',
-    }];
+    console.warn(
+      `[BuildGate] ${label} output did not match expected error format, emitting raw output.`
+    );
+    return [
+      {
+        file: workDir,
+        line: 0,
+        column: 0,
+        message,
+        severity: 'error',
+      },
+    ];
   }
 
   private logParsedDiagnostics(label: string, items: BuildError[], limit = 10): void {
     if (items.length === 0) return;
-    console.info(`[BuildGate] ${label} errors: showing ${Math.min(items.length, limit)} of ${items.length}`);
+    console.info(
+      `[BuildGate] ${label} errors: showing ${Math.min(items.length, limit)} of ${items.length}`
+    );
     for (const item of items.slice(0, limit)) {
       const loc = `${item.file}:${item.line}:${item.column}`;
       const code = item.code ? ` ${item.code}` : '';

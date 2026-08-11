@@ -6,13 +6,28 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { MockLanguageModelV3, simulateReadableStream } from 'ai/test';
-import { ChatEngine, type ChatEvent, type ChatMemory, type ChatModelConfig } from '../src/chat';
+import {
+  createFauxCore,
+  fauxAssistantMessage,
+  fauxText,
+  fauxToolCall,
+  type Context,
+  type Message,
+} from '@earendil-works/pi-ai';
+import {
+  ChatEngine,
+  getChatSessionMessages,
+  type ChatAgentRuntime,
+  type ChatEvent,
+  type ChatMemory,
+  type ChatModelConfig,
+} from '../src/chat';
 import {
   ChatProviderError,
+  createChatAgentRuntime,
   resolveChatModelConfig,
   OPENROUTER_BASE_URL,
 } from '../src/chat/providers';
@@ -28,48 +43,55 @@ const TEST_MODEL_CONFIG: ChatModelConfig = {
   apiKey: 'test-key',
 };
 
-function makeV3Usage(input: number, output: number) {
-  return {
-    inputTokens: {
-      total: input,
-      noCache: input,
-      cacheRead: undefined,
-      cacheWrite: undefined,
-    },
-    outputTokens: { total: output, text: output, reasoning: undefined },
-  };
+interface RuntimeHarness extends ChatAgentRuntime {
+  contexts: { systemPrompt: Context['systemPrompt']; messages: Message[] }[];
 }
 
-/** 构造按序吐出 chunks 的 mock 模型 */
-function streamingModel(chunks: string[], options: { chunkDelayInMs?: number } = {}) {
-  return new MockLanguageModelV3({
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: 'stream-start' as const, warnings: [] },
-          { type: 'text-start' as const, id: 't1' },
-          ...chunks.map((delta) => ({ type: 'text-delta' as const, id: 't1', delta })),
-          { type: 'text-end' as const, id: 't1' },
-          {
-            type: 'finish' as const,
-            finishReason: { unified: 'stop' as const, raw: 'stop' },
-            usage: makeV3Usage(7, chunks.length),
-          },
-        ],
-        ...(options.chunkDelayInMs !== undefined && {
-          chunkDelayInMs: options.chunkDelayInMs,
-        }),
-      }),
+/** pi-ai 官方 faux provider：零网络，实际走 pi-agent-core 的流与工具循环。 */
+function streamingRuntime(chunks: string[], options: { chunkDelayInMs?: number } = {}) {
+  const faux = createFauxCore({
+    provider: 'anthropic',
+    models: [{ id: TEST_MODEL_CONFIG.model }],
+    tokenSize: { min: 1, max: 1 },
+    ...(options.chunkDelayInMs !== undefined && {
+      tokensPerSecond: 1000 / options.chunkDelayInMs,
     }),
   });
+  faux.setResponses(Array.from({ length: 20 }, () => fauxAssistantMessage(chunks.join(''))));
+  const contexts: RuntimeHarness['contexts'] = [];
+  return {
+    model: faux.getModel(),
+    streamFn(model, context, streamOptions) {
+      contexts.push({
+        systemPrompt: context.systemPrompt,
+        messages: structuredClone(context.messages),
+      });
+      return faux.streamSimple(model, context, streamOptions);
+    },
+    contexts,
+  } satisfies RuntimeHarness;
 }
 
-function failingModel(error: Error) {
-  return new MockLanguageModelV3({
-    doStream: async () => {
-      throw error;
-    },
+function failingRuntime(error: Error): RuntimeHarness {
+  const faux = createFauxCore({
+    provider: 'anthropic',
+    models: [{ id: TEST_MODEL_CONFIG.model }],
   });
+  faux.setResponses([
+    fauxAssistantMessage([], { stopReason: 'error', errorMessage: error.message }),
+  ]);
+  const contexts: RuntimeHarness['contexts'] = [];
+  return {
+    model: faux.getModel(),
+    streamFn(model, context, streamOptions) {
+      contexts.push({
+        systemPrompt: context.systemPrompt,
+        messages: structuredClone(context.messages),
+      });
+      return faux.streamSimple(model, context, streamOptions);
+    },
+    contexts,
+  };
 }
 
 async function collect(iter: AsyncGenerator<ChatEvent>): Promise<ChatEvent[]> {
@@ -89,13 +111,13 @@ afterEach(async () => {
 });
 
 function makeEngine(
-  model: MockLanguageModelV3,
+  runtime: RuntimeHarness,
   overrides: Partial<ConstructorParameters<typeof ChatEngine>[0]> = {},
   memory?: ChatMemory
 ) {
   return new ChatEngine(
     { dataDir, model: TEST_MODEL_CONFIG, ...overrides },
-    { modelFactory: () => model, ...(memory && { memory }) }
+    { runtimeFactory: () => runtime, ...(memory && { memory }) }
   );
 }
 
@@ -123,30 +145,28 @@ function fakeMemory(options: { failRecall?: boolean } = {}) {
 
 describe('ChatEngine 流式对话', () => {
   test('事件顺序：message_start → 逐 token delta → message_complete', async () => {
-    const engine = makeEngine(streamingModel(['你好', '，', '世界']));
+    const engine = makeEngine(streamingRuntime(['你好', '，', '世界']));
     const session = await engine.createSession();
 
     const events = await collect(engine.sendMessage(session.sessionId, '打个招呼'));
 
     expect(events[0]?.type).toBe('message_start');
     const deltas = events.filter((e) => e.type === 'message_delta');
-    expect(deltas.map((d) => (d.type === 'message_delta' ? d.text : ''))).toEqual([
-      '你好',
-      '，',
-      '世界',
-    ]);
+    expect(deltas.map((d) => (d.type === 'message_delta' ? d.text : '')).join('')).toBe(
+      '你好，世界'
+    );
     const complete = events.at(-1);
     expect(complete?.type).toBe('message_complete');
     if (complete?.type === 'message_complete') {
       expect(complete.message.content).toBe('你好，世界');
       expect(complete.finishReason).toBe('stop');
-      expect(complete.usage?.outputTokens).toBe(3);
+      expect(complete.usage?.outputTokens).toBeGreaterThan(0);
       expect(complete.message.model).toBe('anthropic/claude-test');
     }
   });
 
   test('用户消息与助手消息都持久化到磁盘，标题取自首条消息', async () => {
-    const engine = makeEngine(streamingModel(['answer']));
+    const engine = makeEngine(streamingRuntime(['answer']));
     const session = await engine.createSession();
 
     await collect(engine.sendMessage(session.sessionId, '第一条消息作为标题'));
@@ -154,48 +174,158 @@ describe('ChatEngine 流式对话', () => {
     const raw = await readFile(join(dataDir, `${session.sessionId}.json`), 'utf-8');
     const persisted = JSON.parse(raw) as {
       title?: string;
-      messages: { role: string; content: string }[];
+      transcript: { message: Message }[];
     };
     expect(persisted.title).toBe('第一条消息作为标题');
-    expect(persisted.messages).toHaveLength(2);
-    expect(persisted.messages[0]?.role).toBe('user');
-    expect(persisted.messages[1]?.role).toBe('assistant');
-    expect(persisted.messages[1]?.content).toBe('answer');
+    expect(persisted.transcript).toHaveLength(2);
+    expect(persisted.transcript[0]?.message.role).toBe('user');
+    expect(persisted.transcript[1]?.message.role).toBe('assistant');
+    const assistant = persisted.transcript[1]?.message;
+    expect(assistant?.role === 'assistant' ? assistant.content[0] : undefined).toEqual({
+      type: 'text',
+      text: 'answer',
+    });
   });
 
   test('多轮对话：第二轮请求携带完整历史', async () => {
-    const model = streamingModel(['ok']);
-    const engine = makeEngine(model);
+    const runtime = streamingRuntime(['ok']);
+    const engine = makeEngine(runtime);
     const session = await engine.createSession();
 
     await collect(engine.sendMessage(session.sessionId, '第一轮'));
     await collect(engine.sendMessage(session.sessionId, '第二轮'));
 
-    expect(model.doStreamCalls).toHaveLength(2);
-    const secondPrompt = model.doStreamCalls[1]?.prompt ?? [];
-    // system + user1 + assistant1 + user2
+    expect(runtime.contexts).toHaveLength(2);
+    const secondPrompt = runtime.contexts[1]?.messages ?? [];
     const roles = secondPrompt.map((m) => m.role);
-    expect(roles).toEqual(['system', 'user', 'assistant', 'user']);
+    expect(roles).toEqual(['user', 'assistant', 'user']);
   });
 
   test('历史窗口：超过 maxHistoryMessages 只携带最近 N 条', async () => {
-    const model = streamingModel(['ok']);
-    const engine = makeEngine(model, { maxHistoryMessages: 3 });
+    const runtime = streamingRuntime(['ok']);
+    const engine = makeEngine(runtime, { maxHistoryMessages: 3 });
     const session = await engine.createSession();
 
     await collect(engine.sendMessage(session.sessionId, 'm1'));
     await collect(engine.sendMessage(session.sessionId, 'm2'));
     await collect(engine.sendMessage(session.sessionId, 'm3'));
 
-    const lastPrompt = model.doStreamCalls.at(-1)?.prompt ?? [];
-    // system + 最近 3 条（assistant(m2 回复), user(m3) … 取尾部 3 条非空消息）
-    expect(lastPrompt.length).toBe(4);
-    expect(lastPrompt[0]?.role).toBe('system');
+    const lastPrompt = runtime.contexts.at(-1)?.messages ?? [];
+    expect(lastPrompt).toHaveLength(3);
+    expect(lastPrompt.map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
   });
 
   test('会话不存在时抛错', async () => {
-    const engine = makeEngine(streamingModel(['x']));
+    const engine = makeEngine(streamingRuntime(['x']));
     await expect(collect(engine.sendMessage('chat-0-missing', 'hi'))).rejects.toThrow('会话不存在');
+  });
+});
+
+describe('ChatEngine pi-mono 工具循环', () => {
+  test('read 调用由 pi 执行，callId 贯穿事件和可恢复 transcript', async () => {
+    await writeFile(join(dataDir, 'note.txt'), 'pi-read-ok', 'utf-8');
+    const faux = createFauxCore({
+      provider: 'anthropic',
+      models: [{ id: TEST_MODEL_CONFIG.model }],
+      tokenSize: { min: 1, max: 1 },
+    });
+    faux.setResponses([
+      fauxAssistantMessage(
+        [fauxText('正在读取'), fauxToolCall('read', { path: 'note.txt' }, { id: 'call-read-1' })],
+        { stopReason: 'toolUse' }
+      ),
+      fauxAssistantMessage('读取完成'),
+      fauxAssistantMessage('上下文仍然完整'),
+    ]);
+    const contexts: RuntimeHarness['contexts'] = [];
+    const runtime: RuntimeHarness = {
+      model: faux.getModel(),
+      streamFn(model, context, options) {
+        contexts.push({
+          systemPrompt: context.systemPrompt,
+          messages: structuredClone(context.messages),
+        });
+        return faux.streamSimple(model, context, options);
+      },
+      contexts,
+    };
+    const engine = makeEngine(runtime, { workDir: dataDir });
+    const session = await engine.createSession();
+
+    const events = await collect(engine.sendMessage(session.sessionId, '读取 note.txt'));
+    const call = events.find((event) => event.type === 'tool_call');
+    const result = events.find((event) => event.type === 'tool_result');
+    expect(call?.type === 'tool_call' ? call.callId : undefined).toBe('call-read-1');
+    expect(result?.type === 'tool_result' ? result.callId : undefined).toBe('call-read-1');
+    expect(result?.type === 'tool_result' ? result.output : '').toContain('pi-read-ok');
+
+    const persisted = await engine.openSession(session.sessionId);
+    expect(persisted?.transcript.map((entry) => entry.message.role)).toEqual([
+      'user',
+      'assistant',
+      'toolResult',
+      'assistant',
+    ]);
+    const toolResult = persisted?.transcript[2]?.message;
+    expect(toolResult?.role === 'toolResult' ? toolResult.toolCallId : undefined).toBe(
+      'call-read-1'
+    );
+    const projected = persisted ? getChatSessionMessages(persisted) : [];
+    expect(projected.map((message) => message.role)).toEqual(['user', 'assistant']);
+    expect(projected.at(-1)?.content).toBe('正在读取读取完成');
+
+    const reloadedEngine = makeEngine(runtime, { workDir: dataDir });
+    await collect(reloadedEngine.sendMessage(session.sessionId, '继续'));
+    expect(runtime.contexts[2]?.messages.some((message) => message.role === 'toolResult')).toBe(
+      true
+    );
+  });
+
+  test('未知工具由 pi 生成唯一 error toolResult，并继续下一轮模型调用', async () => {
+    const faux = createFauxCore({
+      provider: 'anthropic',
+      models: [{ id: TEST_MODEL_CONFIG.model }],
+    });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('missing_tool', {}, { id: 'call-missing-1' }), {
+        stopReason: 'toolUse',
+      }),
+      fauxAssistantMessage('已从工具错误中恢复'),
+    ]);
+    const contexts: RuntimeHarness['contexts'] = [];
+    const runtime: RuntimeHarness = {
+      model: faux.getModel(),
+      streamFn(model, context, options) {
+        contexts.push({
+          systemPrompt: context.systemPrompt,
+          messages: structuredClone(context.messages),
+        });
+        return faux.streamSimple(model, context, options);
+      },
+      contexts,
+    };
+    const engine = makeEngine(runtime, { workDir: dataDir });
+    const session = await engine.createSession();
+
+    const events = await collect(engine.sendMessage(session.sessionId, '调用不存在的工具'));
+    const results = events.filter(
+      (event) => event.type === 'tool_result' && event.callId === 'call-missing-1'
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0]?.type === 'tool_result' ? results[0].isError : false).toBe(true);
+
+    const persisted = await engine.openSession(session.sessionId);
+    const toolResults = persisted?.transcript.filter(
+      (entry) =>
+        entry.message.role === 'toolResult' && entry.message.toolCallId === 'call-missing-1'
+    );
+    expect(toolResults).toHaveLength(1);
+    expect(
+      toolResults?.[0]?.message.role === 'toolResult' ? toolResults[0].message.isError : undefined
+    ).toBe(true);
+    expect(runtime.contexts[1]?.messages.some((message) => message.role === 'toolResult')).toBe(
+      true
+    );
   });
 });
 
@@ -206,7 +336,7 @@ describe('ChatEngine 流式对话', () => {
 describe('ChatEngine 中断', () => {
   test('interrupt() 停止生成，半成品持久化并打 interrupted 标记', async () => {
     const chunks = Array.from({ length: 50 }, (_, i) => `c${i} `);
-    const engine = makeEngine(streamingModel(chunks, { chunkDelayInMs: 5 }));
+    const engine = makeEngine(streamingRuntime(chunks, { chunkDelayInMs: 5 }));
     const session = await engine.createSession();
 
     const events: ChatEvent[] = [];
@@ -229,13 +359,13 @@ describe('ChatEngine 中断', () => {
     }
 
     const persisted = await engine.openSession(session.sessionId);
-    const assistant = persisted?.messages.at(-1);
-    expect(assistant?.role).toBe('assistant');
+    const assistant = persisted?.transcript.at(-1);
+    expect(assistant?.message.role).toBe('assistant');
     expect(assistant?.interrupted).toBe(true);
   });
 
   test('无生成进行时 interrupt() 返回 false', async () => {
-    const engine = makeEngine(streamingModel(['x']));
+    const engine = makeEngine(streamingRuntime(['x']));
     const session = await engine.createSession();
     expect(engine.interrupt(session.sessionId)).toBe(false);
   });
@@ -247,7 +377,7 @@ describe('ChatEngine 中断', () => {
 
 describe('ChatEngine 错误处理', () => {
   test('模型报错：产出 error 事件，用户消息保留、不持久化半成品助手消息', async () => {
-    const engine = makeEngine(failingModel(new Error('boom')));
+    const engine = makeEngine(failingRuntime(new Error('boom')));
     const session = await engine.createSession();
 
     const events = await collect(engine.sendMessage(session.sessionId, '会失败的一条'));
@@ -260,14 +390,12 @@ describe('ChatEngine 错误处理', () => {
     }
 
     const persisted = await engine.openSession(session.sessionId);
-    expect(persisted?.messages).toHaveLength(1);
-    expect(persisted?.messages[0]?.role).toBe('user');
+    expect(persisted?.transcript).toHaveLength(1);
+    expect(persisted?.transcript[0]?.message.role).toBe('user');
   });
 
   test('5xx/网络类错误标记为可重试', async () => {
-    const err = new Error('Internal Server Error') as Error & { statusCode?: number };
-    err.statusCode = 500;
-    const engine = makeEngine(failingModel(err));
+    const engine = makeEngine(failingRuntime(new Error('500 Internal Server Error')));
     const session = await engine.createSession();
 
     const events = await collect(engine.sendMessage(session.sessionId, 'hi'));
@@ -286,7 +414,7 @@ describe('ChatEngine 错误处理', () => {
 
 describe('ChatEngine 模型切换', () => {
   test('setModel 更新配置并同步到会话记录；切 provider 清掉旧 baseUrl', async () => {
-    const engine = makeEngine(streamingModel(['x']));
+    const engine = makeEngine(streamingRuntime(['x']));
     const session = await engine.createSession();
 
     await engine.setModel({ baseUrl: 'https://openrouter.ai/api/v1' });
@@ -311,9 +439,9 @@ describe('ChatEngine 模型切换', () => {
 
 describe('ChatEngine 记忆层', () => {
   test('回复前召回并注入 system prompt，发出 memory_recall 事件', async () => {
-    const model = streamingModel(['好的']);
+    const runtime = streamingRuntime(['好的']);
     const { memory, calls } = fakeMemory();
-    const engine = makeEngine(model, {}, memory);
+    const engine = makeEngine(runtime, {}, memory);
     const session = await engine.createSession();
 
     const events = await collect(engine.sendMessage(session.sessionId, '记得我喜欢什么吗'));
@@ -330,14 +458,12 @@ describe('ChatEngine 记忆层', () => {
       events.findIndex((e) => e.type === 'message_start')
     );
 
-    const systemMessage = model.doStreamCalls[0]?.prompt[0];
-    expect(systemMessage?.role).toBe('system');
-    expect(String(systemMessage?.content)).toContain('[记忆] 用户偏好简洁回答');
+    expect(runtime.contexts[0]?.systemPrompt).toContain('[记忆] 用户偏好简洁回答');
   });
 
   test('完整回合结束后写入记忆（user + assistant）', async () => {
     const { memory, calls } = fakeMemory();
-    const engine = makeEngine(streamingModel(['答案']), {}, memory);
+    const engine = makeEngine(streamingRuntime(['答案']), {}, memory);
     const session = await engine.createSession();
 
     await collect(engine.sendMessage(session.sessionId, '一个问题'));
@@ -349,7 +475,7 @@ describe('ChatEngine 记忆层', () => {
 
   test('记忆后端故障时对话正常降级（hasContext=false，不中断）', async () => {
     const { memory } = fakeMemory({ failRecall: true });
-    const engine = makeEngine(streamingModel(['仍然工作']), {}, memory);
+    const engine = makeEngine(streamingRuntime(['仍然工作']), {}, memory);
     const session = await engine.createSession();
 
     const events = await collect(engine.sendMessage(session.sessionId, 'hi'));
@@ -370,7 +496,7 @@ describe('ChatEngine 记忆层', () => {
   test('被中断的回合不写入记忆', async () => {
     const chunks = Array.from({ length: 50 }, (_, i) => `x${i} `);
     const { memory, calls } = fakeMemory();
-    const engine = makeEngine(streamingModel(chunks, { chunkDelayInMs: 5 }), {}, memory);
+    const engine = makeEngine(streamingRuntime(chunks, { chunkDelayInMs: 5 }), {}, memory);
     const session = await engine.createSession();
 
     for await (const evt of engine.sendMessage(session.sessionId, 'go')) {
@@ -476,6 +602,36 @@ describe('hasRecallHits', () => {
 // =============================================================================
 
 describe('resolveChatModelConfig', () => {
+  test('OpenRouter 使用 pi catalog；任意兼容端点使用显式自定义模型', () => {
+    const openRouter = createChatAgentRuntime({
+      provider: 'openai-compatible',
+      model: 'openai/gpt-4o',
+      apiKey: 'k',
+      baseUrl: `${OPENROUTER_BASE_URL}/`,
+    });
+    expect(openRouter.model.provider).toBe('openrouter');
+    expect(openRouter.model.contextWindow).toBeGreaterThan(0);
+
+    const custom = createChatAgentRuntime({
+      provider: 'openai-compatible',
+      model: 'local-model',
+      apiKey: 'k',
+      baseUrl: 'http://127.0.0.1:9999/v1',
+    });
+    expect(custom.model.provider).toBe('tachikoma-openai-compatible');
+    expect(custom.model.api).toBe('openai-completions');
+  });
+
+  test('内置 provider 的未知模型在发请求前失败', () => {
+    expect(() =>
+      createChatAgentRuntime({
+        provider: 'openai',
+        model: '__missing_model__',
+        apiKey: 'not-used',
+      })
+    ).toThrow(/catalog/);
+  });
+
   test('ANTHROPIC_API_KEY 优先解析为 anthropic + 默认模型', () => {
     const cfg = resolveChatModelConfig({ env: { ANTHROPIC_API_KEY: 'ak' } });
     expect(cfg.provider).toBe('anthropic');
@@ -483,13 +639,12 @@ describe('resolveChatModelConfig', () => {
     expect(cfg.model.length).toBeGreaterThan(0);
   });
 
-  test('OPENROUTER_API_KEY 解析为 openai-compatible + OpenRouter 端点', () => {
-    const cfg = resolveChatModelConfig({
-      env: { OPENROUTER_API_KEY: 'ok' },
-      model: 'anthropic/claude-sonnet-4.5',
-    });
+  test('OPENROUTER_API_KEY 解析为 openai-compatible + OpenRouter 端点和默认模型', () => {
+    const cfg = resolveChatModelConfig({ env: { OPENROUTER_API_KEY: 'ok' } });
     expect(cfg.provider).toBe('openai-compatible');
     expect(cfg.baseUrl).toBe(OPENROUTER_BASE_URL);
+    expect(cfg.model).toBe('openai/gpt-4o');
+    expect(createChatAgentRuntime(cfg).model.provider).toBe('openrouter');
   });
 
   test('OPENAI_API_KEY 兜底解析为 openai', () => {
@@ -538,13 +693,13 @@ describe('resolveChatModelConfig', () => {
     expect(() => resolveChatModelConfig({ env: {} })).toThrow(ChatProviderError);
   });
 
-  test('openai-compatible 缺 model 时抛错', () => {
+  test('任意 openai-compatible 端点缺 model 时抛错', () => {
     expect(() =>
       resolveChatModelConfig({
         env: {},
         provider: 'openai-compatible',
         apiKey: 'k',
-        baseUrl: 'https://openrouter.ai/api/v1',
+        baseUrl: 'https://llm.example.com/v1',
       })
     ).toThrow(/model/);
   });

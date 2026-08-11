@@ -1,11 +1,13 @@
 /**
  * Chat 模块类型定义
  *
- * 螺旋第一圈：顶级 chatbot。
- * 用户消息 → LLM（token 级流式）→ 回复，直连路径，不经过 planner/orchestrator。
+ * 螺旋第一、二圈：顶级 chatbot + pi-mono 工具循环。
+ * 用户消息 → LLM（token 级流式）→ 可选工具调用 → 回复，不经过 planner/orchestrator。
  * 事件命名与 docs/tachikoma-desktop-plan.md 的 StreamEvent v2（message_delta 等）对齐，
  * 后续圈层（工具调用、协调）在同一事件联合上做增量扩展。
  */
+
+import type { Message } from '@earendil-works/pi-ai';
 
 // =============================================================================
 // Provider / 模型配置
@@ -38,6 +40,13 @@ export interface ChatMessage {
   interrupted?: boolean;
 }
 
+/** 会话持久化的单一真相；完整保留 pi toolCall/toolResult 以便恢复工具上下文 */
+export interface ChatTranscriptEntry {
+  id: string;
+  message: Message;
+  interrupted?: boolean;
+}
+
 export interface ChatUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -52,7 +61,7 @@ export interface ChatSessionState {
   title?: string;
   provider: ChatProvider;
   model: string;
-  messages: ChatMessage[];
+  transcript: ChatTranscriptEntry[];
 }
 
 export interface ChatSessionSummary {
@@ -86,12 +95,7 @@ export interface ChatMessageDeltaEvent extends BaseChatEvent {
 }
 
 export type ChatFinishReason =
-  | 'stop'
-  | 'length'
-  | 'content-filter'
-  | 'interrupted'
-  | 'error'
-  | 'other';
+  'stop' | 'length' | 'content-filter' | 'interrupted' | 'error' | 'other';
 
 export interface ChatMessageCompleteEvent extends BaseChatEvent {
   type: 'message_complete';
@@ -113,11 +117,42 @@ export interface ChatMemoryRecallEvent extends BaseChatEvent {
   estimatedTokens?: number;
 }
 
+export interface ChatReasoningDeltaEvent extends BaseChatEvent {
+  type: 'reasoning_delta';
+  text: string;
+}
+
+export interface ChatToolCallEvent extends BaseChatEvent {
+  type: 'tool_call';
+  callId: string;
+  tool: string;
+  input: unknown;
+}
+
+export interface ChatToolUpdateEvent extends BaseChatEvent {
+  type: 'tool_update';
+  callId: string;
+  tool: string;
+  output: string;
+}
+
+export interface ChatToolResultEvent extends BaseChatEvent {
+  type: 'tool_result';
+  callId: string;
+  tool: string;
+  output: string;
+  isError: boolean;
+}
+
 export type ChatEvent =
   | ChatMessageStartEvent
   | ChatMessageDeltaEvent
   | ChatMessageCompleteEvent
   | ChatMemoryRecallEvent
+  | ChatReasoningDeltaEvent
+  | ChatToolCallEvent
+  | ChatToolUpdateEvent
+  | ChatToolResultEvent
   | ChatErrorEvent;
 
 // =============================================================================
@@ -134,4 +169,6 @@ export interface ChatEngineConfig {
   maxHistoryMessages?: number;
   temperature?: number;
   maxOutputTokens?: number;
+  /** 显式开启 pi coding tools；该目录是相对路径解析与命令执行的 cwd */
+  workDir?: string;
 }

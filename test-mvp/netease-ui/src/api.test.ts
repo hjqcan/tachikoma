@@ -3,12 +3,13 @@ import { api, ApiError } from './api';
 import type { Playlist, Song, PlayerState } from './types';
 
 function mockFetch(response: unknown, ok = true, status = 200) {
-  return vi.spyOn(window, 'fetch').mockResolvedValue({
-    ok,
-    status,
-    json: vi.fn().mockResolvedValue(response),
-    statusText: 'OK',
-  } as any);
+  return vi.spyOn(window, 'fetch').mockResolvedValue(
+    new Response(JSON.stringify(response), {
+      status: ok ? status : Math.max(status, 400),
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' },
+    })
+  );
 }
 
 describe('api module', () => {
@@ -148,13 +149,9 @@ describe('api module', () => {
     it('throws ApiError on 4xx response', async () => {
       fetchSpy = mockFetch({ detail: 'Playlist not found' }, false, 404);
 
-      await expect(api.getPlaylist(999)).rejects.toBeInstanceOf(ApiError);
-      try {
-        await api.getPlaylist(999);
-      } catch (err) {
-        expect((err as ApiError).status).toBe(404);
-        expect((err as ApiError).message).toBe('Playlist not found');
-      }
+      const error = await api.getPlaylist(999).catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 404, message: 'Playlist not found' });
     });
 
     it('throws ApiError with generic message on 5xx response', async () => {
@@ -191,9 +188,7 @@ describe('api module', () => {
         },
       ]);
 
-      const [playlists] = await Promise.all([
-        api.getPlaylists(),
-      ]);
+      const [playlists] = await Promise.all([api.getPlaylists()]);
       expect(playlists).toHaveLength(1);
     });
   });

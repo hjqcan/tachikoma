@@ -7,13 +7,11 @@
  * @module a2a/executor
  */
 
-import type {
-  AgentExecutor,
-  RequestContext,
-  ExecutionEventBus,
-} from '@a2a-js/sdk/server';
-import type { Message, TaskStatusUpdateEvent } from '@a2a-js/sdk';
-import { messageToTask, mapStatusToA2AState } from './converters';
+import { Role, TaskState } from '@a2a-js/sdk';
+import type { Message, Task as A2ATask, TaskStatusUpdateEvent } from '@a2a-js/sdk';
+import { AgentEvent } from '@a2a-js/sdk/server';
+import type { AgentExecutor, ExecutionEventBus, RequestContext } from '@a2a-js/sdk/server';
+import { createTextPart, mapStatusToA2AState, messageToTask } from './converters';
 
 // ============================================================================
 // Types
@@ -69,7 +67,8 @@ const defaultTaskExecutor: TaskExecutor = async function* (task) {
   // Stub response
   yield {
     type: 'output',
-    content: 'A2A task execution not yet connected to Tachikoma Core. ' +
+    content:
+      'A2A task execution not yet connected to Tachikoma Core. ' +
       'Implement TaskExecutor to connect to WorkerAgent or Orchestrator.',
   };
 
@@ -107,16 +106,17 @@ export class TachikomaAgentExecutor implements AgentExecutor {
 
   constructor(config: TachikomaExecutorConfig = {}) {
     this.taskExecutor = config.executeTask ?? defaultTaskExecutor;
-    this.taskCanceller = config.cancelTask ?? (async () => { /* noop */ });
+    this.taskCanceller =
+      config.cancelTask ??
+      (async () => {
+        /* noop */
+      });
   }
 
   /**
    * Execute a task from A2A request
    */
-  async execute(
-    requestContext: RequestContext,
-    eventBus: ExecutionEventBus
-  ): Promise<void> {
+  async execute(requestContext: RequestContext, eventBus: ExecutionEventBus): Promise<void> {
     const { userMessage, taskId, contextId } = requestContext;
 
     // Convert A2A message to Tachikoma task
@@ -127,18 +127,32 @@ export class TachikomaAgentExecutor implements AgentExecutor {
     this.runningTasks.set(taskId, abortController);
 
     try {
+      const initialTask: A2ATask = requestContext.task ?? {
+        id: taskId,
+        contextId,
+        status: {
+          state: TaskState.TASK_STATE_SUBMITTED,
+          message: undefined,
+          timestamp: new Date().toISOString(),
+        },
+        artifacts: [],
+        history: [userMessage],
+        metadata: undefined,
+      };
+      eventBus.publish(AgentEvent.task(initialTask));
+
       // Publish initial status
       const workingUpdate: TaskStatusUpdateEvent = {
-        kind: 'status-update',
         taskId,
         contextId,
         status: {
-          state: 'working',
+          state: TaskState.TASK_STATE_WORKING,
+          message: undefined,
           timestamp: new Date().toISOString(),
         },
-        final: false,
+        metadata: undefined,
       };
-      eventBus.publish(workingUpdate);
+      eventBus.publish(AgentEvent.statusUpdate(workingUpdate));
 
       // Execute task and stream events
       let finalOutput = '';
@@ -154,22 +168,25 @@ export class TachikomaAgentExecutor implements AgentExecutor {
           case 'thinking': {
             // Publish thinking as status update
             const thinkingUpdate: TaskStatusUpdateEvent = {
-              kind: 'status-update',
               taskId,
               contextId,
               status: {
-                state: 'working',
+                state: TaskState.TASK_STATE_WORKING,
                 timestamp: new Date().toISOString(),
                 message: {
-                  kind: 'message',
                   messageId: `think-${Date.now()}`,
-                  role: 'agent',
-                  parts: [{ kind: 'text', text: event.content }],
+                  contextId,
+                  taskId,
+                  role: Role.ROLE_AGENT,
+                  parts: [createTextPart(event.content)],
+                  metadata: undefined,
+                  extensions: [],
+                  referenceTaskIds: [],
                 },
               },
-              final: false,
+              metadata: undefined,
             };
-            eventBus.publish(thinkingUpdate);
+            eventBus.publish(AgentEvent.statusUpdate(thinkingUpdate));
             break;
           }
 
@@ -193,39 +210,41 @@ export class TachikomaAgentExecutor implements AgentExecutor {
       // Check if cancelled
       if (abortController.signal.aborted) {
         const cancelUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
           taskId,
           contextId,
           status: {
-            state: 'canceled',
+            state: TaskState.TASK_STATE_CANCELED,
+            message: undefined,
             timestamp: new Date().toISOString(),
           },
-          final: true,
+          metadata: undefined,
         };
-        eventBus.publish(cancelUpdate);
+        eventBus.publish(AgentEvent.statusUpdate(cancelUpdate));
       } else {
-        // Publish final result as message
+        // Publish final result with the terminal task status.
         const finalMessage: Message = {
-          kind: 'message',
           messageId: `resp-${Date.now()}`,
-          role: 'agent',
-          parts: [{ kind: 'text', text: finalOutput || 'Task completed' }],
           contextId,
+          taskId,
+          role: Role.ROLE_AGENT,
+          parts: [createTextPart(finalOutput || 'Task completed')],
+          metadata: undefined,
+          extensions: [],
+          referenceTaskIds: [],
         };
-        eventBus.publish(finalMessage);
 
         // Publish final status
         const finalUpdate: TaskStatusUpdateEvent = {
-          kind: 'status-update',
           taskId,
           contextId,
           status: {
             state: mapStatusToA2AState(finalStatus),
+            message: finalMessage,
             timestamp: new Date().toISOString(),
           },
-          final: true,
+          metadata: undefined,
         };
-        eventBus.publish(finalUpdate);
+        eventBus.publish(AgentEvent.statusUpdate(finalUpdate));
       }
     } finally {
       this.runningTasks.delete(taskId);

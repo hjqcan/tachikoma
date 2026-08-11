@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PlaylistCards } from './PlaylistCards';
 import type { Playlist } from '../types';
 
@@ -38,7 +38,7 @@ describe('PlaylistCards', () => {
         onItemClick={() => {}}
         isLoading={false}
         error={null}
-      />,
+      />
     );
 
     expect(screen.getByText('周杰伦经典合集')).toBeInTheDocument();
@@ -57,23 +57,26 @@ describe('PlaylistCards', () => {
         onItemClick={() => {}}
         isLoading={false}
         error="Network error"
-      />,
+      />
     );
     expect(screen.getByText('Network error')).toBeInTheDocument();
     expect(screen.getByText('重试')).toBeInTheDocument();
   });
 
   it('should show empty state', () => {
-    render(
-      <PlaylistCards playlists={[]} onItemClick={() => {}} isLoading={false} error={null} />,
-    );
+    render(<PlaylistCards playlists={[]} onItemClick={() => {}} isLoading={false} error={null} />);
     expect(screen.getByText('暂无歌单')).toBeInTheDocument();
   });
 
   it('should call onItemClick when playlist is clicked', () => {
     const onItem = vi.fn();
     render(
-      <PlaylistCards playlists={mockPlaylists} onItemClick={onItem} isLoading={false} error={null} />,
+      <PlaylistCards
+        playlists={mockPlaylists}
+        onItemClick={onItem}
+        isLoading={false}
+        error={null}
+      />
     );
     fireEvent.click(screen.getByText('周杰伦经典合集'));
     expect(onItem).toHaveBeenCalledWith(10001);
@@ -81,7 +84,12 @@ describe('PlaylistCards', () => {
 
   it('should format play count correctly', () => {
     render(
-      <PlaylistCards playlists={mockPlaylists} onItemClick={() => {}} isLoading={false} error={null} />,
+      <PlaylistCards
+        playlists={mockPlaylists}
+        onItemClick={() => {}}
+        isLoading={false}
+        error={null}
+      />
     );
     // 15000000 → "1500.0万"
     expect(screen.getByText(/1500/)).toBeInTheDocument();

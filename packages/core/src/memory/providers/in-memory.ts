@@ -1,16 +1,16 @@
-import { v4 as uuidv4 } from 'uuid';
-import type { 
-  MemoryProvider, 
-  MemoryEntry, 
-  MemoryScope, 
-  MemoryRetrievalResult, 
-  EmbeddingService, 
-  ContextMessageMinimal
+import { randomUUID } from 'node:crypto';
+import type {
+  MemoryProvider,
+  MemoryEntry,
+  MemoryScope,
+  MemoryRetrievalResult,
+  EmbeddingService,
+  ContextMessageMinimal,
 } from '../types';
 
 /**
  * In-Memory Memory Provider
- * 
+ *
  * Stores memories in a simple Javascript Map.
  * Performs linear scan for vector similarity search (cosine similarity).
  * Suitable for small to medium datasets (< 10k entries).
@@ -24,9 +24,9 @@ export class InMemoryMemoryProvider implements MemoryProvider {
   }
 
   async save(entry: Omit<MemoryEntry, 'id' | 'createdAt'>): Promise<string> {
-    const id = uuidv4();
+    const id = randomUUID();
     const createdAt = Date.now();
-    
+
     let embedding = entry.embedding;
     if (!embedding) {
       embedding = await this.embeddingService.embed(entry.content);
@@ -44,8 +44,8 @@ export class InMemoryMemoryProvider implements MemoryProvider {
   }
 
   async retrieve(
-    query: string, 
-    topK: number = 5, 
+    query: string,
+    topK: number = 5,
     scope?: MemoryScope
   ): Promise<MemoryRetrievalResult> {
     const startTime = Date.now();
@@ -70,7 +70,7 @@ export class InMemoryMemoryProvider implements MemoryProvider {
     candidates.sort((a, b) => b.score - a.score);
 
     // Take topK
-    const results = candidates.slice(0, topK).map(item => ({
+    const results = candidates.slice(0, topK).map((item) => ({
       ...item.entry,
       relevanceScore: item.score,
       lastAccessedAt: Date.now(),
@@ -91,18 +91,13 @@ export class InMemoryMemoryProvider implements MemoryProvider {
     };
   }
 
-  async search(
-    context: ContextMessageMinimal[], 
-    topK = 5
-  ): Promise<MemoryRetrievalResult> {
+  async search(context: ContextMessageMinimal[], topK = 5): Promise<MemoryRetrievalResult> {
     if (context.length === 0) {
       return { memories: [], latencyMs: 0, fromCache: false };
     }
 
     // Filter to user and assistant messages only (skip system/tool/status)
-    const relevantMessages = context.filter(
-      m => m.role === 'user' || m.role === 'assistant'
-    );
+    const relevantMessages = context.filter((m) => m.role === 'user' || m.role === 'assistant');
 
     if (relevantMessages.length === 0) {
       // Fallback to last message if no user/assistant messages
@@ -116,11 +111,11 @@ export class InMemoryMemoryProvider implements MemoryProvider {
     // Combine last 3 relevant messages for richer query
     const queryParts = relevantMessages
       .slice(-3)
-      .map(m => m.content)
-      .filter(c => c.length > 0);
+      .map((m) => m.content)
+      .filter((c) => c.length > 0);
 
     let query = queryParts.join(' | ');
-    
+
     // Limit query length to avoid excessive embedding costs
     const MAX_QUERY_LENGTH = 2000;
     if (query.length > MAX_QUERY_LENGTH) {

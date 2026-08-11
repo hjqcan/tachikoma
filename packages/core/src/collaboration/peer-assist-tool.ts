@@ -166,10 +166,10 @@ export function createPeerAssistExecutor(
         .filter((a: AgentRegistration) => a.status === 'online')
         .sort((a: AgentRegistration, b: AgentRegistration) => b.priority - a.priority);
 
-      const router =
-        (routerAgentId
-          ? onlineRouters.find((r) => r.agentId === routerAgentId) ?? null
-          : null) ?? onlineRouters[0] ?? null;
+      const requestedRouter = routerAgentId
+        ? onlineRouters.find((r) => r.agentId === routerAgentId)
+        : undefined;
+      const router = requestedRouter ?? onlineRouters[0];
 
       if (!router) {
         return {
@@ -216,9 +216,7 @@ export function createPeerAssistExecutor(
  * @param collaboration - CollaborationManager 实例
  * @returns 包含定义和执行器的工具对象
  */
-export function createPeerAssistTool(
-  collaboration: CollaborationManager
-): Tool {
+export function createPeerAssistTool(collaboration: CollaborationManager): Tool {
   return {
     ...peerAssistToolDefinition,
     execute: createPeerAssistExecutor(collaboration),

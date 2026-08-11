@@ -1,20 +1,20 @@
-import { v4 as uuidv4 } from 'uuid';
-import type { 
-  MemoryProvider, 
-  MemoryEntry, 
-  MemoryScope, 
-  MemoryRetrievalResult, 
+import { randomUUID } from 'node:crypto';
+import type {
+  MemoryProvider,
+  MemoryEntry,
+  MemoryScope,
+  MemoryRetrievalResult,
   EmbeddingService,
   ContextMessageMinimal,
-  VectorDBProvider
+  VectorDBProvider,
 } from '../types';
 
 /**
  * Vector Database Memory Provider
- * 
+ *
  * Implements MemoryProvider using any VectorDBProvider backend.
  * This allows using Qdrant, Pinecone, Chroma, etc. for memory storage.
- * 
+ *
  * Features:
  * - Uses vector similarity for semantic search
  * - Stores lightweight payload (no embedding duplication)
@@ -40,10 +40,10 @@ export class VectorMemoryProvider implements MemoryProvider {
 
   async save(entry: Omit<MemoryEntry, 'id' | 'createdAt'>): Promise<string> {
     await this.ensureInitialized();
-    
-    const id = uuidv4();
+
+    const id = randomUUID();
     const createdAt = Date.now();
-    
+
     let embedding = entry.embedding;
     if (!embedding) {
       embedding = await this.embeddingService.embed(entry.content);
@@ -55,35 +55,33 @@ export class VectorMemoryProvider implements MemoryProvider {
       scope: entry.scope,
       createdAt,
     };
-    
+
     // Only add optional fields if present
     if (entry.metadata) {
       payload.metadata = entry.metadata;
     }
 
-    await this.vectorDB.upsert([{
-      id,
-      vector: embedding,
-      payload,
-    }]);
+    await this.vectorDB.upsert([
+      {
+        id,
+        vector: embedding,
+        payload,
+      },
+    ]);
 
     return id;
   }
 
-  async retrieve(
-    query: string, 
-    topK = 5, 
-    scope?: MemoryScope
-  ): Promise<MemoryRetrievalResult> {
+  async retrieve(query: string, topK = 5, scope?: MemoryScope): Promise<MemoryRetrievalResult> {
     await this.ensureInitialized();
     const startTime = Date.now();
-    
+
     const queryEmbedding = await this.embeddingService.embed(query);
-    
+
     const filter = scope ? { scope } : undefined;
     const results = await this.vectorDB.search(queryEmbedding, topK, filter);
 
-    const memories: MemoryEntry[] = results.map(r => {
+    const memories: MemoryEntry[] = results.map((r) => {
       const entry: MemoryEntry = {
         id: r.id,
         content: r.payload.content as string,
@@ -106,18 +104,13 @@ export class VectorMemoryProvider implements MemoryProvider {
     };
   }
 
-  async search(
-    context: ContextMessageMinimal[], 
-    topK = 5
-  ): Promise<MemoryRetrievalResult> {
+  async search(context: ContextMessageMinimal[], topK = 5): Promise<MemoryRetrievalResult> {
     if (context.length === 0) {
       return { memories: [], latencyMs: 0, fromCache: false };
     }
 
     // Filter to user and assistant messages
-    const relevantMessages = context.filter(
-      m => m.role === 'user' || m.role === 'assistant'
-    );
+    const relevantMessages = context.filter((m) => m.role === 'user' || m.role === 'assistant');
 
     if (relevantMessages.length === 0) {
       const lastMessage = context[context.length - 1];
@@ -130,11 +123,11 @@ export class VectorMemoryProvider implements MemoryProvider {
     // Combine last 3 relevant messages
     const queryParts = relevantMessages
       .slice(-3)
-      .map(m => m.content)
-      .filter(c => c.length > 0);
+      .map((m) => m.content)
+      .filter((c) => c.length > 0);
 
     let query = queryParts.join(' | ');
-    
+
     // Limit query length
     const MAX_QUERY_LENGTH = 2000;
     if (query.length > MAX_QUERY_LENGTH) {
@@ -151,7 +144,7 @@ export class VectorMemoryProvider implements MemoryProvider {
 
   async clear(scope?: MemoryScope): Promise<void> {
     await this.ensureInitialized();
-    
+
     if (scope) {
       // Use native deleteByFilter for correct semantics
       await this.vectorDB.deleteByFilter({ scope });

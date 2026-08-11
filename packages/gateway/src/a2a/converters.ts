@@ -6,8 +6,18 @@
  * @module a2a/converters
  */
 
-import type { Message, Task as A2ATask, Artifact as A2AArtifact } from '@a2a-js/sdk';
-import type { Task, TaskResult, Artifact } from '@tachikoma/core';
+import { Role, TaskState } from '@a2a-js/sdk';
+import type { Artifact as A2AArtifact, Message, Part, Task as A2ATask } from '@a2a-js/sdk';
+import type { Artifact, Task, TaskResult } from '@tachikoma/core';
+
+export function createTextPart(text: string): Part {
+  return {
+    content: { $case: 'text', value: text },
+    metadata: undefined,
+    filename: '',
+    mediaType: 'text/plain',
+  };
+}
 
 // ============================================================================
 // Message → Task Conversion
@@ -19,12 +29,11 @@ import type { Task, TaskResult, Artifact } from '@tachikoma/core';
 export function messageToTask(message: Message, taskId: string): Task {
   // Extract text from message parts
   const objective = message.parts
-    .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-    .map((p) => p.text)
+    .flatMap((part) => (part.content?.$case === 'text' ? [part.content.value] : []))
     .join('\n');
 
-  // Extract skill ID from task attributes if present
-  const skillId = (message as { attributes?: { skillId?: string } }).attributes?.skillId;
+  const skillId =
+    typeof message.metadata?.skillId === 'string' ? message.metadata.skillId : undefined;
 
   const task: Task = {
     id: taskId,
@@ -54,12 +63,10 @@ export function artifactToA2AArtifact(artifact: Artifact): A2AArtifact {
   return {
     artifactId: artifact.id,
     name: artifact.name,
-    parts: [
-      {
-        kind: 'text',
-        text: artifact.content,
-      },
-    ],
+    description: '',
+    parts: [createTextPart(artifact.content)],
+    metadata: undefined,
+    extensions: [],
   };
 }
 
@@ -71,32 +78,36 @@ export function taskResultToA2ATask(
   contextId: string,
   result: TaskResult
 ): A2ATask {
-  const state = result.status === 'success' ? 'completed' : 'failed';
+  const state =
+    result.status === 'success' ? TaskState.TASK_STATE_COMPLETED : TaskState.TASK_STATE_FAILED;
 
   // Convert artifacts
   const artifacts: A2AArtifact[] = result.artifacts.map(artifactToA2AArtifact);
 
   // Extract output text
   const outputText =
-    typeof result.output === 'string'
-      ? result.output
-      : JSON.stringify(result.output, null, 2);
+    typeof result.output === 'string' ? result.output : JSON.stringify(result.output, null, 2);
 
   return {
-    kind: 'task',
     id: taskId,
     contextId,
     status: {
       state,
       timestamp: new Date().toISOString(),
       message: {
-        kind: 'message',
         messageId: `resp-${Date.now()}`,
-        role: 'agent',
-        parts: [{ kind: 'text', text: outputText }],
+        contextId,
+        taskId,
+        role: Role.ROLE_AGENT,
+        parts: [createTextPart(outputText)],
+        metadata: undefined,
+        extensions: [],
+        referenceTaskIds: [],
       },
     },
     artifacts,
+    history: [],
+    metadata: undefined,
   };
 }
 
@@ -107,31 +118,25 @@ export function taskResultToA2ATask(
 /**
  * Map Tachikoma status to A2A TaskState
  */
-export type A2ATaskState =
-  | 'submitted'
-  | 'working'
-  | 'input-required'
-  | 'completed'
-  | 'failed'
-  | 'canceled';
+export type A2ATaskState = TaskState;
 
 export function mapStatusToA2AState(
   status: 'pending' | 'running' | 'success' | 'failure' | 'partial' | 'cancelled'
 ): A2ATaskState {
   switch (status) {
     case 'pending':
-      return 'submitted';
+      return TaskState.TASK_STATE_SUBMITTED;
     case 'running':
-      return 'working';
+      return TaskState.TASK_STATE_WORKING;
     case 'success':
-      return 'completed';
+      return TaskState.TASK_STATE_COMPLETED;
     case 'failure':
-      return 'failed';
+      return TaskState.TASK_STATE_FAILED;
     case 'partial':
-      return 'failed';
+      return TaskState.TASK_STATE_FAILED;
     case 'cancelled':
-      return 'canceled';
+      return TaskState.TASK_STATE_CANCELED;
     default:
-      return 'failed';
+      return TaskState.TASK_STATE_FAILED;
   }
 }

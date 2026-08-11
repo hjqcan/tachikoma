@@ -2,7 +2,7 @@
 /**
  * Tachikoma CLI 入口
  *
- * Conversation-first 命令行工具（内部驱动 Orchestrator + WorkerAgent）
+ * 默认由 pi-mono ChatEngine 执行；旧多智能体编排通过 orchestrate 显式进入。
  *
  * Usage:
  *   bun run packages/core/bin/tachikoma.ts run --task "任务描述" --workdir ./project
@@ -20,6 +20,7 @@ import {
   ChatEngine,
   ChatProviderError,
   createGoodMemoryChatMemory,
+  getChatSessionMessages,
   resolveChatModelConfig,
   type ChatMemory,
   type GoodMemoryLike,
@@ -32,18 +33,15 @@ import {
 interface RunOptions {
   task: string;
   workdir: string;
-  verbose: boolean;
-  noApproval: boolean;
+  provider?: string | undefined;
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
   model?: string | undefined;
 }
 
-interface IdeaContextOptions {
-  workdir: string;
-  apiKey?: string | undefined;
-  baseUrl?: string | undefined;
-  model?: string | undefined;
+interface OrchestrateOptions extends RunOptions {
+  verbose: boolean;
+  noApproval: boolean;
 }
 
 // =============================================================================
@@ -97,11 +95,82 @@ function compactLine(text: string, maxLen = 160): string {
 // =============================================================================
 
 async function runCommand(options: RunOptions): Promise<void> {
+  const absoluteWorkDir = resolve(options.workdir);
+  const modelConfig = resolveChatModelConfig({
+    ...(options.provider && { provider: options.provider }),
+    ...(options.apiKey && { apiKey: options.apiKey }),
+    ...(options.baseUrl && { baseUrl: options.baseUrl }),
+    ...(options.model && { model: options.model }),
+  });
+  const engine = new ChatEngine({
+    dataDir: resolve(absoluteWorkDir, '.tachikoma', 'chats'),
+    model: modelConfig,
+    workDir: absoluteWorkDir,
+  });
+  const session = await engine.createSession();
+
+  logInfo(`任务: ${colors.bold}${options.task}${colors.reset}`);
+  logInfo(`工作目录: ${absoluteWorkDir}`);
+  logInfo(`模型: ${modelConfig.provider}/${modelConfig.model}`);
+  console.log('');
+
+  let lineOpen = false;
+  let failed = false;
+  let finishReason: string | undefined;
+  const closeLine = (): void => {
+    if (!lineOpen) return;
+    process.stdout.write('\n');
+    lineOpen = false;
+  };
+
+  for await (const event of engine.sendMessage(session.sessionId, options.task)) {
+    switch (event.type) {
+      case 'message_delta':
+        process.stdout.write(event.text);
+        lineOpen = true;
+        break;
+      case 'tool_call':
+        closeLine();
+        logStep(`[${event.tool}] ${JSON.stringify(event.input)}`);
+        break;
+      case 'tool_result':
+        closeLine();
+        if (event.isError) {
+          logError(`[${event.tool}] ${compactLine(event.output, 240)}`);
+        } else {
+          logSuccess(`[${event.tool}] ${compactLine(event.output, 240)}`);
+        }
+        break;
+      case 'error':
+        closeLine();
+        logError(event.error);
+        failed = true;
+        break;
+      case 'message_complete':
+        finishReason = event.finishReason;
+        break;
+      default:
+        break;
+    }
+  }
+  closeLine();
+
+  if (failed || finishReason !== 'stop') {
+    if (!failed) logError(`任务未正常完成（${finishReason ?? '无完成事件'}）`);
+    process.exitCode = 1;
+  }
+}
+
+// =============================================================================
+// 命令: orchestrate（旧多智能体编排，显式使用）
+// =============================================================================
+
+async function orchestrateCommand(options: OrchestrateOptions): Promise<void> {
   const { task, workdir, verbose, noApproval, apiKey, baseUrl, model } = options;
 
   console.log(`
 ${colors.bold}${colors.cyan}╔════════════════════════════════════════════════════════════╗
-║                🤖 Tachikoma (Conversation-first)             ║
+║              🤖 Tachikoma (Legacy Orchestrator)              ║
 ╚════════════════════════════════════════════════════════════╝${colors.reset}
 `);
 
@@ -131,14 +200,16 @@ ${colors.bold}${colors.cyan}╔════════════════�
   try {
     // IMPORTANT: Resolve workdir to absolute path to prevent execution in wrong directory
     const absoluteWorkDir = resolve(workdir);
+    const resolvedBaseUrl = baseUrl ?? process.env.OPENROUTER_BASE_URL;
+    const resolvedModel = model ?? process.env.OPENROUTER_MODEL;
 
     const runner = new ConversationalRunner({
       sessionDir: resolve(absoluteWorkDir, '.tachikoma', 'conversations'),
       workDir: absoluteWorkDir,
       llm: {
         apiKey: resolvedApiKey,
-        baseUrl: baseUrl ?? process.env.OPENROUTER_BASE_URL,
-        model: model ?? process.env.OPENROUTER_MODEL,
+        ...(resolvedBaseUrl && { baseUrl: resolvedBaseUrl }),
+        ...(resolvedModel && { model: resolvedModel }),
       },
       verbose,
       enableCheckpoints: false,
@@ -158,17 +229,15 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
         const res = await readTasksJson({ projectRoot: absoluteWorkDir, tag: sessionTag });
         const terminal = new Set(['done', 'completed', 'cancelled']);
-        const isComplete = (status: any): boolean => terminal.has(String(status));
+        const isComplete = (status: string): boolean => terminal.has(status);
 
         const allDone =
-          Array.isArray(res.tasks) &&
           res.tasks.length > 0 &&
           res.tasks.every((t) => {
-            const subs = Array.isArray((t as any).subtasks) ? (t as any).subtasks : [];
-            if (subs.length === 0) {
-              return isComplete((t as any).status);
+            if (t.subtasks.length === 0) {
+              return isComplete(t.status);
             }
-            return subs.every((st: any) => isComplete(st.status));
+            return t.subtasks.every((subtask) => isComplete(subtask.status));
           });
 
         if (!allDone) return;
@@ -279,7 +348,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
               });
             }
           }
-        } catch (err) {
+        } catch {
           // 忽略轮询错误，避免刷屏
         } finally {
           isApproving = false;
@@ -338,11 +407,12 @@ ${colors.bold}${colors.cyan}╔════════════════�
                 evt.tool === 'run_command' ||
                 evt.tool === 'execute_command'
               ) {
-                const cmd =
-                  (evt.input as any).command ||
-                  (evt.input as any).CommandLine ||
-                  (evt.input as any).cmd;
-                if (cmd) {
+                const input =
+                  typeof evt.input === 'object' && evt.input !== null
+                    ? (evt.input as Record<string, unknown>)
+                    : {};
+                const cmd = input.command ?? input.CommandLine ?? input.cmd;
+                if (typeof cmd === 'string' && cmd) {
                   console.log(`${colors.cyan}    $ ${cmd}${colors.reset}`);
                 }
               }
@@ -365,7 +435,13 @@ ${colors.bold}${colors.cyan}╔════════════════�
               }
               // shell 命令特殊处理 stdout/stderr
               if (['shell_run', 'run_command', 'execute_command'].includes(evt.tool)) {
-                const data = (evt.result as any)?.data;
+                const data = (
+                  evt.result as
+                    | {
+                        data?: { stdout?: string; stderr?: string };
+                      }
+                    | undefined
+                )?.data;
                 if (data) {
                   if (data.stdout && data.stdout.trim() && !evt.outputPreview) {
                     const out = data.stdout.trim();
@@ -557,229 +633,6 @@ ${colors.reset}`);
 }
 
 // =============================================================================
-// 命令: idea (可选工作流，不扰动对话链)
-// =============================================================================
-
-function showIdeaHelp(): void {
-  console.log(`
-${colors.bold}Tachikoma CLI${colors.reset} - idea 工作流（可选，不走对话链）
-
-${colors.bold}用法:${colors.reset}
-  tachikoma idea <subcommand> [options]
-
-${colors.bold}子命令:${colors.reset}
-  spec        研究报告 → 生成 specs/ (PRD/架构/任务)
-  tasks       读取/更新 tasks.md
-  plan        基于 specs/ 生成实现计划（LLM）
-  help        显示帮助信息
-
-${colors.bold}示例:${colors.reset}
-  bun run packages/core/bin/tachikoma.ts idea spec \\
-    --report "./report.md" \\
-    --project-name "calculator" \\
-    --workdir ./my-project
-`);
-}
-
-function buildIdeaExecutionContext(opts: IdeaContextOptions) {
-  const workDir = resolve(opts.workdir);
-  const env = {
-    ...(process.env as Record<string, string>),
-  };
-  if (opts.apiKey) {
-    // 优先级：CLI 参数 > 环境变量
-    env.OPENROUTER_API_KEY = opts.apiKey;
-  }
-  if (opts.baseUrl) {
-    env.OPENROUTER_BASE_URL = opts.baseUrl;
-  }
-  if (opts.model) {
-    env.OPENROUTER_MODEL = opts.model;
-  }
-
-  return {
-    taskId: `idea-${Date.now()}`,
-    agentId: 'tachikoma-cli',
-    traceId: `trace-${Date.now()}`,
-    workDir,
-    env,
-  };
-}
-
-async function ideaCommand(args: string[]): Promise<void> {
-  const subcommand = args[0];
-  if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-    showIdeaHelp();
-    return;
-  }
-
-  if (subcommand === 'spec') {
-    const { values } = parseArgs({
-      args: args.slice(1),
-      options: {
-        report: { type: 'string' },
-        'project-name': { type: 'string' },
-        workdir: { type: 'string', short: 'w', default: './workspace' },
-        'output-dir': { type: 'string', default: 'specs' },
-        language: { type: 'string', default: 'zh-CN' },
-        'api-key': { type: 'string' },
-        'base-url': { type: 'string' },
-        model: { type: 'string' },
-      },
-      strict: true,
-    });
-
-    if (!values.report || !values['project-name']) {
-      logError('缺少 --report 或 --project-name 参数');
-      console.log('使用 tachikoma idea help 查看帮助');
-      process.exit(1);
-    }
-
-    const context = buildIdeaExecutionContext({
-      workdir: values.workdir ?? './workspace',
-      apiKey: values['api-key'],
-      baseUrl: values['base-url'],
-      model: values.model,
-    });
-
-    // 动态导入：避免把可选工作流工具打进默认对话链路
-    const { researchToSpecTool } = await import('../src/tools/core/research-to-spec');
-
-    const result = await researchToSpecTool.execute(
-      {
-        report: values.report,
-        projectName: values['project-name'],
-        outputDir: values['output-dir'],
-        language: values.language,
-        llm: {
-          provider: 'openai',
-          apiKey: context.env.OPENROUTER_API_KEY || context.env.OPENAI_API_KEY,
-          baseUrl: context.env.OPENROUTER_BASE_URL,
-          model: context.env.OPENROUTER_MODEL,
-        },
-      },
-      context as any
-    );
-
-    if (!result.success) {
-      logError(result.error ?? 'research_to_spec failed');
-      process.exit(1);
-    }
-
-    logSuccess(result.data?.summary ?? 'Generated specs');
-    if (result.data) {
-      console.log(`${colors.dim}Outputs:${colors.reset}
-  - ${result.data.specFile}
-  - ${result.data.archFile}
-  - ${result.data.taskFile}`);
-    }
-    return;
-  }
-
-  if (subcommand === 'tasks') {
-    const { values } = parseArgs({
-      args: args.slice(1),
-      options: {
-        action: { type: 'string' },
-        workdir: { type: 'string', short: 'w', default: './workspace' },
-        'task-file': { type: 'string' },
-        'task-id': { type: 'string' },
-        'task-content': { type: 'string' },
-      },
-      strict: true,
-    });
-
-    const action = values.action as string | undefined;
-    if (!action) {
-      logError('缺少 --action 参数 (read_next|mark_complete|list_all|add_task)');
-      process.exit(1);
-    }
-
-    const context = buildIdeaExecutionContext({ workdir: values.workdir ?? './workspace' });
-    const { taskManagerTool } = await import('../src/tools/core/task-manager');
-
-    const taskId = values['task-id'] ? Number(values['task-id']) : undefined;
-    const result = await taskManagerTool.execute(
-      {
-        action,
-        taskFile: values['task-file'],
-        ...(taskId !== undefined && Number.isFinite(taskId) ? { taskId } : {}),
-        ...(values['task-content'] ? { taskContent: values['task-content'] } : {}),
-      },
-      context as any
-    );
-
-    if (!result.success) {
-      logError(result.error ?? 'task_manager failed');
-      process.exit(1);
-    }
-
-    console.log(result.data?.message ?? 'OK');
-    if (result.data?.task) console.log(result.data.task);
-    if (result.data?.tasks) console.log(result.data.tasks);
-    return;
-  }
-
-  if (subcommand === 'plan') {
-    const { values } = parseArgs({
-      args: args.slice(1),
-      options: {
-        task: { type: 'string' },
-        workdir: { type: 'string', short: 'w', default: './workspace' },
-        'context-dir': { type: 'string', default: 'specs' },
-        'api-key': { type: 'string' },
-        'base-url': { type: 'string' },
-        model: { type: 'string' },
-      },
-      strict: true,
-    });
-
-    if (!values.task) {
-      logError('缺少 --task 参数');
-      process.exit(1);
-    }
-
-    const context = buildIdeaExecutionContext({
-      workdir: values.workdir ?? './workspace',
-      apiKey: values['api-key'],
-      baseUrl: values['base-url'],
-      model: values.model,
-    });
-
-    const { codePlannerTool } = await import('../src/tools/core/code-planner');
-    const result = await codePlannerTool.execute(
-      {
-        task: values.task,
-        contextDir: values['context-dir'],
-        llm: {
-          provider: 'openai',
-          apiKey: context.env.OPENROUTER_API_KEY || context.env.OPENAI_API_KEY,
-          baseUrl: context.env.OPENROUTER_BASE_URL,
-          model: context.env.OPENROUTER_MODEL,
-        },
-      },
-      context as any
-    );
-
-    if (!result.success) {
-      logError(result.error ?? 'code_planner failed');
-      process.exit(1);
-    }
-
-    console.log(JSON.stringify(result.data?.plan, null, 2));
-    return;
-  }
-
-  logError(`未知 idea 子命令: ${subcommand}`);
-  console.log('使用 tachikoma idea help 查看帮助');
-  process.exit(1);
-}
-
-// =============================================================================
-// 命令: help
-// =============================================================================
-
-// =============================================================================
 // 命令: chat（螺旋第一圈：直连流式对话 + GoodMemory 持久记忆）
 // =============================================================================
 
@@ -861,6 +714,7 @@ async function chatCommand(argv: string[]): Promise<void> {
       dataDir,
       model: modelConfig,
       ...(values.system && { systemPrompt: values.system }),
+      ...(values.workdir && { workDir: values.workdir }),
     },
     { ...(memory && { memory }) }
   );
@@ -893,7 +747,7 @@ async function chatCommand(argv: string[]): Promise<void> {
     }
     sessionId = existing.sessionId;
     // 恢复会话时回放最近几条，帮用户找回上下文
-    const tail = existing.messages.slice(-4);
+    const tail = getChatSessionMessages(existing).slice(-4);
     for (const m of tail) {
       const prefix =
         m.role === 'user'
@@ -986,6 +840,16 @@ async function chatCommand(argv: string[]): Promise<void> {
           case 'message_delta':
             process.stdout.write(evt.text);
             break;
+          case 'tool_call':
+            console.log(
+              `\n${colors.dim}🔧 ${evt.tool} ${compactLine(JSON.stringify(evt.input), 120)}${colors.reset}`
+            );
+            break;
+          case 'tool_result':
+            console.log(
+              `${colors.dim}${evt.isError ? '✗' : '✓'} ${evt.tool}${evt.output ? ` · ${compactLine(evt.output, 120)}` : ''}${colors.reset}`
+            );
+            break;
           case 'message_complete': {
             process.stdout.write('\n');
             if (evt.finishReason === 'interrupted') {
@@ -1026,10 +890,10 @@ ${colors.bold}用法:${colors.reset}
   tachikoma <command> [options]
 
 ${colors.bold}命令:${colors.reset}
-  chat        流式聊天（直连 LLM，token 级流式 + GoodMemory 持久记忆）
-  run         执行任务
+  chat        流式聊天（pi-mono 工具循环 + GoodMemory 持久记忆）
+  run         用 pi-mono 编码工具执行一次任务
+  orchestrate 运行旧多智能体编排器（显式兼容入口）
   speckit     面向规范开发工具
-  idea        idea 工作流（可选）
   help        显示帮助信息
 
 ${colors.bold}选项 (chat 命令):${colors.reset}
@@ -1042,17 +906,22 @@ ${colors.bold}选项 (chat 命令):${colors.reset}
   --no-memory       关闭 GoodMemory 持久记忆
   --memory-db       记忆库路径（默认 ~/.tachikoma/memory/goodmemory.sqlite)
   --system          覆盖系统提示词
-  --workdir, -w     关联工作区（作为记忆的 workspace 维度）
+  --workdir, -w     关联工作区（启用 pi 编码工具，并作为记忆的 workspace 维度）
 
 ${colors.bold}选项 (run 命令):${colors.reset}
   --task, -t        任务描述 (必需)
   --workdir, -w     工作目录 (默认: ./workspace)
+  --provider        anthropic | openai | openai-compatible
+  --api-key         API Key（默认从所选 provider 的环境变量读取）
+  --base-url        自定义端点（可选）
+  --model           模型名称（可选）
+  注意：--workdir 是 pi 工具的 cwd/相对路径基准，目前不是沙盒边界。
+
+${colors.bold}选项 (orchestrate 命令):${colors.reset}
+  与 run 共用 --task/--workdir/--api-key/--base-url/--model，另支持：
   --verbose, -v     详细输出
   --auto-approve    自动批准所有操作（测试模式，生产环境禁用）
   --no-approval     --auto-approve 的别名
-  --api-key         API Key（或设置 OPENROUTER_API_KEY/OPENAI_API_KEY）
-  --base-url        自定义端点（可选）
-  --model           模型名称（可选）
 
 ${colors.bold}示例:${colors.reset}
   bun run packages/core/bin/tachikoma.ts run \\
@@ -1061,15 +930,12 @@ ${colors.bold}示例:${colors.reset}
 
   bun run packages/core/bin/tachikoma.ts speckit init --workdir ./my-project
 
-  bun run packages/core/bin/tachikoma.ts idea spec \\
-    --report "./report.md" \\
-    --project-name "calculator" \\
-    --workdir ./my-project
-
 ${colors.bold}环境变量:${colors.reset}
-  OPENROUTER_API_KEY      OpenRouter API Key (必需)
+  ANTHROPIC_API_KEY       Anthropic API Key
+  OPENROUTER_API_KEY      OpenRouter API Key
+  OPENAI_API_KEY          OpenAI API Key
   OPENROUTER_BASE_URL     API 端点 (默认: https://openrouter.ai/api/v1)
-  OPENROUTER_MODEL        模型名称 (默认: openai/gpt-4o)
+  TACHIKOMA_CHAT_MODEL    run/chat 使用的模型名称
   TACHIKOMA_LOG_LEVEL     日志级别 (debug|info|warn|error)
 `);
 }
@@ -1095,24 +961,13 @@ async function main(): Promise<void> {
         options: {
           task: { type: 'string', short: 't' },
           workdir: { type: 'string', short: 'w', default: './workspace' },
-          verbose: { type: 'boolean', short: 'v', default: false },
-          'no-approval': { type: 'boolean', default: false },
-          'auto-approve': { type: 'boolean', default: false }, // 别名
+          provider: { type: 'string' },
           'api-key': { type: 'string' },
           'base-url': { type: 'string' },
           model: { type: 'string' },
         },
         strict: true,
       });
-
-      // 合并 --no-approval 和 --auto-approve
-      const autoApprove = values['no-approval'] || values['auto-approve'];
-
-      // 生产环境保护
-      if (autoApprove && process.env.NODE_ENV === 'production') {
-        logError('在生产环境中禁止使用 --no-approval/--auto-approve');
-        process.exit(1);
-      }
 
       if (!values.task) {
         logError('缺少 --task 参数');
@@ -1121,6 +976,44 @@ async function main(): Promise<void> {
       }
 
       await runCommand({
+        task: values.task,
+        workdir: values.workdir ?? './workspace',
+        provider: values.provider,
+        apiKey: values['api-key'],
+        baseUrl: values['base-url'],
+        model: values.model,
+      });
+    } catch (error) {
+      logError(`执行失败: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  } else if (command === 'orchestrate') {
+    try {
+      const { values } = parseArgs({
+        args: args.slice(1),
+        options: {
+          task: { type: 'string', short: 't' },
+          workdir: { type: 'string', short: 'w', default: './workspace' },
+          verbose: { type: 'boolean', short: 'v', default: false },
+          'no-approval': { type: 'boolean', default: false },
+          'auto-approve': { type: 'boolean', default: false },
+          'api-key': { type: 'string' },
+          'base-url': { type: 'string' },
+          model: { type: 'string' },
+        },
+        strict: true,
+      });
+      const autoApprove = values['no-approval'] || values['auto-approve'];
+      if (autoApprove && process.env.NODE_ENV === 'production') {
+        logError('在生产环境中禁止使用 --no-approval/--auto-approve');
+        process.exit(1);
+      }
+      if (!values.task) {
+        logError('缺少 --task 参数');
+        console.log('使用 --help 查看帮助');
+        process.exit(1);
+      }
+      await orchestrateCommand({
         task: values.task,
         workdir: values.workdir ?? './workspace',
         verbose: values.verbose ?? false,
@@ -1137,8 +1030,6 @@ async function main(): Promise<void> {
     await chatCommand(args.slice(1));
   } else if (command === 'speckit') {
     await speckitCommand(args.slice(1));
-  } else if (command === 'idea') {
-    await ideaCommand(args.slice(1));
   } else {
     logError(`未知命令: ${command}`);
     console.log('使用 --help 查看帮助');

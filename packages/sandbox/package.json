@@ -5,12 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build:image": "docker build -t tachikoma-sandbox:latest .",
-    "typecheck": "tsc --noEmit"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.7.0"
+    "build:image": "docker build -t tachikoma-sandbox:latest ."
   },
   "license": "MIT"
 }

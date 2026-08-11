@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import * as apiModule from './api';
+import type { PlayerState, Playlist, Song } from './types';
 import App from './App';
 
 // Mock the API module
@@ -15,7 +16,7 @@ vi.mock('./api', () => ({
   },
 }));
 
-const mockPlaylists = [
+const mockPlaylists: Playlist[] = [
   {
     id: 10001,
     name: '周杰伦经典合集',
@@ -42,7 +43,7 @@ const mockPlaylists = [
   },
 ];
 
-const mockSongs = [
+const mockSongs: Song[] = [
   {
     id: 2001,
     title: '晴天',
@@ -69,7 +70,7 @@ const mockSongs = [
   },
 ];
 
-const mockPlayerState = {
+const mockPlayerState: PlayerState = {
   current_song_id: 2001,
   current_song: {
     id: 2001,
@@ -91,10 +92,10 @@ const mockPlayerState = {
 const mockedApi = vi.mocked(apiModule.api);
 
 function setupMocks() {
-  mockedApi.getPlaylists.mockResolvedValue(mockPlaylists as any);
-  mockedApi.getSongs.mockResolvedValue(mockSongs as any);
-  mockedApi.getPlayerState.mockResolvedValue(mockPlayerState as any);
-  mockedApi.togglePlay.mockResolvedValue({ status: 'playing', progress: 45 } as any);
+  mockedApi.getPlaylists.mockResolvedValue(mockPlaylists);
+  mockedApi.getSongs.mockResolvedValue(mockSongs);
+  mockedApi.getPlayerState.mockResolvedValue(mockPlayerState);
+  mockedApi.togglePlay.mockResolvedValue({ status: 'playing', progress: 45 });
 }
 
 describe('App', () => {

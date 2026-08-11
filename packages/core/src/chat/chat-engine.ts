@@ -1,21 +1,25 @@
 /**
- * ChatEngine —— 螺旋第一圈的核心
+ * ChatEngine —— 螺旋第一、二圈的核心
  *
- * 直连流式对话引擎：user message → streamText → token 流。
+ * 直连流式对话引擎：user message → pi agentLoop → token/工具事件流。
  * 不经过 planner/orchestrator/worker，没有任务分解，没有文件轮询。
  *
  * 设计约束：
  * - token 级流式是主输出（message_delta），不是事后补的。
  * - 中断是一等操作：interrupt() 立即停止生成，已产出的部分持久化并打 interrupted 标记。
- * - Provider 可注入（modelFactory），测试用 mock 模型零网络运行。
+ * - pi runtime 可注入（runtimeFactory），测试用 faux provider 零网络运行。
  * - 会话先落盘再生成：用户消息在请求发出前已持久化，崩溃不丢输入。
  * - 后续圈层（工具调用/协调）在此之上增量扩展，不推翻本层接口。
  */
 
-import { streamText } from 'ai';
-import type { LanguageModel, ModelMessage } from 'ai';
+import { agentLoopContinue } from '@earendil-works/pi-agent-core';
+import type { AgentLoopConfig, AgentMessage, AgentTool } from '@earendil-works/pi-agent-core';
+import type { AssistantMessage, Message, Usage } from '@earendil-works/pi-ai';
+import { createCodingTools, createFindTool, createGrepTool } from '@earendil-works/pi-coding-agent';
 import { randomUUID } from 'node:crypto';
-import { createChatModel } from './providers';
+import { resolve } from 'node:path';
+import { createChatAgentRuntime } from './providers';
+import type { ChatAgentRuntime } from './providers';
 import { buildChatSystemPrompt } from './system-prompt';
 import { ChatSessionStore } from './session-store';
 import type { ChatMemory } from './memory';
@@ -28,13 +32,14 @@ import type {
   ChatModelConfig,
   ChatSessionState,
   ChatSessionSummary,
+  ChatTranscriptEntry,
   ChatUsage,
 } from './types';
 
 const DEFAULT_MAX_HISTORY_MESSAGES = 40;
 const TITLE_MAX_LENGTH = 60;
 
-export type ChatModelFactory = (config: ChatModelConfig) => LanguageModel;
+export type ChatRuntimeFactory = (config: ChatModelConfig) => ChatAgentRuntime;
 
 export interface SendMessageOptions {
   /** 外部取消信号（如 CLI 的 Ctrl+C、桌面端窗口关闭） */
@@ -42,8 +47,8 @@ export interface SendMessageOptions {
 }
 
 export interface ChatEngineOptions {
-  /** 测试注入点：给定配置返回模型实例，默认 createChatModel */
-  modelFactory?: ChatModelFactory;
+  /** 测试注入点：给定配置返回 pi model + streamFn，默认 createChatAgentRuntime */
+  runtimeFactory?: ChatRuntimeFactory;
   /** 持久记忆层（GoodMemory 适配见 ./memory）；缺省无记忆 */
   memory?: ChatMemory;
 }
@@ -67,6 +72,7 @@ function isRetryableChatError(error: unknown): boolean {
   if (statusCode >= 500 || statusCode === 429) return true;
   const message = error.message.toLowerCase();
   return (
+    /\b(429|5\d\d)\b/.test(message) ||
     message.includes('fetch failed') ||
     message.includes('network error') ||
     message.includes('socket connection was closed') ||
@@ -76,30 +82,47 @@ function isRetryableChatError(error: unknown): boolean {
   );
 }
 
-function normalizeFinishReason(reason: string): ChatFinishReason {
+function normalizeFinishReason(reason: AssistantMessage['stopReason']): ChatFinishReason {
   switch (reason) {
     case 'stop':
       return 'stop';
     case 'length':
       return 'length';
-    case 'content-filter':
-      return 'content-filter';
+    case 'aborted':
+      return 'interrupted';
+    case 'error':
+      return 'error';
     default:
       return 'other';
   }
 }
 
-function normalizeUsage(raw: {
-  inputTokens: number | undefined;
-  outputTokens: number | undefined;
-  totalTokens: number | undefined;
-}): ChatUsage | undefined {
-  const usage: ChatUsage = {
-    ...(typeof raw.inputTokens === 'number' && { inputTokens: raw.inputTokens }),
-    ...(typeof raw.outputTokens === 'number' && { outputTokens: raw.outputTokens }),
-    ...(typeof raw.totalTokens === 'number' && { totalTokens: raw.totalTokens }),
+function mergeUsage(current: ChatUsage | undefined, next: Usage): ChatUsage {
+  return {
+    inputTokens: (current?.inputTokens ?? 0) + next.input,
+    outputTokens: (current?.outputTokens ?? 0) + next.output,
+    totalTokens: (current?.totalTokens ?? 0) + next.totalTokens,
   };
-  return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function isPiMessage(message: AgentMessage): message is Message {
+  return message.role === 'user' || message.role === 'assistant' || message.role === 'toolResult';
+}
+
+function toolResultText(result: unknown): string {
+  const content = (result as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return String(result ?? '');
+  return content
+    .map((part) => {
+      if (typeof part === 'object' && part !== null && 'text' in part) {
+        return String(part.text);
+      }
+      if (typeof part === 'object' && part !== null && 'mimeType' in part) {
+        return `[image:${String(part.mimeType)}]`;
+      }
+      return String(part);
+    })
+    .join('\n');
 }
 
 export class ChatEngine {
@@ -109,7 +132,8 @@ export class ChatEngine {
   private readonly maxHistoryMessages: number;
   private readonly temperature: number | undefined;
   private readonly maxOutputTokens: number | undefined;
-  private readonly modelFactory: ChatModelFactory;
+  private readonly runtimeFactory: ChatRuntimeFactory;
+  private readonly tools: AgentTool[];
   private readonly memory: ChatMemory | undefined;
   private readonly activeGenerations = new Map<string, AbortController>();
 
@@ -120,7 +144,17 @@ export class ChatEngine {
     this.maxHistoryMessages = config.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES;
     this.temperature = config.temperature;
     this.maxOutputTokens = config.maxOutputTokens;
-    this.modelFactory = options.modelFactory ?? createChatModel;
+    this.runtimeFactory = options.runtimeFactory ?? createChatAgentRuntime;
+    if (config.workDir) {
+      const workDir = resolve(config.workDir);
+      this.tools = [
+        ...createCodingTools(workDir),
+        createGrepTool(workDir),
+        createFindTool(workDir),
+      ];
+    } else {
+      this.tools = [];
+    }
     this.memory = options.memory;
   }
 
@@ -205,7 +239,8 @@ export class ChatEngine {
       content: text,
       createdAt: now,
     };
-    session.messages.push(userMessage);
+    const prompt: Message = { role: 'user', content: text, timestamp: userMessage.createdAt };
+    session.transcript.push({ id: userMessage.id, message: prompt });
     if (!session.title) {
       const title = deriveTitle(text);
       if (title) session.title = title;
@@ -234,7 +269,7 @@ export class ChatEngine {
       try {
         recalled = await this.memory.recallContext({ sessionId, query: text });
       } catch {
-        recalled = null;
+        // 记忆故障降级为无召回。
       }
       if (recalled) {
         effectiveSystemPrompt = `${this.systemPrompt}\n\n${recalled.content}`;
@@ -249,59 +284,106 @@ export class ChatEngine {
       };
     }
 
+    if (this.tools.length > 0) {
+      effectiveSystemPrompt +=
+        '\n\nYou have pi coding tools for the configured working directory. Use them when they materially help; report tool failures plainly.';
+    }
+
     const assistantId = randomUUID();
     const modelLabel = `${this.modelConfig.provider}/${this.modelConfig.model}`;
     let accumulated = '';
     let finishReason: ChatFinishReason = 'stop';
     let usage: ChatUsage | undefined;
     let errorEvent: ChatErrorEvent | undefined;
+    let generatedMessages: AgentMessage[] = [];
 
     yield { type: 'message_start', messageId: assistantId, timestamp: Date.now() };
 
     try {
-      const result = streamText({
-        model: this.modelFactory(this.modelConfig),
-        system: effectiveSystemPrompt,
-        messages: this.buildModelMessages(session),
-        abortSignal: controller.signal,
-        // 错误经 fullStream 的 error 部件显式处理，屏蔽 SDK 默认的 console 输出
-        onError: () => undefined,
+      const runtime = this.runtimeFactory(this.modelConfig);
+      const context = {
+        systemPrompt: effectiveSystemPrompt,
+        messages: this.buildAgentMessages(session),
+        tools: this.tools,
+      };
+      const config: AgentLoopConfig = {
+        model: runtime.model,
+        convertToLlm: (messages) => messages.filter(isPiMessage),
+        getApiKey: () => this.modelConfig.apiKey,
+        toolExecution: 'sequential',
+        sessionId,
         ...(this.temperature !== undefined && { temperature: this.temperature }),
-        ...(this.maxOutputTokens !== undefined && { maxOutputTokens: this.maxOutputTokens }),
-      });
-
-      // 消费 fullStream 而非 textStream：错误/finish/usage 都是显式部件，
-      // 不会被 SDK 的默认 onError 吞掉（textStream 在出错时会静默结束）。
-      for await (const part of result.fullStream) {
-        // 中断由引擎自己裁决，不依赖 provider 是否尊重 abortSignal
-        if (controller.signal.aborted) {
-          finishReason = 'interrupted';
-          break;
-        }
-        switch (part.type) {
-          case 'text-delta': {
-            if (!part.text) break;
-            accumulated += part.text;
+        ...(this.maxOutputTokens !== undefined && { maxTokens: this.maxOutputTokens }),
+      };
+      for await (const event of agentLoopContinue(
+        context,
+        config,
+        controller.signal,
+        runtime.streamFn
+      )) {
+        switch (event.type) {
+          case 'message_update': {
+            const update = event.assistantMessageEvent;
+            if (update.type === 'text_delta' && update.delta) {
+              accumulated += update.delta;
+              yield {
+                type: 'message_delta',
+                messageId: assistantId,
+                text: update.delta,
+                timestamp: Date.now(),
+              };
+            } else if (update.type === 'thinking_delta' && update.delta) {
+              yield { type: 'reasoning_delta', text: update.delta, timestamp: Date.now() };
+            }
+            break;
+          }
+          case 'message_end': {
+            if (event.message.role !== 'assistant') break;
+            finishReason = normalizeFinishReason(event.message.stopReason);
+            usage = mergeUsage(usage, event.message.usage);
+            if (event.message.stopReason === 'error') {
+              const message = event.message.errorMessage ?? '模型调用失败';
+              const error = new Error(message);
+              errorEvent = {
+                type: 'error',
+                error: message,
+                retryable: isRetryableChatError(error),
+                timestamp: Date.now(),
+              };
+            }
+            break;
+          }
+          case 'tool_execution_start':
             yield {
-              type: 'message_delta',
-              messageId: assistantId,
-              text: part.text,
+              type: 'tool_call',
+              callId: event.toolCallId,
+              tool: event.toolName,
+              input: event.args,
               timestamp: Date.now(),
             };
             break;
-          }
-          case 'finish': {
-            finishReason = normalizeFinishReason(part.finishReason);
-            usage = normalizeUsage(part.totalUsage);
+          case 'tool_execution_update':
+            yield {
+              type: 'tool_update',
+              callId: event.toolCallId,
+              tool: event.toolName,
+              output: toolResultText(event.partialResult),
+              timestamp: Date.now(),
+            };
             break;
-          }
-          case 'abort': {
-            finishReason = 'interrupted';
+          case 'tool_execution_end':
+            yield {
+              type: 'tool_result',
+              callId: event.toolCallId,
+              tool: event.toolName,
+              output: toolResultText(event.result),
+              isError: event.isError,
+              timestamp: Date.now(),
+            };
             break;
-          }
-          case 'error': {
-            throw part.error instanceof Error ? part.error : new Error(String(part.error));
-          }
+          case 'agent_end':
+            generatedMessages = event.messages;
+            break;
           default:
             break;
         }
@@ -327,6 +409,24 @@ export class ChatEngine {
       this.activeGenerations.delete(sessionId);
     }
 
+    const piMessages = generatedMessages.filter(isPiMessage).filter((message) => {
+      if (message.role !== 'assistant') return true;
+      if (message.stopReason === 'error') return false;
+      return message.stopReason !== 'aborted' || accumulated.length > 0;
+    });
+    const lastAssistantIndex = piMessages.findLastIndex((message) => message.role === 'assistant');
+    const transcriptEntries: ChatTranscriptEntry[] = piMessages.map((message, index) => ({
+      id: index === lastAssistantIndex ? assistantId : randomUUID(),
+      message,
+      ...(message.role === 'assistant' &&
+        message.stopReason === 'aborted' && { interrupted: true }),
+    }));
+    if (transcriptEntries.length > 0) {
+      session.transcript.push(...transcriptEntries);
+      session.updatedAt = Date.now();
+      await this.store.save(session);
+    }
+
     // 3. 收尾：错误不持久化半成品；中断的半成品持久化并打标
     if (finishReason === 'error' && errorEvent) {
       yield errorEvent;
@@ -341,12 +441,6 @@ export class ChatEngine {
       model: modelLabel,
       ...(finishReason === 'interrupted' && { interrupted: true }),
     };
-
-    if (accumulated) {
-      session.messages.push(assistantMessage);
-      session.updatedAt = Date.now();
-      await this.store.save(session);
-    }
 
     // 回合写入记忆（仅正常完成的完整回合；中断的半成品不入记忆）。
     // 失败静默降级——记忆层不得破坏对话。
@@ -371,16 +465,14 @@ export class ChatEngine {
     };
   }
 
-  /** 组装发给模型的消息：窗口内最近 N 条，跳过空消息 */
-  private buildModelMessages(session: ChatSessionState): ModelMessage[] {
-    const history = session.messages.filter(
-      (m) => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0
-    );
+  /** 组装发给 pi 的历史；从窗口内第一条 user 开始，避免截出孤立 toolResult */
+  private buildAgentMessages(session: ChatSessionState): Message[] {
+    const messages = session.transcript.map((entry) => entry.message);
     const windowed =
-      history.length > this.maxHistoryMessages ? history.slice(-this.maxHistoryMessages) : history;
-    return windowed.map((m) => ({
-      role: m.role as 'user' | 'assistant',
-      content: m.content,
-    }));
+      messages.length > this.maxHistoryMessages
+        ? messages.slice(-this.maxHistoryMessages)
+        : messages;
+    const firstUserIndex = windowed.findIndex((message) => message.role === 'user');
+    return firstUserIndex > 0 ? windowed.slice(firstUserIndex) : windowed;
   }
 }

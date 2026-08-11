@@ -2,13 +2,9 @@
  * @tachikoma/gateway 服务器测试
  */
 
-import { describe, expect, it, beforeAll } from 'bun:test';
+import { describe, expect, it, beforeAll, spyOn } from 'bun:test';
 import { createServer, createDevServer } from '../src/server';
-import {
-  signJWT,
-  parseJWT,
-  verifyJWT,
-} from '../src/middleware/auth';
+import { signJWT, parseJWT, verifyJWT } from '../src/middleware/auth';
 import {
   detectPII,
   detectTokens,
@@ -334,18 +330,24 @@ describe('@tachikoma/gateway', () => {
     });
 
     it('应接受允许列表中的主机', async () => {
-      // 注意：这个测试只验证验证逻辑，不实际发送请求
-      const res = await app.request('/api/execute/proxy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: 'https://api.anthropic.com/v1/messages',
+      const fetchMock = spyOn(globalThis, 'fetch').mockResolvedValue(
+        Response.json({ ok: true }, { status: 200 })
+      );
+      try {
+        const res = await app.request('/api/execute/proxy', {
           method: 'POST',
-        }),
-      });
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: 'https://api.anthropic.com/v1/messages',
+            method: 'POST',
+          }),
+        });
 
-      // 即使网络请求失败，也不应该是 403
-      expect(res.status).not.toBe(403);
+        expect(res.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+      } finally {
+        fetchMock.mockRestore();
+      }
     });
   });
 

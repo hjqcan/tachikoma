@@ -7,18 +7,9 @@
  * @module a2a/client
  */
 
-import { ClientFactory } from '@a2a-js/sdk/client';
-import type {
-  Client,
-  ClientConfig,
-  RequestOptions,
-} from '@a2a-js/sdk/client';
-import type {
-  AgentCard,
-  Message,
-  Task,
-  MessageSendParams,
-} from '@a2a-js/sdk';
+import { ClientFactory, ClientFactoryOptions, DefaultAgentCardResolver } from '@a2a-js/sdk/client';
+import type { Client, ClientConfig, RequestOptions } from '@a2a-js/sdk/client';
+import type { AgentCard, Message, SendMessageRequest, Task } from '@a2a-js/sdk';
 
 // ============================================================================
 // Re-export SDK types for convenience
@@ -31,7 +22,7 @@ export type {
   AgentCard,
   Message as A2AMessage,
   Task as A2ATask,
-  MessageSendParams,
+  SendMessageRequest,
 };
 
 // ============================================================================
@@ -61,13 +52,12 @@ export type {
  * });
  * ```
  */
-export async function createA2AClient(
-  agentUrl: string,
-  config?: ClientConfig
-): Promise<Client> {
+export async function createA2AClient(agentUrl: string, config?: ClientConfig): Promise<Client> {
   const factory = new ClientFactory(
     config
-      ? { ...ClientFactory.prototype.options, clientConfig: config }
+      ? ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+          clientConfig: config,
+        })
       : undefined
   );
   return factory.createFromUrl(agentUrl);
@@ -86,7 +76,9 @@ export async function createA2AClientFromCard(
 ): Promise<Client> {
   const factory = new ClientFactory(
     config
-      ? { ...ClientFactory.prototype.options, clientConfig: config }
+      ? ClientFactoryOptions.createFrom(ClientFactoryOptions.default, {
+          clientConfig: config,
+        })
       : undefined
   );
   return factory.createFromAgentCard(agentCard);
@@ -103,26 +95,21 @@ export async function createA2AClientFromCard(
  * @returns Promise resolving to the agent's card
  */
 export async function fetchAgentCard(agentUrl: string): Promise<AgentCard> {
-  const cardUrl = new URL('/.well-known/agent-card.json', agentUrl).toString();
-  const response = await fetch(cardUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch agent card: ${response.status}`);
-  }
-  return response.json() as Promise<AgentCard>;
+  return new DefaultAgentCardResolver().resolve(agentUrl);
 }
 
 /**
  * Check if a message/task result is a Task (vs Message)
  */
 export function isTask(result: Message | Task): result is Task {
-  return 'kind' in result && result.kind === 'task';
+  return 'id' in result;
 }
 
 /**
  * Check if a message/task result is a Message
  */
 export function isMessage(result: Message | Task): result is Message {
-  return 'kind' in result && result.kind === 'message';
+  return 'messageId' in result;
 }
 
 /**

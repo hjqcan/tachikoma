@@ -26,6 +26,10 @@
       "import": "./dist/mcp/index.js",
       "types": "./dist/mcp/index.d.ts"
     },
+    "./mcp/sandbox-ipc": {
+      "import": "./dist/mcp/sandbox-ipc.js",
+      "types": "./dist/mcp/sandbox-ipc.d.ts"
+    },
     "./memory": {
       "import": "./dist/memory/index.js",
       "types": "./dist/memory/index.d.ts"
@@ -36,36 +40,42 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun --external playwright --external electron",
+    "build": "tsc -p tsconfig.build.json && bun build ./src/index.ts --outdir ./dist --target bun --external playwright --external electron --external '@earendil-works/pi-*'",
     "build:types": "tsc -p tsconfig.build.json",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.bin.json",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.0-beta.96",
-    "@ai-sdk/openai": "^3.0.0-beta.110",
-    "@modelcontextprotocol/sdk": "^1.24.3",
-    "@qdrant/js-client-rest": "^1.16.2",
-    "goodmemory": "^0.7.2",
-    "@types/uuid": "^11.0.0",
-    "ai": "^6.0.0-beta.165",
-    "ioredis": "^5.8.2",
-    "json-schema-to-zod": "^2.7.0",
-    "level": "^10.0.0",
-    "uuid": "^13.0.0",
-    "vscode-jsonrpc": "^8.2.0",
-    "vscode-languageserver-types": "^3.17.5",
-    "zod": "^4.2.1",
-    "zod-to-json-schema": "^3.25.0"
+    "@a2a-js/sdk": "1.0.1",
+    "@ai-sdk/anthropic": "4.0.37",
+    "@ai-sdk/openai": "4.0.37",
+    "@earendil-works/pi-agent-core": "0.84.1",
+    "@earendil-works/pi-ai": "0.84.1",
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@qdrant/js-client-rest": "1.19.0",
+    "ai": "7.0.59",
+    "goodmemory": "0.7.2",
+    "ioredis": "6.0.0",
+    "level": "10.0.0",
+    "vscode-jsonrpc": "9.0.1",
+    "vscode-languageserver-types": "3.18.0",
+    "zod": "4.4.3",
+    "zod-to-json-schema": "3.25.2"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.227",
+    "@anthropic-ai/sdk": "0.116.0",
+    "@openai/agents": "0.14.3",
+    "openai": "7.4.0",
+    "pg": "8.23.0",
+    "playwright": "1.62.1"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.7.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3"
   },
   "files": [
     "dist",

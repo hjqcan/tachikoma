@@ -7,26 +7,27 @@
 
 ### 1.1 背景
 
-Tachikoma 已完成 pi-mono 融合改造（见
-`docs/tachikoma-pi-mono-fusion-plan.md`，七个阶段全部落地）与提示词/工具层对齐（见 CONTINUITY 账本）。下一个产品方向是把 Tachikoma 演进为一个类似
-[alma.now](https://alma.now) 的桌面应用：Local-First、Memory-First 的 AI Agent 桌面端。
+Tachikoma 已在 ChatEngine 直接接入 pi-mono 0.84.1 的模型与工具循环；此前
+`docs/tachikoma-pi-mono-fusion-plan.md` 的自研 Tool
+Runtime 路线已停止推进。下一个产品方向是把 Tachikoma 演进为一个类似 [alma.now](https://alma.now)
+的桌面应用：Local-First、Memory-First 的 AI Agent 桌面端。
 
 Alma 的产品要素（来自官方文档）：统一多 Provider 接入（一键切换模型）、隐私（API
 key 与会话史留在本机）、跨会话持久记忆、文件/Shell/网络搜索工具、自定义 Prompt、工作区关联（会话绑定项目目录做编码辅助）、MCP 第三方集成、插件；macOS/Windows/Linux；流式 Markdown 聊天界面。
 
 ### 1.2 Tachikoma 引擎能力 ↔ Alma 功能映射
 
-| Alma 功能            | Tachikoma 现有对应物                                                             | 差距                                                                                 |
-| -------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 多 Provider 一键切换 | `planner/llm-client.ts`（Anthropic/OpenAI/Mock，AI SDK v6）、4 个 worker backend | provider 在会话链路被硬编码为 `'openai'`（见 §5），无 Provider 注册表/按角色模型配置 |
-| 流式聊天             | `ConversationalRunner.handleMessage()` → `AsyncGenerator<StreamEvent>`           | 无 token 级流式（`generateText` 而非 `streamText`）                                  |
-| 持久记忆             | `memory/`（MemoryService 五种 provider）、`agent-identity/`、`/remember`         | CLI 链路未启用 memory；无浏览/管理 UI                                                |
-| 文件/Shell 工具      | `tools/core/`（9 个核心工具）+ `LocalSandbox` 白名单                             | 桌面端需要把审批/白名单做成 UI 权限门                                                |
-| 网络搜索             | `tools/core/web-search.ts`（Brave/SerpAPI/Tavily/DuckDuckGo）                    | 去留待定（CONTINUITY 结转项）                                                        |
-| 工作区关联           | `workDir` + `<workDir>/.tachikoma/` 会话树                                       | 即 Alma 的 workspace 概念，天然对齐                                                  |
-| MCP 集成             | `mcp/`（stdio+HTTP 双传输、Cursor/Claude Desktop 配置识别）                      | 无管理 UI                                                                            |
-| 自定义 Prompt/插件   | `skills/`（SKILL.md 三级渐进披露、轨迹学习）                                     | 无技能库 UI                                                                          |
-| 撤销/回滚            | Checkpoint（git 快照）+ `/undo` `/checkpoints`                                   | 无时间线 UI；`interrupt()` 是空壳                                                    |
+| Alma 功能            | Tachikoma 现有对应物                                                     | 差距                                               |
+| -------------------- | ------------------------------------------------------------------------ | -------------------------------------------------- |
+| 多 Provider 一键切换 | `chat/providers.ts`（pi provider catalog + 自定义 OpenAI-compatible）    | 会话内跨 provider 切换 UX 与 key 管理仍待桌面化    |
+| 流式聊天             | `ChatEngine.sendMessage()` → `AsyncGenerator<ChatEvent>`                 | 引擎已有 token/reasoning/tool 事件，桌面壳尚未接入 |
+| 持久记忆             | `memory/`（MemoryService 五种 provider）、`agent-identity/`、`/remember` | CLI 链路未启用 memory；无浏览/管理 UI              |
+| 文件/Shell 工具      | `tools/core/`（9 个核心工具）+ `LocalSandbox` 白名单                     | 桌面端需要把审批/白名单做成 UI 权限门              |
+| 网络搜索             | `tools/core/web-search.ts`（Brave/SerpAPI/Tavily/DuckDuckGo）            | 去留待定（CONTINUITY 结转项）                      |
+| 工作区关联           | `workDir` + `<workDir>/.tachikoma/` 会话树                               | 即 Alma 的 workspace 概念，天然对齐                |
+| MCP 集成             | `mcp/`（stdio+HTTP 双传输、Cursor/Claude Desktop 配置识别）              | 无管理 UI                                          |
+| 自定义 Prompt/插件   | `skills/`（SKILL.md 三级渐进披露、轨迹学习）                             | 无技能库 UI                                        |
+| 撤销/回滚            | Checkpoint（git 快照）+ `/undo` `/checkpoints`                           | 无时间线 UI；`interrupt()` 是空壳                  |
 
 结论：引擎侧能力几乎一一对应，缺的是「可嵌入的干净边界」与「桌面壳」。因此本方案的重心是：**先把引擎做成可嵌入的 Agent
 Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面应用**。
@@ -305,8 +306,7 @@ MCP 子进程）→ 清空 maps。`AgentEngine.dispose()`
 type RpcRequest = { id: string; method: string; params?: JsonObject };
 type RpcResponse = { id: string; result?: JsonValue; error?: { code: string; message: string } };
 type StreamFrame =
-  | { sub: string; sessionId: string; seq: number; event: StreamEvent }
-  | { sub: string; done: true };
+  { sub: string; sessionId: string; seq: number; event: StreamEvent } | { sub: string; done: true };
 ```
 
 **WS 方法**：`engine.hello`、`session.subscribe {sessionId, fromSeq}`、`session.sendMessage`（返回 sub
@@ -372,8 +372,9 @@ NDJSON 模式（同信封）作为可选传输保留给未来 Tauri 形态。
 
 ### 5.3 卫生级（E0 顺手修）
 
-- 根 `package.json` 误加空 npm 包 `"gateway": "^1.0.0"`（供应链隐患，无人使用）。
-- `packages/core/bin/verify_tools.ts` import 4 个已删除文件，无法运行。
+- ~~根 `package.json` 误加空 npm 包 `"gateway": "^1.0.0"`~~（2026-08-11 已删除）。
+- ~~`packages/core/bin/verify_tools.ts` import
+  4 个已删除文件，无法运行~~（2026-08-11 已删除死探针及同样失效的 `idea` CLI 门面）。
 - 两个 CLI 的事件 `switch` 无 `default:` 分支——加 no-op default 即是 StreamEvent
   v2 的全部 CLI 兼容故事。
 - `bun run build:core` 产物 `dist/` 实际缺失而 `packages/cli` 的 `main` 指向它。

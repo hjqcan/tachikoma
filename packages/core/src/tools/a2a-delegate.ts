@@ -7,7 +7,16 @@
  * @module tools/a2a-delegate
  */
 
+import { Role, TaskState } from '@a2a-js/sdk';
+import type { Part } from '@a2a-js/sdk';
+
 import type { Tool } from '../types';
+
+function textFromParts(parts: Part[], separator: string): string {
+  return parts
+    .flatMap((part) => (part.content?.$case === 'text' ? [part.content.value] : []))
+    .join(separator);
+}
 
 // ============================================================================
 // Tool Input/Output Types
@@ -73,24 +82,15 @@ export const a2aDelegateTool: Tool = {
   name: 'a2a_delegate',
   description:
     'Delegate a task to an external A2A-compatible AI agent (LangGraph, CrewAI, Google ADK, etc.). ' +
-    'Use this when the task would benefit from another agent\'s specialized capabilities.',
+    "Use this when the task would benefit from another agent's specialized capabilities.",
   inputSchema: a2aDelegateInputSchema,
 
-  async execute(
-    rawInput: unknown,
-    _context?: unknown
-  ): Promise<A2ADelegateOutput> {
+  async execute(rawInput: unknown, _context?: unknown): Promise<A2ADelegateOutput> {
     const input = rawInput as A2ADelegateInput;
-    const {
-      agentUrl,
-      taskDescription,
-      skillId,
-      timeout = 30000,
-    } = input;
+    const { agentUrl, taskDescription, skillId, timeout = 30000 } = input;
 
     try {
-      // Dynamic import to avoid requiring @a2a-js/sdk in core package
-      // The gateway package has the SDK installed; core uses it only when this tool runs
+      // Load the network client only when delegation is used.
       const { ClientFactory } = await import('@a2a-js/sdk/client');
 
       const factory = new ClientFactory();
@@ -110,12 +110,26 @@ export const a2aDelegateTool: Tool = {
       // Send message to agent
       const result = await client.sendMessage(
         {
+          tenant: '',
           message: {
-            kind: 'message',
             messageId: `tachikoma-${Date.now()}`,
-            role: 'user',
-            parts: [{ kind: 'text', text: taskDescription }],
+            contextId: '',
+            taskId: '',
+            role: Role.ROLE_USER,
+            parts: [
+              {
+                content: { $case: 'text', value: taskDescription },
+                metadata: undefined,
+                filename: '',
+                mediaType: 'text/plain',
+              },
+            ],
+            metadata: skillId ? { skillId } : undefined,
+            extensions: [],
+            referenceTaskIds: [],
           },
+          configuration: undefined,
+          metadata: undefined,
         },
         { signal: AbortSignal.timeout(timeout) }
       );
@@ -124,32 +138,21 @@ export const a2aDelegateTool: Tool = {
       let output = '';
       let success = true;
 
-      if ('kind' in result) {
-        if (result.kind === 'message') {
-          // Direct message response
-          output = result.parts
-            .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-            .map((p) => p.text)
-            .join('\n');
-        } else if (result.kind === 'task') {
-          // Task response
-          const task = result;
-          success = task.status.state === 'completed';
+      if ('messageId' in result) {
+        output = textFromParts(result.parts, '\n');
+      } else {
+        const task = result;
+        success = task.status?.state === TaskState.TASK_STATE_COMPLETED;
 
-          if (task.artifacts && task.artifacts.length > 0) {
-            output = task.artifacts
-              .flatMap((a) => a.parts)
-              .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-              .map((p) => p.text)
-              .join('\n\n');
-          } else if (task.status.message) {
-            output = task.status.message.parts
-              .filter((p): p is { kind: 'text'; text: string } => p.kind === 'text')
-              .map((p) => p.text)
-              .join('\n');
-          } else {
-            output = `Task ${task.status.state}`;
-          }
+        if (task.artifacts.length > 0) {
+          output = textFromParts(
+            task.artifacts.flatMap((artifact) => artifact.parts),
+            '\n\n'
+          );
+        } else if (task.status?.message) {
+          output = textFromParts(task.status.message.parts, '\n');
+        } else {
+          output = `Task ${task.status?.state ?? TaskState.TASK_STATE_UNSPECIFIED}`;
         }
       }
 

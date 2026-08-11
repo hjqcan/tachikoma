@@ -1,23 +1,25 @@
 # Tachikoma
 
-> 类 Claude Code 多智能体系统 (MAS) - Bun + TypeScript 实现
+> 以 pi-mono 为执行内核的编码助手 - Bun + TypeScript 实现
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
-[![Bun](https://img.shields.io/badge/Bun-1.0+-f9f1e1.svg)](https://bun.sh/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-blue.svg)](https://www.typescriptlang.org/)
+[![Bun](https://img.shields.io/badge/Bun-1.3.14-f9f1e1.svg)](https://bun.sh/)
 
 ## 🎯 项目简介
 
-**Tachikoma**
-是一个基于统筹者-工作者（Orchestrator-Worker）模式的多智能体编码系统。名称取自《攻壳机动队》中的思考战车 AI，象征具有自主思考能力的智能代理系统。
+**Tachikoma** 是一个对话优先的编码助手。默认 `chat` 与 `run` 共用
+`ChatEngine`，模型流式、工具调用闭环和 `read/bash/edit/write/grep/find`
+直接来自 pi-mono；旧 Orchestrator-Worker 系统仍可通过显式 `orchestrate`
+命令使用，但不再是默认执行路径。
 
 ### 核心特性
 
-- 🧠 **双系统架构**: System 2 (慢思考/规划) + System 1 (快执行/行动)
-- 🔧 **分层式行为空间**: 原子函数 → 沙盒工具 → 软件包/API
+- 💬 **对话优先**: ChatEngine 提供 token 级流式、多 Provider、会话恢复与中断
+- 🔧 **pi-mono 工具循环**: 直接使用 pi 的模型↔工具循环和标准编码工具，不维护同功能执行器
+- 🧠 **可选多智能体编排**: 旧 Orchestrator-Worker 由 `orchestrate` 显式进入
 - 📦 **MCP 集成**: 完整的 Model Context Protocol 支持（Client/Router/Discovery/代码生成）
 - 🗂️ **上下文工程**: 智能压缩、摘要、卸载、隔离、缓存五大策略
-- 💬 **多轮对话**: ConversationalRunner 支持意图分析与反馈循环
 - 🧩 **多智能体协作**: WorkerPool + Collaboration 模块实现 Agent 间通信
 - 🔒 **安全沙盒**: Docker/Firecracker 驱动的隔离执行环境
 - 📊 **可观测性**: OpenTelemetry 追踪 + Prometheus 指标
@@ -25,23 +27,13 @@
 
 ## 🏗️ 系统架构
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    Layer 5: AgentOps & Governance                   │
-│         (可观测性、评估、质量飞轮、持续改进)                           │
-├─────────────────────────────────────────────────────────────────────┤
-│                Layer 4: Context & Memory Management                  │
-│         (上下文工程、会话管理、长期记忆、Skills)                        │
-├─────────────────────────────────────────────────────────────────────┤
-│              Layer 3: Execution Core & Tools (System 1)              │
-│         (工作者智能体、代码沙盒、分层式行为空间、MCP)                    │
-├─────────────────────────────────────────────────────────────────────┤
-│             Layer 2: Orchestration & Planning (System 2)             │
-│         (统筹者智能体、任务分解、长时任务管理、A2A)                      │
-├─────────────────────────────────────────────────────────────────────┤
-│              Layer 1: Interaction & Security Gateway                 │
-│         (API网关、安全执行点、身份认证、集中式日志)                      │
-└─────────────────────────────────────────────────────────────────────┘
+```text
+chat ─┐
+      ├─> ChatEngine ─> pi-agent-core ─> pi-coding-agent tools
+run ──┘        │
+               └─> session transcript / GoodMemory（chat 可选）
+
+orchestrate ─> ConversationalRunner ─> Orchestrator ─> Worker backends（旧兼容面）
 ```
 
 ## 📚 文档
@@ -55,9 +47,9 @@
 
 ### 环境要求
 
-- [Bun](https://bun.sh/) >= 1.0
+- [Bun](https://bun.sh/) >= 1.3.14
 - Docker (用于沙盒环境，可选)
-- Node.js >= 20 (可选)
+- Node.js >= 22.19 (仅在不用 Bun 直接运行 pi 包时需要)
 
 ### 安装
 
@@ -71,7 +63,7 @@ bun install
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，设置 OPENROUTER_API_KEY 或 OPENAI_API_KEY
+# 编辑 .env 文件，设置 ANTHROPIC_API_KEY、OPENROUTER_API_KEY 或 OPENAI_API_KEY
 ```
 
 ### CLI 使用
@@ -82,19 +74,25 @@ bun run packages/core/bin/tachikoma.ts run \
   --task "帮我实现一个 TODO 应用" \
   --workdir ./my-project
 
+# 显式使用旧多智能体编排器
+bun run packages/core/bin/tachikoma.ts orchestrate \
+  --task "规划并实现一个 TODO 应用" \
+  --workdir ./my-project
+
 # SpecKit 初始化
 bun run packages/core/bin/tachikoma.ts speckit init --workdir ./my-project
 ```
 
 ### 环境变量
 
-| 变量名                | 描述                             | 必需 |
-| --------------------- | -------------------------------- | ---- |
-| `OPENROUTER_API_KEY`  | OpenRouter API Key               | 是\* |
-| `OPENAI_API_KEY`      | OpenAI API Key (备选)            | 是\* |
-| `OPENROUTER_BASE_URL` | API 端点 (默认: OpenRouter)      | 否   |
-| `OPENROUTER_MODEL`    | 模型名称 (默认: openai/gpt-4o)   | 否   |
-| `TACHIKOMA_LOG_LEVEL` | 日志级别 (debug/info/warn/error) | 否   |
+| 变量名                 | 描述                             | 必需 |
+| ---------------------- | -------------------------------- | ---- |
+| `ANTHROPIC_API_KEY`    | Anthropic API Key                | 是\* |
+| `OPENROUTER_API_KEY`   | OpenRouter API Key               | 是\* |
+| `OPENAI_API_KEY`       | OpenAI API Key                   | 是\* |
+| `OPENROUTER_BASE_URL`  | API 端点 (默认: OpenRouter)      | 否   |
+| `TACHIKOMA_CHAT_MODEL` | `run`/`chat` 使用的模型名称      | 否   |
+| `TACHIKOMA_LOG_LEVEL`  | 日志级别 (debug/info/warn/error) | 否   |
 
 > \*至少需要设置其中一个 API Key
 
@@ -139,7 +137,27 @@ tachikoma/
 
 ## 🧩 核心模块
 
-### Orchestrator（统筹者）
+### ChatEngine（默认运行时）
+
+`chat` 与 `run` 的唯一执行内核。它持久化完整 pi transcript，并直接启用 pi 的标准编码工具：
+
+```typescript
+import { ChatEngine, resolveChatModelConfig } from '@tachikoma/core';
+
+const engine = new ChatEngine({
+  dataDir: './.tachikoma/chats',
+  workDir: './my-project',
+  model: resolveChatModelConfig(),
+});
+const session = await engine.createSession();
+for await (const event of engine.sendMessage(session.sessionId, '创建一个 React 组件')) {
+  console.log(event.type, event);
+}
+```
+
+> `workDir` 是 pi 工具的 cwd 和相对路径基准，不是沙盒边界；审批/沙盒 hook 仍在后续安全门计划中。
+
+### Orchestrator（可选旧编排器）
 
 负责任务规划、分配和聚合的核心组件：
 
@@ -161,9 +179,9 @@ const result = await orchestrator.run({
 });
 ```
 
-### ConversationalRunner（对话运行时）
+### ConversationalRunner（旧编排门面）
 
-支持多轮对话的高层封装：
+仅由显式 `orchestrate`/评估链使用，不是默认 `run` 的底层：
 
 ```typescript
 import { ConversationalRunner } from '@tachikoma/core';
@@ -179,7 +197,10 @@ for await (const event of runner.handleMessage(session.sessionId, '创建一个 
 }
 ```
 
-### 工具系统（20+ 核心工具）
+### 旧编排工具系统（20+ 工具）
+
+下列自研工具属于 `orchestrate`/worker 兼容面。默认 `run` 使用 pi 的
+`read/bash/edit/write/grep/find`，不要在 ChatEngine 中复制这些执行器。
 
 | 类别     | 工具                                                                         |
 | -------- | ---------------------------------------------------------------------------- |

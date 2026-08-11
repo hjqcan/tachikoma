@@ -1,17 +1,17 @@
 import Redis from 'ioredis';
-import { v4 as uuidv4 } from 'uuid';
-import type { 
-  MemoryProvider, 
-  MemoryEntry, 
-  MemoryScope, 
-  MemoryRetrievalResult, 
+import { randomUUID } from 'node:crypto';
+import type {
+  MemoryProvider,
+  MemoryEntry,
+  MemoryScope,
+  MemoryRetrievalResult,
   EmbeddingService,
-  ContextMessageMinimal
+  ContextMessageMinimal,
 } from '../types';
 
 /**
  * Redis Memory Provider
- * 
+ *
  * Stores memories in Redis for distributed persistence.
  * Features:
  * - Distributed storage across multiple instances
@@ -19,7 +19,7 @@ import type {
  * - Vector similarity search via linear scan (suitable for < 10k entries)
  * - Optional TTL support for memory expiration
  * - Auto-connects on first operation (lazy loading)
- * 
+ *
  * Data structure:
  * - Key: `memory:{scope}:{id}` -> JSON MemoryEntry
  * - Set: `memory:ids:{scope}` -> set of IDs for fast scope listing
@@ -79,9 +79,9 @@ export class RedisMemoryProvider implements MemoryProvider {
   ];
 
   async save(entry: Omit<MemoryEntry, 'id' | 'createdAt'>): Promise<string> {
-    const id = uuidv4();
+    const id = randomUUID();
     const createdAt = Date.now();
-    
+
     let embedding = entry.embedding;
     if (!embedding) {
       embedding = await this.embeddingService.embed(entry.content);
@@ -109,19 +109,15 @@ export class RedisMemoryProvider implements MemoryProvider {
     return id;
   }
 
-  async retrieve(
-    query: string, 
-    topK = 5, 
-    scope?: MemoryScope
-  ): Promise<MemoryRetrievalResult> {
+  async retrieve(query: string, topK = 5, scope?: MemoryScope): Promise<MemoryRetrievalResult> {
     const startTime = Date.now();
-    
+
     const queryEmbedding = await this.embeddingService.embed(query);
     const candidates: { entry: MemoryEntry; score: number }[] = [];
 
     // Get all entries (or filtered by scope)
     const entries = await this.getAllEntries(scope);
-    
+
     for (const entry of entries) {
       if (entry.embedding) {
         const score = this.cosineSimilarity(queryEmbedding, entry.embedding);
@@ -135,7 +131,7 @@ export class RedisMemoryProvider implements MemoryProvider {
     const now = Date.now();
 
     // Take topK and build results
-    const results = candidates.slice(0, topK).map(item => ({
+    const results = candidates.slice(0, topK).map((item) => ({
       ...item.entry,
       relevanceScore: item.score,
       lastAccessedAt: now,
@@ -174,18 +170,13 @@ export class RedisMemoryProvider implements MemoryProvider {
     };
   }
 
-  async search(
-    context: ContextMessageMinimal[], 
-    topK = 5
-  ): Promise<MemoryRetrievalResult> {
+  async search(context: ContextMessageMinimal[], topK = 5): Promise<MemoryRetrievalResult> {
     if (context.length === 0) {
       return { memories: [], latencyMs: 0, fromCache: false };
     }
 
     // Filter to user and assistant messages
-    const relevantMessages = context.filter(
-      m => m.role === 'user' || m.role === 'assistant'
-    );
+    const relevantMessages = context.filter((m) => m.role === 'user' || m.role === 'assistant');
 
     if (relevantMessages.length === 0) {
       const lastMessage = context[context.length - 1];
@@ -198,11 +189,11 @@ export class RedisMemoryProvider implements MemoryProvider {
     // Combine last 3 relevant messages
     const queryParts = relevantMessages
       .slice(-3)
-      .map(m => m.content)
-      .filter(c => c.length > 0);
+      .map((m) => m.content)
+      .filter((c) => c.length > 0);
 
     let query = queryParts.join(' | ');
-    
+
     // Limit query length
     const MAX_QUERY_LENGTH = 2000;
     if (query.length > MAX_QUERY_LENGTH) {
@@ -222,11 +213,11 @@ export class RedisMemoryProvider implements MemoryProvider {
         break;
       }
     }
-    
+
     if (foundScope) {
       const key = this.getKey(foundScope, id);
       const scopeSetKey = this.getScopeSetKey(foundScope);
-      
+
       const pipeline = this.redis.pipeline();
       pipeline.del(key);
       pipeline.srem(scopeSetKey, id);
@@ -239,7 +230,7 @@ export class RedisMemoryProvider implements MemoryProvider {
       // Clear specific scope
       const scopeSetKey = this.getScopeSetKey(scope);
       const ids = await this.redis.smembers(scopeSetKey);
-      
+
       if (ids.length > 0) {
         const pipeline = this.redis.pipeline();
         for (const id of ids) {
@@ -277,20 +268,20 @@ export class RedisMemoryProvider implements MemoryProvider {
 
   private async getAllEntries(scope?: MemoryScope): Promise<MemoryEntry[]> {
     const entries: MemoryEntry[] = [];
-    
+
     if (scope) {
       // Get entries for specific scope using the set
       const scopeSetKey = this.getScopeSetKey(scope);
       const ids = await this.redis.smembers(scopeSetKey);
-      
+
       if (ids.length === 0) return entries;
-      
-      const keys = ids.map(id => this.getKey(scope, id));
+
+      const keys = ids.map((id) => this.getKey(scope, id));
       const values = await this.redis.mget(keys);
-      
+
       // Track stale IDs (TTL expired but still in set)
       const staleIds: string[] = [];
-      
+
       for (let i = 0; i < values.length; i++) {
         const value = values[i];
         const id = ids[i];
@@ -306,7 +297,7 @@ export class RedisMemoryProvider implements MemoryProvider {
           staleIds.push(id);
         }
       }
-      
+
       // Cleanup stale IDs from set (lazy cleanup)
       if (staleIds.length > 0) {
         await this.redis.srem(scopeSetKey, ...staleIds);
@@ -318,7 +309,7 @@ export class RedisMemoryProvider implements MemoryProvider {
         entries.push(...scopeEntries);
       }
     }
-    
+
     return entries;
   }
 

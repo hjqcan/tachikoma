@@ -123,16 +123,9 @@ export * from './planner';
 export * as sandbox from './sandbox';
 
 // 同时导出常用类型到顶层（便于使用）
-export type {
-  SandboxRuntime,
-  SandboxCreateOptions,
-} from './sandbox';
+export type { SandboxRuntime, SandboxCreateOptions } from './sandbox';
 
-export {
-  createSandboxConfig,
-  DEFAULT_SANDBOX_RESOURCES,
-  DEFAULT_SANDBOX_NETWORK,
-} from './sandbox';
+export { createSandboxConfig, DEFAULT_SANDBOX_RESOURCES, DEFAULT_SANDBOX_NETWORK } from './sandbox';
 
 // 注意：BaseSandbox 已在 abstracts 导出中包含
 // 但 sandbox 模块中的版本更完善，推荐使用 sandbox.BaseSandbox
@@ -255,9 +248,16 @@ export type {
   ChatProvider,
   ChatSessionState,
   ChatSessionSummary,
+  ChatTranscriptEntry,
 } from './chat';
 
-export { ChatEngine, ChatSessionStore, createChatModel, resolveChatModelConfig } from './chat';
+export {
+  ChatEngine,
+  ChatSessionStore,
+  createChatAgentRuntime,
+  getChatSessionMessages,
+  resolveChatModelConfig,
+} from './chat';
 
 // ============================================================================
 // 多轮对话模块
@@ -274,11 +274,7 @@ export type {
   Checkpoint,
 } from './conversation';
 
-export {
-  ConversationalRunner,
-  SessionStore,
-  ConversationPromptBuilder,
-} from './conversation';
+export { ConversationalRunner, SessionStore, ConversationPromptBuilder } from './conversation';
 
 // ============================================================================
 // MCP 模块

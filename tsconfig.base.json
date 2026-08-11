@@ -38,16 +38,15 @@
     "removeComments": false,
 
     // 路径映射（基础）
-    "baseUrl": ".",
     "paths": {
-      "@tachikoma/core": ["packages/core/src"],
-      "@tachikoma/core/*": ["packages/core/src/*"],
-      "@tachikoma/gateway": ["packages/gateway/src"],
-      "@tachikoma/gateway/*": ["packages/gateway/src/*"],
-      "@tachikoma/agentops": ["packages/agentops/src"],
-      "@tachikoma/agentops/*": ["packages/agentops/src/*"],
-      "@tachikoma/cli": ["packages/cli/src"],
-      "@tachikoma/cli/*": ["packages/cli/src/*"]
+      "@tachikoma/core": ["./packages/core/src"],
+      "@tachikoma/core/*": ["./packages/core/src/*"],
+      "@tachikoma/gateway": ["./packages/gateway/src"],
+      "@tachikoma/gateway/*": ["./packages/gateway/src/*"],
+      "@tachikoma/agentops": ["./packages/agentops/src"],
+      "@tachikoma/agentops/*": ["./packages/agentops/src/*"],
+      "@tachikoma/cli": ["./packages/cli/src"],
+      "@tachikoma/cli/*": ["./packages/cli/src/*"]
     },
 
     // Bun 和 Node 类型支持

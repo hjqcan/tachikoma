@@ -1,24 +1,24 @@
 import { Level } from 'level';
-import { v4 as uuidv4 } from 'uuid';
-import type { 
-  MemoryProvider, 
-  MemoryEntry, 
-  MemoryScope, 
-  MemoryRetrievalResult, 
+import { randomUUID } from 'node:crypto';
+import type {
+  MemoryProvider,
+  MemoryEntry,
+  MemoryScope,
+  MemoryRetrievalResult,
   EmbeddingService,
-  ContextMessageMinimal
+  ContextMessageMinimal,
 } from '../types';
 
 /**
  * LevelDB Memory Provider
- * 
+ *
  * Stores memories in a local LevelDB database for persistence.
  * Features:
  * - Persistent storage across restarts
  * - Scope-based key prefixing for efficient filtering
  * - Vector similarity search via linear scan (suitable for < 10k entries)
  * - Auto-opens on first operation (lazy loading)
- * 
+ *
  * Data structure:
  * - Key: `memory:{scope}:{id}`
  * - Value: MemoryEntry object (using Level's json encoding)
@@ -59,10 +59,10 @@ export class LevelDBMemoryProvider implements MemoryProvider {
 
   async save(entry: Omit<MemoryEntry, 'id' | 'createdAt'>): Promise<string> {
     await this.ensureOpen();
-    
-    const id = uuidv4();
+
+    const id = randomUUID();
     const createdAt = Date.now();
-    
+
     let embedding = entry.embedding;
     if (!embedding) {
       embedding = await this.embeddingService.embed(entry.content);
@@ -81,26 +81,22 @@ export class LevelDBMemoryProvider implements MemoryProvider {
     return id;
   }
 
-  async retrieve(
-    query: string, 
-    topK = 5, 
-    scope?: MemoryScope
-  ): Promise<MemoryRetrievalResult> {
+  async retrieve(query: string, topK = 5, scope?: MemoryScope): Promise<MemoryRetrievalResult> {
     await this.ensureOpen();
     const startTime = Date.now();
-    
+
     const queryEmbedding = await this.embeddingService.embed(query);
     const candidates: { entry: MemoryEntry; score: number }[] = [];
 
     // Iterate through all entries (or filtered by scope)
     const prefix = scope ? `memory:${scope}:` : 'memory:';
-    
+
     for await (const [key, entry] of this.db.iterator()) {
       if (!key.startsWith(prefix)) continue;
-      
+
       // Filter by scope if provided
       if (scope && entry.scope !== scope) continue;
-      
+
       if (entry.embedding) {
         const score = this.cosineSimilarity(queryEmbedding, entry.embedding);
         candidates.push({ entry, score });
@@ -113,7 +109,7 @@ export class LevelDBMemoryProvider implements MemoryProvider {
     const now = Date.now();
 
     // Take topK and build results
-    const results = candidates.slice(0, topK).map(item => ({
+    const results = candidates.slice(0, topK).map((item) => ({
       ...item.entry,
       relevanceScore: item.score,
       lastAccessedAt: now,
@@ -147,18 +143,13 @@ export class LevelDBMemoryProvider implements MemoryProvider {
     };
   }
 
-  async search(
-    context: ContextMessageMinimal[], 
-    topK = 5
-  ): Promise<MemoryRetrievalResult> {
+  async search(context: ContextMessageMinimal[], topK = 5): Promise<MemoryRetrievalResult> {
     if (context.length === 0) {
       return { memories: [], latencyMs: 0, fromCache: false };
     }
 
     // Filter to user and assistant messages
-    const relevantMessages = context.filter(
-      m => m.role === 'user' || m.role === 'assistant'
-    );
+    const relevantMessages = context.filter((m) => m.role === 'user' || m.role === 'assistant');
 
     if (relevantMessages.length === 0) {
       const lastMessage = context[context.length - 1];
@@ -171,11 +162,11 @@ export class LevelDBMemoryProvider implements MemoryProvider {
     // Combine last 3 relevant messages
     const queryParts = relevantMessages
       .slice(-3)
-      .map(m => m.content)
-      .filter(c => c.length > 0);
+      .map((m) => m.content)
+      .filter((c) => c.length > 0);
 
     let query = queryParts.join(' | ');
-    
+
     // Limit query length
     const MAX_QUERY_LENGTH = 2000;
     if (query.length > MAX_QUERY_LENGTH) {
@@ -187,11 +178,11 @@ export class LevelDBMemoryProvider implements MemoryProvider {
 
   async delete(id: string): Promise<void> {
     await this.ensureOpen();
-    
+
     // Need to find the entry first to get its scope
     for await (const [key, entry] of this.db.iterator()) {
       if (!key.startsWith('memory:')) continue;
-      
+
       if (entry.id === id) {
         await this.db.del(key);
         return;
@@ -201,7 +192,7 @@ export class LevelDBMemoryProvider implements MemoryProvider {
 
   async clear(scope?: MemoryScope): Promise<void> {
     await this.ensureOpen();
-    
+
     const prefix = scope ? `memory:${scope}:` : 'memory:';
     const keysToDelete: string[] = [];
 
@@ -221,7 +212,7 @@ export class LevelDBMemoryProvider implements MemoryProvider {
    */
   async count(scope?: MemoryScope): Promise<number> {
     await this.ensureOpen();
-    
+
     const prefix = scope ? `memory:${scope}:` : 'memory:';
     let count = 0;
 

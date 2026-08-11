@@ -13,11 +13,12 @@
 
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { AGENT_CARD_PATH } from '@a2a-js/sdk';
+import { A2A_PROTOCOL_VERSION, A2A_VERSION_HEADER, AGENT_CARD_PATH, AgentCard } from '@a2a-js/sdk';
 import {
   DefaultRequestHandler,
   InMemoryTaskStore,
   JsonRpcTransportHandler,
+  ServerCallContext,
 } from '@a2a-js/sdk/server';
 import type { AppEnv } from '../types';
 import { logger } from '../middleware/logger';
@@ -92,6 +93,9 @@ export function createA2ARoutes(config: A2ARouteConfig = {}): Hono<AppEnv> {
       agentCardConfig.customSkills = config.a2aConfig.customSkills.map((s) => ({
         ...s,
         examples: [],
+        inputModes: ['text/plain'],
+        outputModes: ['text/plain'],
+        securityRequirements: [],
       }));
     }
     const agentCard = createTachikomaAgentCard(agentCardConfig);
@@ -100,11 +104,7 @@ export function createA2ARoutes(config: A2ARouteConfig = {}): Hono<AppEnv> {
     const executor = new TachikomaAgentExecutor(config.executorConfig);
 
     // Create SDK Handler
-    cachedHandler = new DefaultRequestHandler(
-      agentCard,
-      new InMemoryTaskStore(),
-      executor
-    );
+    cachedHandler = new DefaultRequestHandler(agentCard, new InMemoryTaskStore(), executor);
 
     cachedTransport = new JsonRpcTransportHandler(cachedHandler);
 
@@ -128,7 +128,7 @@ export function createA2ARoutes(config: A2ARouteConfig = {}): Hono<AppEnv> {
     });
 
     // Use handler's getAgentCard for consistency
-    return handler.getAgentCard().then((card) => c.json(card));
+    return handler.getAgentCard().then((card) => c.json(AgentCard.toJSON(card)));
   });
 
   // =========================================================================
@@ -165,7 +165,12 @@ export function createA2ARoutes(config: A2ARouteConfig = {}): Hono<AppEnv> {
     });
 
     try {
-      const result = await transport.handle(body);
+      const result = await transport.handle(
+        body as Record<string, unknown>,
+        new ServerCallContext({
+          requestedVersion: c.req.header(A2A_VERSION_HEADER) ?? A2A_PROTOCOL_VERSION,
+        })
+      );
 
       // Check if result is a generator (streaming)
       if (typeof result === 'object' && Symbol.asyncIterator in result) {
