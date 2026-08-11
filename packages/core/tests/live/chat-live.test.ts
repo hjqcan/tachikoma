@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { copyFile, mkdtemp, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,7 +48,7 @@ describe.skipIf(!liveEnabled)('live chat', () => {
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 
   it('streams reasoning deltas when a thinking level is set', async () => {
     const dataDir = await liveDataDir('tachikoma-live-thinking-');
@@ -72,7 +72,35 @@ describe.skipIf(!liveEnabled)('live chat', () => {
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
+
+  it('uses a read-only tool against a real model when workDir is set', async () => {
+    const dataDir = await liveDataDir('tachikoma-live-tools-');
+    const workDir = await mkdtemp(join(tmpdir(), 'tachikoma-live-workspace-'));
+    await writeFile(join(workDir, 'hello.txt'), '标记：TACHIKOMA_LIVE_TOOL_7734\n');
+    try {
+      const engine = new ChatEngine({ dataDir, model: liveModel(), memory: false, workDir });
+      const session = await engine.createSession();
+      const events: ChatEvent[] = [];
+      for await (const event of session.send(
+        '请用 read 工具读取当前工作目录下 hello.txt 的内容，并把其中的标记原样告诉我。'
+      )) {
+        events.push(event);
+      }
+
+      expect(events.some((event) => event.type === 'tool_call')).toBeTrue();
+      expect(events.some((event) => event.type === 'tool_result' && !event.isError)).toBeTrue();
+      const complete = events.at(-1);
+      expect(complete).toMatchObject({ type: 'message_complete', status: 'success' });
+      if (complete?.type === 'message_complete') {
+        expect(complete.content).toContain('TACHIKOMA_LIVE_TOOL_7734');
+      }
+      await session.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it('interrupts a real stream with one interrupted terminal event', async () => {
     const dataDir = await liveDataDir('tachikoma-live-abort-');
@@ -92,5 +120,5 @@ describe.skipIf(!liveEnabled)('live chat', () => {
     } finally {
       await rm(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 120_000);
 });

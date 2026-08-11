@@ -9,7 +9,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import type { InlineExtension, SessionInfo } from '@earendil-works/pi-coding-agent';
 import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
-import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -18,6 +18,7 @@ import type { ChatMemoryBinding } from './chat-session';
 import { createChatMemoryRuntime } from './memory';
 import type { ChatMemoryRuntime } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
+import { createWorkspaceGuardExtension, WORKSPACE_TOOLS } from './workspace-guard';
 import { buildChatSystemPrompt } from './system-prompt';
 import type {
   ChatEngineConfig,
@@ -74,6 +75,8 @@ export class ChatEngine {
   private readonly memoryEnabled: boolean;
   private readonly configuredModel: ChatModelRef | undefined;
   private readonly configuredThinkingLevel: ChatThinkingLevel | undefined;
+  private readonly workDir: string | undefined;
+  private workspaceRootPromise: Promise<string> | undefined;
   private readonly systemPrompt: string;
   private readonly injectedMemoryKit: GoodMemoryRuntimeKit | undefined;
   private readonly modelRuntimePromise: Promise<ModelRuntime>;
@@ -90,6 +93,7 @@ export class ChatEngine {
     this.agentDir = getAgentDir();
     this.configuredModel = config.model;
     this.configuredThinkingLevel = config.thinkingLevel;
+    this.workDir = config.workDir ? resolve(config.workDir) : undefined;
     this.systemPrompt = config.systemPrompt ?? buildChatSystemPrompt();
     this.memoryEnabled = config.memory !== false;
     this.memoryUserId =
@@ -253,6 +257,8 @@ export class ChatEngine {
       throw new Error(`Unknown model: ${requestedModel.provider}/${requestedModel.model}`);
     }
 
+    const workspaceRoot = await this.resolveWorkspaceRoot();
+    const allowedTools = workspaceRoot ? WORKSPACE_TOOLS : [];
     const promptMemoryContext: PromptMemoryContext = { value: '', abortRequested: false };
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: true },
@@ -286,8 +292,11 @@ export class ChatEngine {
         });
       },
     };
+    const effectiveSystemPrompt = workspaceRoot
+      ? `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.`
+      : this.systemPrompt;
     const resourceLoader = new DefaultResourceLoader({
-      cwd: this.dataDir,
+      cwd: workspaceRoot ?? this.dataDir,
       agentDir: this.agentDir,
       settingsManager,
       noExtensions: true,
@@ -295,20 +304,23 @@ export class ChatEngine {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      systemPrompt: this.systemPrompt,
-      extensionFactories: [memoryExtension],
+      systemPrompt: effectiveSystemPrompt,
+      extensionFactories: [
+        memoryExtension,
+        ...(workspaceRoot ? [createWorkspaceGuardExtension(workspaceRoot)] : []),
+      ],
     });
     await resourceLoader.reload();
 
     const effectiveThinkingLevel = thinkingLevel ?? this.configuredThinkingLevel;
     const result = await createAgentSession({
-      cwd: this.dataDir,
+      cwd: workspaceRoot ?? this.dataDir,
       agentDir: this.agentDir,
       modelRuntime,
       sessionManager,
       settingsManager,
       resourceLoader,
-      noTools: 'all',
+      ...(workspaceRoot ? { tools: [...WORKSPACE_TOOLS] } : { noTools: 'all' as const }),
       ...(model ? { model } : {}),
       ...(effectiveThinkingLevel ? { thinkingLevel: effectiveThinkingLevel } : {}),
     });
@@ -316,9 +328,14 @@ export class ChatEngine {
       result.session.dispose();
       throw new Error('No chat model is available. Configure a pi credential and model.');
     }
-    if (result.session.getActiveToolNames().length !== 0) {
+    // 激活工具集必须与允许集完全一致：零工具默认（第一圈保证）或只读四件套（第二圈）。
+    const activeTools = [...result.session.getActiveToolNames()].sort();
+    const expectedTools = [...allowedTools].sort();
+    if (activeTools.join(',') !== expectedTools.join(',')) {
       result.session.dispose();
-      throw new Error('Chat-only sessions must start with zero active tools.');
+      throw new Error(
+        `Active tools [${activeTools.join(', ')}] do not match the allowed set [${expectedTools.join(', ')}].`
+      );
     }
     if (title) {
       result.session.setSessionName(title);
@@ -330,6 +347,7 @@ export class ChatEngine {
       modelRuntime,
       memory,
       promptMemoryContext,
+      allowedTools,
       onClose: (sessionId) => this.openSessions.delete(sessionId),
     });
     this.openSessions.set(session.id, session);
@@ -385,6 +403,17 @@ export class ChatEngine {
       kit: this.memoryRuntime.kit,
       scope,
     };
+  }
+
+  private async resolveWorkspaceRoot(): Promise<string | undefined> {
+    if (!this.workDir) {
+      return undefined;
+    }
+    this.workspaceRootPromise ??= realpath(this.workDir).catch((error: unknown) => {
+      this.workspaceRootPromise = undefined;
+      throw new Error(`workDir is not usable: ${this.workDir} (${safeErrorMessage(error)})`);
+    });
+    return this.workspaceRootPromise;
   }
 
   private async findSessionInfo(sessionId: string): Promise<SessionInfo | undefined> {

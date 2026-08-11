@@ -55,6 +55,8 @@ export interface ChatSessionDependencies {
   modelRuntime: ModelRuntime;
   memory: ChatMemoryBinding;
   promptMemoryContext: PromptMemoryContext;
+  /** 本会话允许的工具名集合；空集 = 零工具（第一圈默认） */
+  allowedTools: readonly string[];
   onClose(sessionId: string): void;
 }
 
@@ -106,6 +108,23 @@ function terminalStatus(message: AssistantMessage): ChatMessageCompleteEvent['st
   return 'failed';
 }
 
+function toolOutputText(result: unknown): string {
+  if (typeof result === 'string') return result;
+  const content = (result as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return result == null ? '' : JSON.stringify(result);
+  return content
+    .map((part) => {
+      if (part && typeof part === 'object' && 'text' in part) {
+        return String((part as { text: unknown }).text);
+      }
+      if (part && typeof part === 'object' && 'mimeType' in part) {
+        return `[image:${String((part as { mimeType: unknown }).mimeType)}]`;
+      }
+      return String(part);
+    })
+    .join('\n');
+}
+
 export class ChatSession {
   private readonly agentSession: AgentSession;
   private readonly modelRuntime: ModelRuntime;
@@ -120,8 +139,12 @@ export class ChatSession {
 
   /** @internal */
   constructor(dependencies: ChatSessionDependencies) {
-    if (dependencies.agentSession.getActiveToolNames().length !== 0) {
-      throw new Error('Chat-only sessions require zero active tools.');
+    const allowed = new Set(dependencies.allowedTools);
+    const unexpected = dependencies.agentSession
+      .getActiveToolNames()
+      .filter((name) => !allowed.has(name));
+    if (unexpected.length > 0) {
+      throw new Error(`Session has tools outside the allowed set: ${unexpected.join(', ')}`);
     }
     this.agentSession = dependencies.agentSession;
     this.modelRuntime = dependencies.modelRuntime;
@@ -398,6 +421,31 @@ export class ChatSession {
       }
     } else if (event.type === 'message_end' && event.message.role === 'assistant') {
       return event.message;
+    } else if (event.type === 'tool_execution_start') {
+      emit({
+        ...base,
+        type: 'tool_call',
+        callId: event.toolCallId,
+        tool: event.toolName,
+        input: event.args,
+      });
+    } else if (event.type === 'tool_execution_update') {
+      emit({
+        ...base,
+        type: 'tool_update',
+        callId: event.toolCallId,
+        tool: event.toolName,
+        output: toolOutputText(event.partialResult),
+      });
+    } else if (event.type === 'tool_execution_end') {
+      emit({
+        ...base,
+        type: 'tool_result',
+        callId: event.toolCallId,
+        tool: event.toolName,
+        output: toolOutputText(event.result),
+        isError: event.isError,
+      });
     } else if (event.type === 'auto_retry_start') {
       emit({
         ...base,

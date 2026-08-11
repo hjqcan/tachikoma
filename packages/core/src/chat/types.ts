@@ -19,6 +19,12 @@ export interface ChatEngineConfig {
   thinkingLevel?: ChatThinkingLevel;
   systemPrompt?: string;
   memory?: false | ChatMemoryConfig;
+  /**
+   * 工作区根目录。设置后启用 pi 只读工具集（read/grep/find/ls），
+   * 路径边界由 workspace-guard 强制（canonical root + symlink 检查）。
+   * 缺省不设 —— 默认产品保持零工具（第一圈保证不被削弱）。
+   */
+  workDir?: string;
 }
 
 export interface ChatSessionInit {
@@ -123,6 +129,33 @@ export interface ChatMessageCompleteEvent extends BaseChatEvent {
   error?: string;
 }
 
+/** 工具开始执行（第二圈增量；仅在 workDir 启用工具时出现） */
+export interface ChatToolCallEvent extends BaseChatEvent {
+  type: 'tool_call';
+  callId: string;
+  tool: string;
+  input: unknown;
+}
+
+export interface ChatToolUpdateEvent extends BaseChatEvent {
+  type: 'tool_update';
+  callId: string;
+  tool: string;
+  output: string;
+}
+
+export interface ChatToolResultEvent extends BaseChatEvent {
+  type: 'tool_result';
+  callId: string;
+  tool: string;
+  output: string;
+  isError: boolean;
+}
+
+/**
+ * 契约演进规则：只做增量扩展（新事件类型），不改既有事件语义；
+ * 消费者必须容忍未知事件类型（跳过而非报错），否则圈层推进即破坏性变更。
+ */
 export type ChatEvent =
   | ChatMessageStartEvent
   | ChatMessageDeltaEvent
@@ -130,4 +163,7 @@ export type ChatEvent =
   | ChatRetryEvent
   | ChatCompactionEvent
   | ChatMemoryStatusEvent
+  | ChatToolCallEvent
+  | ChatToolUpdateEvent
+  | ChatToolResultEvent
   | ChatMessageCompleteEvent;

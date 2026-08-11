@@ -82,6 +82,13 @@ Select it with `tachikoma --provider my-gateway --model my-model`, or `/model my
 inside the REPL. Set `"reasoning": true` on models that support thinking so `--thinking` and
 `/thinking` levels take effect.
 
+## Read-only workspace tools (turn 2)
+
+Passing `workDir` to `ChatEngine` enables pi's read-only tool set (`read`, `grep`, `find`, `ls`)
+scoped to that directory. A guard extension blocks any path that resolves — or symlinks — outside
+the canonical workspace root. Without `workDir` the product stays tool-free: the turn-1 default is
+unchanged. Write/execute tools and approvals are later turn-2 increments.
+
 ## Library
 
 ```ts
