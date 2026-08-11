@@ -382,24 +382,12 @@ describe('SessionFileManager', () => {
 
     it('应写入和读取运行时文件', async () => {
       const runtime: Omit<RuntimeFile, 'sessionId' | 'updatedAt'> = {
-        kind: 'tachikoma',
+        kind: 'taskmaster',
         taskId: 'task-001',
         createdAt: Date.now(),
         version: 1,
-        plannerOutput: {
-          taskId: 'task-001',
-          subtasks: [],
-          delegation: {
-            mode: 'communication',
-            workerCount: 1,
-            timeout: 60000,
-            retryPolicy: DEFAULT_RETRY_POLICY,
-          },
-          executionPlan: {
-            steps: [],
-            isParallel: false,
-          },
-        },
+        tasksJson: { path: '.taskmaster/tasks/tasks.json', tag: TEST_SESSION_ID },
+        executionPlan: { steps: [], isParallel: false },
       };
 
       await manager.writeRuntime(runtime);
@@ -984,21 +972,12 @@ describe('SessionFileManager', () => {
     describe('readOrchestratorRuntime', () => {
       it('应读取 Orchestrator 运行时快照', async () => {
         await manager.writeRuntime({
-          kind: 'tachikoma',
+          kind: 'taskmaster',
           taskId: 'task-001',
           createdAt: Date.now(),
           version: 1,
-          plannerOutput: {
-            taskId: 'task-001',
-            subtasks: [],
-            delegation: {
-              mode: 'communication',
-              workerCount: 1,
-              timeout: 60000,
-              retryPolicy: DEFAULT_RETRY_POLICY,
-            },
-            executionPlan: { steps: [], isParallel: false },
-          },
+          tasksJson: { path: '.taskmaster/tasks/tasks.json', tag: TEST_SESSION_ID },
+          executionPlan: { steps: [], isParallel: false },
         });
 
         const runtime = await manager.readOrchestratorRuntime();

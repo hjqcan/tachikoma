@@ -5,7 +5,7 @@
  */
 
 import type { Tracer, Span, SpanOptions, TracerConfig, SpanStatus, SpanEvent, SpanSnapshot } from './types';
-import { AgentOpsClient, AgentOpsConfig } from './agentops-client';
+import { AgentOpsClient, type AgentOpsConfig } from './agentops-client';
 
 // Generate ID helpers (same as tracer.ts)
 function generateId(): string {
@@ -58,7 +58,7 @@ class RemoteSpan implements Span {
     this.events.push({
       name,
       timestamp: Date.now(),
-      attributes,
+      ...(attributes && { attributes }),
     });
   }
 

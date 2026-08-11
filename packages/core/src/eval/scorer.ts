@@ -168,7 +168,7 @@ async function evaluateWithLLM(
   const client = createLLMClient({
     provider: config.provider || 'openai',
     apiKey: config.apiKey,
-    baseUrl: config.baseUrl,
+    ...(config.baseUrl && { baseUrl: config.baseUrl }),
     model: config.model || 'gpt-4o',
     maxTokens: 1024,
   });
@@ -220,7 +220,7 @@ Do not include markdown formatting (like \`\`\`json). Just the raw JSON.
       score: typeof result.score === 'number' ? Math.max(0, Math.min(1, result.score)) : (result.passed ? 1 : 0),
       reasoning: String(result.reasoning || ''),
     };
-  } catch (e) {
+  } catch {
     return {
       passed: false,
       score: 0,

@@ -7,6 +7,23 @@
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { DefaultWorkerPool } from '../src/orchestrator/worker-pool';
 import type { WorkerInfo } from '../src/orchestrator/types';
+import type { BaseAgent } from '../src/abstracts/base-agent';
+
+/**
+ * 构造最小化的 mock Agent。
+ * 本文件的测试只覆盖 WorkerPool 的协作路径（能力筛选/优先级排序），
+ * 不涉及 BaseAgent 内部实现（state/hooks/abortController 等），
+ * 因此通过 unknown 断言为 BaseAgent。
+ */
+function createMockAgent(): BaseAgent {
+  return {
+    id: 'w1',
+    type: 'worker' as const,
+    config: { provider: 'mock', model: 'mock', maxTokens: 0 },
+    run: async () => ({ taskId: '', status: 'success' as const, output: {}, artifacts: [], metrics: { startTime: 0, endTime: 0, duration: 0, tokensUsed: 0, toolCallCount: 0, retryCount: 0 }, trace: { traceId: '', spanId: '', operation: '', attributes: {}, events: [], duration: 0 } }),
+    stop: async () => {},
+  } as unknown as BaseAgent;
+}
 
 describe('WorkerPool.getWorkersByCapability', () => {
   let pool: DefaultWorkerPool;
@@ -32,13 +49,7 @@ describe('WorkerPool.getWorkersByCapability', () => {
 
   test('should return all idle workers when no capability filter', () => {
     // 注册空闲 Worker
-    const mockAgent = {
-      id: 'w1',
-      type: 'worker' as const,
-      config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-      run: async () => ({ taskId: '', status: 'success' as const, output: {}, artifacts: [], metrics: { startTime: 0, endTime: 0, duration: 0, tokensUsed: 0, toolCallCount: 0, retryCount: 0 }, trace: { traceId: '', spanId: '', operation: '', attributes: {}, events: [], duration: 0 } }),
-      stop: async () => {},
-    };
+    const mockAgent = createMockAgent();
 
     pool.register({ id: 'worker-1', status: 'idle', capabilities: ['code'], agent: mockAgent });
     pool.register({ id: 'worker-2', status: 'idle', capabilities: ['review'], priority: 8, agent: mockAgent });
@@ -49,13 +60,7 @@ describe('WorkerPool.getWorkersByCapability', () => {
   });
 
   test('should filter by capability', () => {
-    const mockAgent = {
-      id: 'w1',
-      type: 'worker' as const,
-      config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-      run: async () => ({ taskId: '', status: 'success' as const, output: {}, artifacts: [], metrics: { startTime: 0, endTime: 0, duration: 0, tokensUsed: 0, toolCallCount: 0, retryCount: 0 }, trace: { traceId: '', spanId: '', operation: '', attributes: {}, events: [], duration: 0 } }),
-      stop: async () => {},
-    };
+    const mockAgent = createMockAgent();
 
     pool.register({ id: 'worker-1', status: 'idle', capabilities: ['code', 'review'], agent: mockAgent });
     pool.register({ id: 'worker-2', status: 'idle', capabilities: ['test'], agent: mockAgent });
@@ -66,13 +71,7 @@ describe('WorkerPool.getWorkersByCapability', () => {
   });
 
   test('should sort by priority descending', () => {
-    const mockAgent = {
-      id: 'w1',
-      type: 'worker' as const,
-      config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-      run: async () => ({ taskId: '', status: 'success' as const, output: {}, artifacts: [], metrics: { startTime: 0, endTime: 0, duration: 0, tokensUsed: 0, toolCallCount: 0, retryCount: 0 }, trace: { traceId: '', spanId: '', operation: '', attributes: {}, events: [], duration: 0 } }),
-      stop: async () => {},
-    };
+    const mockAgent = createMockAgent();
 
     pool.register({ id: 'worker-low', status: 'idle', capabilities: ['code'], priority: 3, agent: mockAgent });
     pool.register({ id: 'worker-high', status: 'idle', capabilities: ['code'], priority: 9, agent: mockAgent });
@@ -86,13 +85,7 @@ describe('WorkerPool.getWorkersByCapability', () => {
   });
 
   test('should use default priority 5 when not specified', () => {
-    const mockAgent = {
-      id: 'w1',
-      type: 'worker' as const,
-      config: { provider: 'mock', model: 'mock', maxTokens: 0 },
-      run: async () => ({ taskId: '', status: 'success' as const, output: {}, artifacts: [], metrics: { startTime: 0, endTime: 0, duration: 0, tokensUsed: 0, toolCallCount: 0, retryCount: 0 }, trace: { traceId: '', spanId: '', operation: '', attributes: {}, events: [], duration: 0 } }),
-      stop: async () => {},
-    };
+    const mockAgent = createMockAgent();
 
     pool.register({ id: 'worker-1', status: 'idle', capabilities: ['code'], priority: 3, agent: mockAgent });
     pool.register({ id: 'worker-2', status: 'idle', capabilities: ['code'], agent: mockAgent }); // 无 priority，默认 5

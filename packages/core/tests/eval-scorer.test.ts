@@ -1,5 +1,5 @@
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi } from 'bun:test';
 import { scoreEvalCase } from '../src/eval/scorer';
 import type { TrajectoryStep } from '../src/eval/types';
 

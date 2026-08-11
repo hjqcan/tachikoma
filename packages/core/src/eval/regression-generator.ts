@@ -15,7 +15,7 @@ export class RegressionGenerator {
     this.client = createLLMClient({
       provider: config.provider || 'openai',
       apiKey: config.apiKey,
-      baseUrl: config.baseUrl,
+      ...(config.baseUrl && { baseUrl: config.baseUrl }),
       model: config.model || 'gpt-4o',
       maxTokens: 4096,
     });

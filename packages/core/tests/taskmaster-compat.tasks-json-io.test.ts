@@ -310,7 +310,7 @@ describe('taskmaster-compat/tasks-json-io', () => {
           description: 'S2 desc',
           status: 'pending',
           priority: 'medium',
-          dependencies: [1], // 下游原本依赖 1.1
+          dependencies: ['1'], // 下游原本依赖 1.1（同级引用；类型为 string[]）
           details: '',
           testStrategy: '',
         },

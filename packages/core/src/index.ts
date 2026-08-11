@@ -242,6 +242,24 @@ export {
 } from './tools';
 
 // ============================================================================
+// Chat 模块（螺旋第一圈：直连流式对话）
+// ============================================================================
+
+export * as chat from './chat';
+
+export type {
+  ChatEngineConfig,
+  ChatEvent,
+  ChatMessage,
+  ChatModelConfig,
+  ChatProvider,
+  ChatSessionState,
+  ChatSessionSummary,
+} from './chat';
+
+export { ChatEngine, ChatSessionStore, createChatModel, resolveChatModelConfig } from './chat';
+
+// ============================================================================
 // 多轮对话模块
 // ============================================================================
 

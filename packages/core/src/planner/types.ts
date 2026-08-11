@@ -105,8 +105,8 @@ export type LLMToolChoice =
  * LLM 请求参数
  */
 export interface LLMRequest {
-  /** 系统提示 */
-  systemPrompt: string;
+  /** 系统提示（可选；缺省时不发送 system 消息） */
+  systemPrompt?: string | undefined;
   /** 用户消息 */
   messages: LLMMessage[];
   /** 最大 Token 数 */

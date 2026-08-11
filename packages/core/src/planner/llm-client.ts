@@ -289,7 +289,7 @@ export class AnthropicLLMClient extends BaseLLMClient {
 
     const buildRequest = (provider: ReturnType<typeof createAnthropic>) => ({
       model: provider(this.config.model),
-        system: systemPrompt,
+        ...(systemPrompt !== undefined && { system: systemPrompt }),
         messages: filteredMessages.map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
@@ -456,7 +456,7 @@ export class OpenAILLMClient extends BaseLLMClient {
         // Fix: Use .chat() to force using OpenAIChatLanguageModel (/chat/completions endpoint)
         // instead of the default which might use /responses endpoint for OpenRouter
         model: this.openaiProvider.chat(this.config.model),
-        system: systemPrompt,
+        ...(systemPrompt !== undefined && { system: systemPrompt }),
         messages: filteredMessages.map((m) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,

@@ -156,6 +156,7 @@ describe('prompt/cache LocalPromptCache', () => {
   test('getMetrics returns correct statistics', () => {
     const validSummary = {
       userGoal: '',
+      constraints: [],
       completedSteps: [],
       keyFindings: [],
       modifiedFiles: [],
@@ -179,6 +180,7 @@ describe('prompt/cache LocalPromptCache', () => {
   test('clear resets all caches and metrics', () => {
     const validSummary = {
       userGoal: '',
+      constraints: [],
       completedSteps: [],
       keyFindings: [],
       modifiedFiles: [],

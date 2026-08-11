@@ -64,7 +64,7 @@ function createMockContext(agentId?: string): RememberCommandContext {
       waitingForUser: false,
     },
     workDir: tempDir,
-    agentId,
+    ...(agentId !== undefined && { agentId }),
     evolverConfig: { agentsDir },
     t: (strings) => strings.en, // 默认英文
   };

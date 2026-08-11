@@ -19,7 +19,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,json,md}\"",
     "typecheck": "tsc -b && tsc -p packages/core/tsconfig.test.json && tsc -p packages/gateway/tsconfig.test.json",
-    "test": "bun test",
+    "test": "bun test packages",
     "test:coverage": "bun test --coverage",
     "clean": "rm -rf packages/*/dist node_modules/.cache"
   },

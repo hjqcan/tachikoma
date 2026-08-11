@@ -1,5 +1,5 @@
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'bun:test';
 import { RegressionGenerator } from '../src/eval/regression-generator';
 import { FailureCollector } from '../src/eval/failure-collector';
 import { readFile, writeFile, unlink } from 'node:fs/promises';

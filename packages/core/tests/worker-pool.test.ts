@@ -23,6 +23,9 @@ import type { WorkerInfo, SubTask, WorkerPoolConfig } from '../src/orchestrator'
 
 /**
  * 创建测试用 Worker
+ *
+ * 这些测试只覆盖池的注册/选择/并发逻辑，不会调用 agent 实例方法，
+ * 因此 agent 用最小 stub 满足 WorkerInfo 类型即可。
  */
 function createTestWorker(
   id: string,
@@ -31,6 +34,7 @@ function createTestWorker(
 ): WorkerInfo {
   return {
     id,
+    agent: { id } as unknown as WorkerInfo['agent'],
     status,
     capabilities,
     lastHeartbeat: Date.now(),

@@ -318,45 +318,45 @@ describe('key-decision', () => {
       const { shellRunTool } = await import('../src/tools/core/shell-run');
       
       // Safe commands should return false (no mutation)
-      expect(shellRunTool.isMutating?.({ command: 'ls -la' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'cat package.json' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'git status' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'git log --oneline' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'npm list' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'node --version' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'pwd' }, {} as never)).toBe(false);
-      expect(shellRunTool.isMutating?.({ command: 'echo hello' }, {} as never)).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'ls -la' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'cat package.json' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'git status' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'git log --oneline' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'npm list' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'node --version' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'pwd' })).toBe(false);
+      expect(shellRunTool.isMutating?.({ command: 'echo hello' })).toBe(false);
     });
 
     test('should detect mutating commands', async () => {
       const { shellRunTool } = await import('../src/tools/core/shell-run');
       
       // Mutating commands should return true
-      expect(shellRunTool.isMutating?.({ command: 'rm file.txt' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'npm install' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'git commit -m "test"' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'mv a.txt b.txt' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'touch newfile.txt' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'rm file.txt' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'npm install' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'git commit -m "test"' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'mv a.txt b.txt' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'touch newfile.txt' })).toBe(true);
     });
 
     test('should handle empty or missing command', async () => {
       const { shellRunTool } = await import('../src/tools/core/shell-run');
       
       // No command should return true (conservative)
-      expect(shellRunTool.isMutating?.({}, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: '' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({})).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: '' })).toBe(true);
     });
 
     test('should detect dangerous operators (bypass prevention)', async () => {
       const { shellRunTool } = await import('../src/tools/core/shell-run');
       
       // Commands with dangerous operators should return true even if starting with safe command
-      expect(shellRunTool.isMutating?.({ command: 'cat file.txt > output.txt' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'ls -la | xargs rm' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'git status && rm -rf .' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'echo hello; rm file.txt' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'cat $(rm important.txt)' }, {} as never)).toBe(true);
-      expect(shellRunTool.isMutating?.({ command: 'ls `rm -rf /`' }, {} as never)).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'cat file.txt > output.txt' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'ls -la | xargs rm' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'git status && rm -rf .' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'echo hello; rm file.txt' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'cat $(rm important.txt)' })).toBe(true);
+      expect(shellRunTool.isMutating?.({ command: 'ls `rm -rf /`' })).toBe(true);
     });
   });
 

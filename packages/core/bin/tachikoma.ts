@@ -9,11 +9,21 @@
  */
 
 import { parseArgs } from 'util';
-import { resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { ConversationalRunner } from '../src/conversation/conversational-runner';
 import { createSpecKitFileManager } from '../src/speckit';
 import { readTasksJson, moveTasksJsonTag } from '../src/taskmaster-compat';
+import {
+  ChatEngine,
+  ChatProviderError,
+  createGoodMemoryChatMemory,
+  resolveChatModelConfig,
+  type ChatMemory,
+  type GoodMemoryLike,
+} from '../src/chat';
 
 // =============================================================================
 // 类型定义
@@ -108,8 +118,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
   console.log('');
 
   // 检查环境变量
-  const resolvedApiKey =
-    apiKey || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
+  const resolvedApiKey = apiKey || process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY;
 
   if (!resolvedApiKey) {
     logError('缺少 API Key：请使用 --api-key 或设置 OPENROUTER_API_KEY/OPENAI_API_KEY');
@@ -122,7 +131,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
   try {
     // IMPORTANT: Resolve workdir to absolute path to prevent execution in wrong directory
     const absoluteWorkDir = resolve(workdir);
-    
+
     const runner = new ConversationalRunner({
       sessionDir: resolve(absoluteWorkDir, '.tachikoma', 'conversations'),
       workDir: absoluteWorkDir,
@@ -181,13 +190,13 @@ ${colors.bold}${colors.cyan}╔════════════════�
     // 由于后端在 waitForApproval 时会阻塞 generator，导致事件无法冒泡到 runner。
     // 我们需要通过 SessionFileManager 监控 pending_approval 文件，并通过侧通过道交互。
     // =========================================================================
-    
+
     // 动态导入以避免循环依赖问题
     const { SessionFileManager } = await import('../src/orchestrator/session/session-file-manager');
     const sessionManager = new SessionFileManager(session.sessionId, {
       rootDir: resolve(workdir, '.tachikoma', 'conversations'),
     });
-    
+
     // 追踪已处理的请求，避免重复弹窗
     const handledRequests = new Set<string>();
 
@@ -223,7 +232,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
 
           for (const workerId of workers) {
             const pending = await sessionManager.readPendingApproval(workerId);
-            
+
             if (pending && !handledRequests.has(pending.requestId)) {
               handledRequests.add(pending.requestId);
 
@@ -231,28 +240,29 @@ ${colors.bold}${colors.cyan}╔════════════════�
               console.log('');
               logWarn('🛑 关键决策需要审批');
               logInfo(`工具: ${pending.description}`);
-              
+
               // 安全截断 details 输出（最多 2KB）
               if (pending.details) {
                 const detailsStr = JSON.stringify(pending.details, null, 2);
-                const truncated = detailsStr.length > 2048 
-                  ? detailsStr.slice(0, 2048) + '\n... (truncated)' 
-                  : detailsStr;
+                const truncated =
+                  detailsStr.length > 2048
+                    ? detailsStr.slice(0, 2048) + '\n... (truncated)'
+                    : detailsStr;
                 console.log(`${colors.dim}${truncated}${colors.reset}`);
               }
-              
+
               // 安全获取 riskLevel（类型保护）
               const riskLevel = pending.details?.metadata?.riskLevel;
               const riskStr = typeof riskLevel === 'string' ? riskLevel.toUpperCase() : 'UNKNOWN';
               console.log(`${colors.yellow}风险等级: ${riskStr}${colors.reset}`);
-              
+
               // 交互询问（通过互斥锁）
               const answer = await withPromptLock(async () =>
                 (await rl.question(`${colors.bold}是否批准执行? (y/N) > ${colors.reset}`)).trim()
               );
 
               const approved = /^(y|yes)$/i.test(answer);
-              
+
               if (approved) {
                 logSuccess('已批准');
               } else {
@@ -274,7 +284,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
         } finally {
           isApproving = false;
         }
-      }, 1000); 
+      }, 1000);
     }
 
     try {
@@ -292,15 +302,23 @@ ${colors.bold}${colors.cyan}╔════════════════�
               break;
             case 'plan_generated': {
               const { subtasks, roles } = evt;
-              console.log(`${colors.cyan}  [Plan] Generated ${subtasks.length} subtasks${colors.reset}`);
+              console.log(
+                `${colors.cyan}  [Plan] Generated ${subtasks.length} subtasks${colors.reset}`
+              );
               if (roles && roles.length > 0) {
-                console.log(`${colors.cyan}  [Roles] ${roles.map((r) => `${r.name} (${r.id})`).join(', ')}${colors.reset}`);
-                roles.forEach(r => {
-                  console.log(`${colors.dim}    - ${r.name}: ${compactLine(r.responsibilities, 100)}${colors.reset}`);
+                console.log(
+                  `${colors.cyan}  [Roles] ${roles.map((r) => `${r.name} (${r.id})`).join(', ')}${colors.reset}`
+                );
+                roles.forEach((r) => {
+                  console.log(
+                    `${colors.dim}    - ${r.name}: ${compactLine(r.responsibilities, 100)}${colors.reset}`
+                  );
                 });
               }
               subtasks.forEach((t, i) => {
-                const roleInfo = t.roleId ? ` [${roles?.find(r => r.id === t.roleId)?.name ?? t.roleId}]` : '';
+                const roleInfo = t.roleId
+                  ? ` [${roles?.find((r) => r.id === t.roleId)?.name ?? t.roleId}]`
+                  : '';
                 console.log(`${colors.dim}    ${i + 1}. ${t.objective}${roleInfo}${colors.reset}`);
               });
               break;
@@ -315,10 +333,17 @@ ${colors.bold}${colors.cyan}╔════════════════�
             case 'tool_call':
               console.log(`${colors.yellow}  [Tool Call] ${evt.tool}${colors.reset}`);
               // 特殊处理 shell_run 命令显示，便于调试死循环
-              if (evt.tool === 'shell_run' || evt.tool === 'run_command' || evt.tool === 'execute_command') {
-                const cmd = (evt.input as any).command || (evt.input as any).CommandLine || (evt.input as any).cmd;
+              if (
+                evt.tool === 'shell_run' ||
+                evt.tool === 'run_command' ||
+                evt.tool === 'execute_command'
+              ) {
+                const cmd =
+                  (evt.input as any).command ||
+                  (evt.input as any).CommandLine ||
+                  (evt.input as any).cmd;
                 if (cmd) {
-                   console.log(`${colors.cyan}    $ ${cmd}${colors.reset}`);
+                  console.log(`${colors.cyan}    $ ${cmd}${colors.reset}`);
                 }
               }
               if (verbose) {
@@ -412,7 +437,7 @@ ${colors.bold}${colors.cyan}╔════════════════�
             logError('当前环境非交互式，无法继续输入。请在交互式终端运行该命令后按提示回答问题。');
             process.exit(2);
           }
-          const answer = await withPromptLock(async () => 
+          const answer = await withPromptLock(async () =>
             (await rl.question(`${colors.bold}> ${colors.reset}`)).trim()
           );
           if (!answer) {
@@ -754,6 +779,245 @@ async function ideaCommand(args: string[]): Promise<void> {
 // 命令: help
 // =============================================================================
 
+// =============================================================================
+// 命令: chat（螺旋第一圈：直连流式对话 + GoodMemory 持久记忆）
+// =============================================================================
+
+async function setupChatMemory(options: {
+  disabled: boolean;
+  memoryDb?: string | undefined;
+  workdir?: string | undefined;
+}): Promise<ChatMemory | undefined> {
+  if (options.disabled) return undefined;
+  try {
+    const goodmemoryModule = (await import('goodmemory')) as unknown as {
+      createGoodMemory: (config: unknown) => GoodMemoryLike;
+    };
+    const dbPath = options.memoryDb ?? join(homedir(), '.tachikoma', 'memory', 'goodmemory.sqlite');
+    await mkdir(dirname(dbPath), { recursive: true });
+    // 注意：GoodMemory 默认的 sqlite 路径是 cwd 相对路径，必须显式给绝对路径
+    const memory = goodmemoryModule.createGoodMemory({
+      storage: { provider: 'sqlite', url: dbPath },
+    });
+    return createGoodMemoryChatMemory({
+      memory,
+      scope: {
+        userId: process.env.USER ?? process.env.USERNAME ?? 'local-user',
+        agentId: 'tachikoma-chat',
+        ...(options.workdir && { workspaceId: resolve(options.workdir) }),
+      },
+    });
+  } catch (error) {
+    logWarn(
+      `GoodMemory 不可用，本次会话无持久记忆: ${error instanceof Error ? error.message : String(error)}`
+    );
+    return undefined;
+  }
+}
+
+async function chatCommand(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      model: { type: 'string', short: 'm' },
+      provider: { type: 'string' },
+      'api-key': { type: 'string' },
+      'base-url': { type: 'string' },
+      session: { type: 'string', short: 's' },
+      list: { type: 'boolean', short: 'l', default: false },
+      'data-dir': { type: 'string' },
+      'no-memory': { type: 'boolean', default: false },
+      'memory-db': { type: 'string' },
+      system: { type: 'string' },
+      workdir: { type: 'string', short: 'w' },
+    },
+    strict: true,
+  });
+
+  let modelConfig;
+  try {
+    modelConfig = resolveChatModelConfig({
+      ...(values.provider && { provider: values.provider }),
+      ...(values.model && { model: values.model }),
+      ...(values['api-key'] && { apiKey: values['api-key'] }),
+      ...(values['base-url'] && { baseUrl: values['base-url'] }),
+    });
+  } catch (error) {
+    if (error instanceof ChatProviderError) {
+      logError(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
+
+  const dataDir = values['data-dir'] ?? join(homedir(), '.tachikoma', 'chats');
+  const memory = await setupChatMemory({
+    disabled: values['no-memory'] ?? false,
+    memoryDb: values['memory-db'],
+    workdir: values.workdir,
+  });
+  const engine = new ChatEngine(
+    {
+      dataDir,
+      model: modelConfig,
+      ...(values.system && { systemPrompt: values.system }),
+    },
+    { ...(memory && { memory }) }
+  );
+
+  const printSessions = async (): Promise<void> => {
+    const sessions = await engine.listSessions();
+    if (sessions.length === 0) {
+      logInfo('暂无会话');
+      return;
+    }
+    for (const s of sessions) {
+      const when = new Date(s.updatedAt).toLocaleString();
+      console.log(
+        `${colors.cyan}${s.sessionId}${colors.reset}  ${colors.dim}${when} · ${s.provider}/${s.model} · ${s.messageCount} 条${colors.reset}  ${s.title ?? ''}`
+      );
+    }
+  };
+
+  if (values.list) {
+    await printSessions();
+    return;
+  }
+
+  let sessionId: string;
+  if (values.session) {
+    const existing = await engine.openSession(values.session);
+    if (!existing) {
+      logError(`会话不存在: ${values.session}`);
+      process.exit(1);
+    }
+    sessionId = existing.sessionId;
+    // 恢复会话时回放最近几条，帮用户找回上下文
+    const tail = existing.messages.slice(-4);
+    for (const m of tail) {
+      const prefix =
+        m.role === 'user'
+          ? `${colors.cyan}你${colors.reset}`
+          : `${colors.magenta}AI${colors.reset}`;
+      console.log(`${prefix} ${colors.dim}${compactLine(m.content, 100)}${colors.reset}`);
+    }
+  } else {
+    sessionId = (await engine.createSession()).sessionId;
+  }
+
+  const cfg = engine.getModelConfig();
+  console.log(
+    `\n${colors.bold}Tachikoma Chat${colors.reset} ${colors.dim}· ${cfg.provider}/${cfg.model} · 记忆 ${memory ? '开' : '关'} · ${sessionId}${colors.reset}`
+  );
+  console.log(
+    `${colors.dim}/help 查看命令 · 生成中 Ctrl+C 中断，空闲时 Ctrl+C 退出${colors.reset}\n`
+  );
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  let generating = false;
+  rl.on('SIGINT', () => {
+    if (generating) {
+      engine.interrupt(sessionId);
+    } else {
+      rl.close();
+      console.log('\n再见 👋');
+      process.exit(0);
+    }
+  });
+
+  const printChatHelp = (): void => {
+    console.log(
+      `${colors.dim}/new 新会话 · /sessions 会话列表 · /model [名称] 查看/切换模型 · /exit 退出${colors.reset}`
+    );
+  };
+
+  chatLoop: while (true) {
+    let input: string;
+    try {
+      input = (await rl.question(`${colors.cyan}❯ ${colors.reset}`)).trim();
+    } catch {
+      break; // readline 已关闭
+    }
+    if (!input) continue;
+
+    if (input.startsWith('/')) {
+      const [cmd = '', ...rest] = input.split(/\s+/);
+      const arg = rest.join(' ');
+      switch (cmd) {
+        case '/exit':
+        case '/quit':
+          break chatLoop;
+        case '/help':
+          printChatHelp();
+          continue;
+        case '/new': {
+          sessionId = (await engine.createSession()).sessionId;
+          logSuccess(`新会话: ${sessionId}`);
+          continue;
+        }
+        case '/sessions':
+          await printSessions();
+          continue;
+        case '/model': {
+          if (!arg) {
+            const current = engine.getModelConfig();
+            logInfo(`当前模型: ${current.provider}/${current.model}`);
+          } else {
+            const updated = await engine.setModel({ model: arg }, sessionId);
+            logSuccess(`已切换: ${updated.provider}/${updated.model}`);
+          }
+          continue;
+        }
+        default:
+          logWarn(`未知命令 ${cmd}（/help 查看可用命令）`);
+          continue;
+      }
+    }
+
+    generating = true;
+    try {
+      for await (const evt of engine.sendMessage(sessionId, input)) {
+        switch (evt.type) {
+          case 'memory_recall':
+            if (evt.hasContext) {
+              console.log(`${colors.dim}🧠 已回忆起相关记忆${colors.reset}`);
+            }
+            break;
+          case 'message_delta':
+            process.stdout.write(evt.text);
+            break;
+          case 'message_complete': {
+            process.stdout.write('\n');
+            if (evt.finishReason === 'interrupted') {
+              console.log(`${colors.yellow}⏸ 已中断${colors.reset}`);
+            } else if (evt.usage?.outputTokens !== undefined) {
+              console.log(
+                `${colors.dim}· ${evt.message.model ?? ''} · ${evt.usage.outputTokens} tokens${colors.reset}`
+              );
+            }
+            console.log();
+            break;
+          }
+          case 'error':
+            console.log();
+            logError(`生成失败: ${evt.error}${evt.retryable ? '（可重试，请再发一次）' : ''}`);
+            break;
+          default:
+            break;
+        }
+      }
+    } catch (error) {
+      console.log();
+      logError(`发送失败: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      generating = false;
+    }
+  }
+
+  rl.close();
+  console.log('再见 👋');
+}
+
 function showHelp(): void {
   console.log(`
 ${colors.bold}Tachikoma CLI${colors.reset} - AI 驱动的任务执行工具
@@ -762,10 +1026,23 @@ ${colors.bold}用法:${colors.reset}
   tachikoma <command> [options]
 
 ${colors.bold}命令:${colors.reset}
+  chat        流式聊天（直连 LLM，token 级流式 + GoodMemory 持久记忆）
   run         执行任务
   speckit     面向规范开发工具
   idea        idea 工作流（可选）
   help        显示帮助信息
+
+${colors.bold}选项 (chat 命令):${colors.reset}
+  --model, -m       模型名称（默认按 provider 选择）
+  --provider        anthropic | openai | openai-compatible（默认按环境变量探测）
+  --api-key         API Key（默认 ANTHROPIC_API_KEY/OPENROUTER_API_KEY/OPENAI_API_KEY）
+  --base-url        自定义端点（OpenRouter 等；给出时默认 openai-compatible）
+  --session, -s     恢复指定会话
+  --list, -l        列出历史会话
+  --no-memory       关闭 GoodMemory 持久记忆
+  --memory-db       记忆库路径（默认 ~/.tachikoma/memory/goodmemory.sqlite)
+  --system          覆盖系统提示词
+  --workdir, -w     关联工作区（作为记忆的 workspace 维度）
 
 ${colors.bold}选项 (run 命令):${colors.reset}
   --task, -t        任务描述 (必需)
@@ -856,6 +1133,8 @@ async function main(): Promise<void> {
       logError(`执行失败: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
     }
+  } else if (command === 'chat') {
+    await chatCommand(args.slice(1));
   } else if (command === 'speckit') {
     await speckitCommand(args.slice(1));
   } else if (command === 'idea') {

@@ -469,52 +469,27 @@ describe('共享文件协议契约', () => {
   }
 
   /**
-   * 创建有效的运行时文件
+   * 创建有效的运行时文件（Task Master 脱敏格式：任务描述以 tasks.json 为唯一真相）
    */
   function createValidRuntime(): RuntimeFile {
     return {
-      kind: 'tachikoma',
+      kind: 'taskmaster',
       sessionId: 'session-001',
       taskId: 'task-001',
       createdAt: Date.now() - 10000,
       updatedAt: Date.now(),
-      plannerOutput: {
-        taskId: 'task-001',
-        subtasks: [
-          {
-            id: 'subtask-1',
-            parentId: 'task-001',
-            objective: '设计数据库模型',
-            constraints: [],
-            status: 'pending',
-          },
-          {
-            id: 'subtask-2',
-            parentId: 'task-001',
-            objective: '实现 API 接口',
-            constraints: [],
-            status: 'pending',
-          },
-        ],
-        delegation: {
-          mode: 'communication',
-          workerCount: 2,
-          timeout: 300000,
-          retryPolicy: {
-            maxRetries: 3,
-            baseDelay: 1000,
-            backoffFactor: 2,
-          },
-        },
-        executionPlan: {
-          isParallel: false,
-          steps: [
-            { order: 1, subtaskIds: ['subtask-1'], parallel: false },
-            { order: 2, subtaskIds: ['subtask-2'], parallel: false },
-          ],
-        },
-      },
       version: 1,
+      tasksJson: {
+        path: '.taskmaster/tasks/tasks.json',
+        tag: 'session-001',
+      },
+      executionPlan: {
+        isParallel: false,
+        steps: [
+          { order: 1, subtaskIds: ['subtask-1'], parallel: false },
+          { order: 2, subtaskIds: ['subtask-2'], parallel: false },
+        ],
+      },
     };
   }
 

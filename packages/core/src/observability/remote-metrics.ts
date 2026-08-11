@@ -4,9 +4,9 @@
  * Sends metrics to the AgentOps server.
  */
 
-import type { MetricsCollector, MetricsCollectorConfig, MetricTags, MetricsSnapshot } from './types';
+import type { MetricsCollectorConfig, MetricTags } from './types';
 import { MemoryMetrics } from './memory-metrics';
-import { AgentOpsClient, AgentOpsConfig } from './agentops-client';
+import { AgentOpsClient, type AgentOpsConfig } from './agentops-client';
 
 export interface RemoteMetricsConfig extends MetricsCollectorConfig {
   agentOps?: AgentOpsConfig;
