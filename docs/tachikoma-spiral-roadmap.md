@@ -35,3 +35,13 @@ the right product abstraction.
 A later turn cannot weaken an earlier one. New capability must preserve the previous turn's event,
 session, memory, interruption, security, and quality guarantees. Placeholder packages and
 speculative services are not progress.
+
+## Relationship to the desktop plan
+
+`docs/tachikoma-desktop-plan.md` remains the master design for the desktop direction (Electron shell
+↔ renderer ↔ Bun sidecar, `packages/protocol|server|desktop`, ordered WS replay over an event log,
+approval escalation). Its protocol, shell, security, and packaging tracks stay valid. Its
+engine-core strategy is superseded by this roadmap: the engine grows from `ChatSession`, and the
+frozen turn-1 `ChatEvent` contract (sessionId/turnId on every event) is the event family the desktop
+protocol package will carry. Desktop shell work starts after turn 2 stabilizes the tool-facing event
+surface.
