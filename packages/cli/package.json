@@ -1,7 +1,7 @@
 {
   "name": "@tachikoma/cli",
-  "version": "0.1.0",
-  "description": "Tachikoma 命令行工具",
+  "version": "0.2.0",
+  "description": "The Tachikoma conversation-first CLI.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,16 +10,20 @@
   },
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "dev": "bun --watch src/cli.ts",
-    "test": "bun test",
-    "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "build": "bun run clean && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "dev": "bun src/cli.ts",
+    "test": "bun test tests --path-ignore-patterns 'tests/package/**'",
+    "test:package": "bun test tests/package",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
     "@tachikoma/core": "workspace:*"
@@ -28,14 +32,19 @@
     "@types/bun": "1.3.14",
     "typescript": "6.0.3"
   },
-  "files": [
-    "dist",
-    "src"
-  ],
+  "engines": {
+    "bun": ">=1.3.14"
+  },
   "keywords": [
     "tachikoma",
+    "chatbot",
     "cli",
-    "command-line"
+    "pi-mono"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hjqcan/tachikoma.git",
+    "directory": "packages/cli"
+  }
 }

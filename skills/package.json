@@ -1,8 +1,0 @@
-{
-  "name": "@tachikoma/skills",
-  "version": "0.1.0",
-  "description": "Tachikoma Skills 库 - 领域专业知识模块",
-  "type": "module",
-  "private": true,
-  "license": "MIT"
-}

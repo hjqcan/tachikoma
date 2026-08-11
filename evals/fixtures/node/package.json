@@ -1,9 +1,0 @@
-{
-  "name": "tachikoma-eval-node",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "build": "node -e \"console.log('build ok')\"",
-    "test": "node -e \"console.log('test ok')\""
-  }
-}

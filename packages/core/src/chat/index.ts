@@ -1,14 +1,25 @@
-/**
- * Chat 模块 —— 螺旋第一圈：顶级 chatbot
- *
- * 直连流式对话（ChatEngine），不经过 planner/orchestrator。
- * 参见 docs/tachikoma-spiral-roadmap.md。
- */
-
-export * from './types';
-export * from './providers';
-export * from './session-store';
-export * from './transcript';
-export * from './system-prompt';
-export * from './chat-engine';
-export * from './memory';
+export { ChatEngine } from './chat-engine';
+export type { ChatSession } from './chat-session';
+export { buildChatSystemPrompt } from './system-prompt';
+export type { ChatSystemPromptOptions } from './system-prompt';
+export type {
+  ChatCompactionEvent,
+  ChatCompactionResult,
+  ChatEngineConfig,
+  ChatEvent,
+  ChatMemoryConfig,
+  ChatMemorySnapshot,
+  ChatMemoryStatus,
+  ChatMemoryStatusEvent,
+  ChatMessageCompleteEvent,
+  ChatMessageDeltaEvent,
+  ChatMessageStartEvent,
+  ChatModelRef,
+  ChatReasoningDeltaEvent,
+  ChatRetryEvent,
+  ChatSendOptions,
+  ChatSessionInit,
+  ChatSessionSummary,
+  ChatThinkingLevel,
+  ChatUsage,
+} from './types';
