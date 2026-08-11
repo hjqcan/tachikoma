@@ -131,10 +131,7 @@ function createValidIntervention(): InterventionFile {
       severity: 'medium',
     },
     instructions: '请回到用户认证模块的实现',
-    suggestedNextSteps: [
-      '检查 auth.ts 文件结构',
-      '实现 JWT 验证逻辑',
-    ],
+    suggestedNextSteps: ['检查 auth.ts 文件结构', '实现 JWT 验证逻辑'],
     acknowledged: false,
   };
 }
@@ -611,13 +608,7 @@ describe('共享文件协议契约', () => {
     });
 
     it('type 值应是有效的枚举', () => {
-      const validTypes = [
-        'task_assignment',
-        'progress_update',
-        'result',
-        'query',
-        'response',
-      ];
+      const validTypes = ['task_assignment', 'progress_update', 'result', 'query', 'response'];
       const message = createValidMessage();
 
       expect(validTypes).toContain(message.type);
@@ -653,44 +644,41 @@ describe('共享文件协议契约', () => {
     it('应包含必需字段', () => {
       const runtime = createValidRuntime();
 
+      expect(runtime.kind).toBe('taskmaster');
       expect(runtime.sessionId).toBeDefined();
       expect(runtime.taskId).toBeDefined();
       expect(runtime.createdAt).toBeDefined();
       expect(runtime.updatedAt).toBeDefined();
-      expect('plannerOutput' in runtime ? runtime.plannerOutput : undefined).toBeDefined();
+      expect(runtime.tasksJson).toBeDefined();
+      expect(runtime.executionPlan).toBeDefined();
       expect(runtime.version).toBeDefined();
     });
 
-    it('plannerOutput 应包含必需结构', () => {
+    it('tasksJson 应包含必需结构', () => {
       const runtime = createValidRuntime();
-      expect('plannerOutput' in runtime).toBe(true);
-      if (!('plannerOutput' in runtime)) return;
 
-      expect(runtime.plannerOutput.taskId).toBeDefined();
-      expect(runtime.plannerOutput.subtasks).toBeInstanceOf(Array);
-      expect(runtime.plannerOutput.delegation).toBeDefined();
-      expect(runtime.plannerOutput.executionPlan).toBeDefined();
+      expect(runtime.tasksJson.path).toBeDefined();
+      expect(runtime.tasksJson.tag).toBeDefined();
+      expect(typeof runtime.tasksJson.path).toBe('string');
+      expect(typeof runtime.tasksJson.tag).toBe('string');
     });
 
-    it('delegation 应包含正确配置', () => {
+    it('脱敏契约：不应落盘任务描述文本（plannerOutput/delegation）', () => {
       const runtime = createValidRuntime();
-      expect('plannerOutput' in runtime).toBe(true);
-      if (!('plannerOutput' in runtime)) return;
-      const delegation = runtime.plannerOutput.delegation;
 
-      expect(['communication', 'shared-memory']).toContain(delegation.mode);
-      expect(delegation.workerCount).toBeGreaterThan(0);
-      expect(delegation.timeout).toBeGreaterThan(0);
-      expect(delegation.retryPolicy).toBeDefined();
+      // runtime.json 以 tasks.json 为唯一任务真相，
+      // 不再包含 plannerOutput/delegation 等描述性内容（见 TaskMasterRuntimeFile 约束）
+      expect('plannerOutput' in runtime).toBe(false);
+      expect('delegation' in runtime).toBe(false);
+      expect(JSON.stringify(runtime)).not.toContain('plannerOutput');
     });
 
     it('executionPlan.steps 应包含正确结构', () => {
       const runtime = createValidRuntime();
-      expect('plannerOutput' in runtime).toBe(true);
-      if (!('plannerOutput' in runtime)) return;
-      const steps = runtime.plannerOutput.executionPlan.steps;
+      const steps = runtime.executionPlan.steps;
 
       expect(steps).toBeInstanceOf(Array);
+      expect(steps.length).toBeGreaterThan(0);
       for (const step of steps) {
         expect(step.order).toBeDefined();
         expect(step.subtaskIds).toBeInstanceOf(Array);
@@ -779,13 +767,7 @@ describe('共享文件协议契约', () => {
     });
 
     it('type 值应是有效的枚举', () => {
-      const validTypes = [
-        'approval',
-        'intervention',
-        'retry',
-        'delegation_change',
-        'abort',
-      ];
+      const validTypes = ['approval', 'intervention', 'retry', 'delegation_change', 'abort'];
       const decision = createValidDecision();
 
       expect(validTypes).toContain(decision.type);
@@ -859,9 +841,8 @@ describe('共享文件协议契约', () => {
       expect(parsed.sessionId).toBe(original.sessionId);
       expect(parsed.taskId).toBe(original.taskId);
       expect(parsed.version).toBe(original.version);
-      if ('plannerOutput' in parsed && 'plannerOutput' in original) {
-        expect(parsed.plannerOutput.subtasks.length).toBe(original.plannerOutput.subtasks.length);
-      }
+      expect(parsed.tasksJson).toEqual(original.tasksJson);
+      expect(parsed.executionPlan.steps.length).toBe(original.executionPlan.steps.length);
     });
 
     it('ProgressFile 应正确序列化和反序列化', () => {

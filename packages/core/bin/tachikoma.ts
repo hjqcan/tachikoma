@@ -1033,10 +1033,10 @@ ${colors.bold}命令:${colors.reset}
   help        显示帮助信息
 
 ${colors.bold}选项 (chat 命令):${colors.reset}
-  --model, -m       模型名称（默认按 provider 选择）
+  --model, -m       模型名称（默认 TACHIKOMA_CHAT_MODEL 或按 provider 选择）
   --provider        anthropic | openai | openai-compatible（默认按环境变量探测）
   --api-key         API Key（默认 ANTHROPIC_API_KEY/OPENROUTER_API_KEY/OPENAI_API_KEY）
-  --base-url        自定义端点（OpenRouter 等；给出时默认 openai-compatible）
+  --base-url        自定义端点（默认读 OPENAI_BASE_URL；给出且未指明 provider 时视为 openai-compatible）
   --session, -s     恢复指定会话
   --list, -l        列出历史会话
   --no-memory       关闭 GoodMemory 持久记忆

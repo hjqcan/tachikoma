@@ -24,8 +24,9 @@ import type { WorkerInfo, SubTask, WorkerPoolConfig } from '../src/orchestrator'
 /**
  * 创建测试用 Worker
  *
- * 这些测试只覆盖池的注册/选择/并发逻辑，不会调用 agent 实例方法，
- * 因此 agent 用最小 stub 满足 WorkerInfo 类型即可。
+ * 这些测试只覆盖池的注册/选择/并发逻辑，不依赖 agent 的真实实现；
+ * 但池的 shutdown()/cancelTask() 会调用 agent.stop()（interrupt 为可选），
+ * 因此 stub 需提供 no-op 的 stop，其余成员通过 unknown 断言省略。
  */
 function createTestWorker(
   id: string,
@@ -34,7 +35,7 @@ function createTestWorker(
 ): WorkerInfo {
   return {
     id,
-    agent: { id } as unknown as WorkerInfo['agent'],
+    agent: { id, stop: async () => {} } as unknown as WorkerInfo['agent'],
     status,
     capabilities,
     lastHeartbeat: Date.now(),
@@ -378,7 +379,7 @@ describe('Worker 选择策略', () => {
 
       // 需要 python 和 ml 能力
       const selected = pool.selectWorker(['python', 'ml']);
-      
+
       // 应选择 worker-1 或 worker-3（两者都匹配）
       expect(['worker-1', 'worker-3']).toContain(selected!);
 
@@ -595,13 +596,13 @@ describe('超时控制', () => {
     const pool = new DefaultWorkerPool(DEFAULT_WORKER_POOL_CONFIG);
     pool.register(createTestWorker('worker-1'));
 
-	    const events: WorkerPoolEvent[] = [];
-	    pool.on('task:timeout', (e) => {
-	      events.push(e);
-	    });
-	    pool.on('task:cancelled', (e) => {
-	      events.push(e);
-	    });
+    const events: WorkerPoolEvent[] = [];
+    pool.on('task:timeout', (e) => {
+      events.push(e);
+    });
+    pool.on('task:cancelled', (e) => {
+      events.push(e);
+    });
 
     const subtask = createTestSubtask('subtask-1');
     // 设置 100ms 超时
@@ -621,10 +622,10 @@ describe('超时控制', () => {
     const pool = new DefaultWorkerPool(DEFAULT_WORKER_POOL_CONFIG);
     pool.register(createTestWorker('worker-1'));
 
-	    const events: WorkerPoolEvent[] = [];
-	    pool.on('task:timeout', (e) => {
-	      events.push(e);
-	    });
+    const events: WorkerPoolEvent[] = [];
+    pool.on('task:timeout', (e) => {
+      events.push(e);
+    });
 
     const subtask = createTestSubtask('subtask-1');
     await pool.assign(subtask, 200, DEFAULT_RETRY_POLICY);
@@ -644,10 +645,10 @@ describe('超时控制', () => {
     const pool = new DefaultWorkerPool(DEFAULT_WORKER_POOL_CONFIG);
     pool.register(createTestWorker('worker-1'));
 
-	    const events: WorkerPoolEvent[] = [];
-	    pool.on('task:timeout', (e) => {
-	      events.push(e);
-	    });
+    const events: WorkerPoolEvent[] = [];
+    pool.on('task:timeout', (e) => {
+      events.push(e);
+    });
 
     const subtask = createTestSubtask('subtask-1');
     await pool.assign(subtask, 200, DEFAULT_RETRY_POLICY);
@@ -680,22 +681,22 @@ describe('事件系统', () => {
     await pool.shutdown();
   });
 
-	  it('on() 应注册事件处理器', () => {
-	    const events: WorkerPoolEvent[] = [];
-	    pool.on('worker:registered', (e) => {
-	      events.push(e);
-	    });
+  it('on() 应注册事件处理器', () => {
+    const events: WorkerPoolEvent[] = [];
+    pool.on('worker:registered', (e) => {
+      events.push(e);
+    });
 
     pool.register(createTestWorker('worker-1'));
 
     expect(events.length).toBe(1);
   });
 
-	  it('off() 应移除事件处理器', () => {
-	    const events: WorkerPoolEvent[] = [];
-	    const handler = (e: WorkerPoolEvent) => {
-	      events.push(e);
-	    };
+  it('off() 应移除事件处理器', () => {
+    const events: WorkerPoolEvent[] = [];
+    const handler = (e: WorkerPoolEvent) => {
+      events.push(e);
+    };
 
     pool.on('worker:registered', handler);
     pool.off('worker:registered', handler);
@@ -705,14 +706,14 @@ describe('事件系统', () => {
     expect(events.length).toBe(0);
   });
 
-	  it('同一事件可注册多个处理器', () => {
-	    let count = 0;
-	    pool.on('worker:registered', () => {
-	      count++;
-	    });
-	    pool.on('worker:registered', () => {
-	      count++;
-	    });
+  it('同一事件可注册多个处理器', () => {
+    let count = 0;
+    pool.on('worker:registered', () => {
+      count++;
+    });
+    pool.on('worker:registered', () => {
+      count++;
+    });
 
     pool.register(createTestWorker('worker-1'));
 

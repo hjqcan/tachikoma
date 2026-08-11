@@ -497,6 +497,33 @@ describe('resolveChatModelConfig', () => {
     expect(cfg.provider).toBe('openai');
   });
 
+  test('OPENAI_API_KEY + OPENAI_BASE_URL：自定义端点 + TACHIKOMA_CHAT_MODEL 默认模型', () => {
+    const cfg = resolveChatModelConfig({
+      env: {
+        OPENAI_API_KEY: 'sk',
+        OPENAI_BASE_URL: 'https://ai.example.com/v1',
+        TACHIKOMA_CHAT_MODEL: 'my-model',
+      },
+    });
+    expect(cfg.provider).toBe('openai');
+    expect(cfg.baseUrl).toBe('https://ai.example.com/v1');
+    expect(cfg.model).toBe('my-model');
+  });
+
+  test('显式 provider=openai 也能从 OPENAI_BASE_URL 取端点；显式 model 优先于环境默认', () => {
+    const cfg = resolveChatModelConfig({
+      provider: 'openai',
+      model: 'explicit-model',
+      env: {
+        OPENAI_API_KEY: 'sk',
+        OPENAI_BASE_URL: 'https://ai.example.com/v1',
+        TACHIKOMA_CHAT_MODEL: 'env-model',
+      },
+    });
+    expect(cfg.baseUrl).toBe('https://ai.example.com/v1');
+    expect(cfg.model).toBe('explicit-model');
+  });
+
   test('显式 baseUrl（未指明 provider）视为 openai-compatible', () => {
     const cfg = resolveChatModelConfig({
       env: {},

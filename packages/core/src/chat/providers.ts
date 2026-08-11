@@ -123,6 +123,7 @@ export function resolveChatModelConfig(input: ResolveChatModelInput = {}): ChatM
     } else if (env.OPENAI_API_KEY) {
       provider = 'openai';
       apiKey = env.OPENAI_API_KEY;
+      baseUrl = baseUrl ?? env.OPENAI_BASE_URL;
     } else {
       throw new ChatProviderError(
         '未找到可用的 LLM 凭证。请设置 ANTHROPIC_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY 之一，' +
@@ -144,6 +145,10 @@ export function resolveChatModelConfig(input: ResolveChatModelInput = {}): ChatM
     throw new ChatProviderError(`provider "${provider}" 缺少 API key`, provider);
   }
 
+  // 显式 provider=openai/openai-compatible 时也允许 OPENAI_BASE_URL 提供端点
+  if (!baseUrl && (provider === 'openai' || provider === 'openai-compatible')) {
+    baseUrl = env.OPENAI_BASE_URL;
+  }
   if (provider === 'openai-compatible' && !baseUrl) {
     baseUrl = env.OPENROUTER_API_KEY ? OPENROUTER_BASE_URL : undefined;
   }
@@ -151,7 +156,7 @@ export function resolveChatModelConfig(input: ResolveChatModelInput = {}): ChatM
     throw new ChatProviderError('openai-compatible 需要 baseUrl（如 OpenRouter）', provider);
   }
 
-  const model = input.model ?? DEFAULT_CHAT_MODELS[provider];
+  const model = input.model ?? env.TACHIKOMA_CHAT_MODEL ?? DEFAULT_CHAT_MODELS[provider];
   if (!model) {
     throw new ChatProviderError(`provider "${provider}" 需要显式指定 model`, provider);
   }
