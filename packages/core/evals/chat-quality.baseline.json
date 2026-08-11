@@ -1,0 +1,26 @@
+{
+  "model": "gurkiai/gpt-5.6-terra",
+  "updatedAt": "2026-08-11T16:36:29.862Z",
+  "dimensions": {
+    "指令遵循": {
+      "pass": 3,
+      "total": 3
+    },
+    "语言一致性": {
+      "pass": 2,
+      "total": 2
+    },
+    "事实性": {
+      "pass": 4,
+      "total": 4
+    },
+    "拒答": {
+      "pass": 2,
+      "total": 2
+    },
+    "记忆准确度": {
+      "pass": 1,
+      "total": 2
+    }
+  }
+}
