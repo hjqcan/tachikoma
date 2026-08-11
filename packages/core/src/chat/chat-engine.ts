@@ -106,6 +106,7 @@ export class ChatEngine {
       : ModelRuntime.create({
           allowModelNetwork: false,
           refreshOnCreate: false,
+          modelsPath: join(this.dataDir, 'models.json'),
         });
   }
 

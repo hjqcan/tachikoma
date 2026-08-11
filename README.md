@@ -47,6 +47,41 @@ bun run packages/cli/src/cli.ts chat --no-memory
 The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/thinking`, `/compact`, `/memory`,
 `/help`, and `/exit`. API keys are never accepted as command-line arguments.
 
+## Custom models and endpoints
+
+pi's `ModelRuntime` resolves models from its built-in catalog plus an optional
+`<dataDir>/models.json` (default `~/.tachikoma/models.json`). Use it to register OpenAI-compatible
+gateways or models that are not in the catalog. `apiKey` supports `$ENV_VAR` interpolation, so no
+secret has to live in the file:
+
+```json
+{
+  "providers": {
+    "my-gateway": {
+      "name": "My Gateway",
+      "baseUrl": "https://gateway.example.com/v1",
+      "api": "openai-responses",
+      "apiKey": "$OPENAI_API_KEY",
+      "models": [
+        {
+          "id": "my-model",
+          "name": "My Model",
+          "reasoning": true,
+          "input": ["text"],
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+          "contextWindow": 128000,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}
+```
+
+Select it with `tachikoma --provider my-gateway --model my-model`, or `/model my-gateway/my-model`
+inside the REPL. Set `"reasoning": true` on models that support thinking so `--thinking` and
+`/thinking` levels take effect.
+
 ## Library
 
 ```ts

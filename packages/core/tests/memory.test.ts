@@ -35,10 +35,14 @@ describe('GoodMemory lifecycle', () => {
     process.env.ANTHROPIC_API_KEY = 'poison-anthropic-credential';
 
     try {
+      let firstMessages = '';
       let secondSystemPrompt = '';
       let secondMessages = '';
       harness.faux.setResponses([
-        fauxAssistantMessage('记住了。'),
+        (context) => {
+          firstMessages = JSON.stringify(context.messages);
+          return fauxAssistantMessage('记住了。');
+        },
         (context) => {
           secondSystemPrompt = context.systemPrompt ?? '';
           secondMessages = JSON.stringify(context.messages);
@@ -57,6 +61,16 @@ describe('GoodMemory lifecycle', () => {
       const first = await engine.createSession();
       const firstEvents = await collect(first.send('我的名字是 Lin，请记住。'));
       expect(complete(firstEvents).status).toBe('success');
+      // 空库首轮召回必须是 empty——不得把框架头当命中，也不得注入空上下文
+      expect(firstEvents).toContainEqual(
+        expect.objectContaining({
+          type: 'memory_status',
+          phase: 'recall',
+          status: 'empty',
+          hasContext: false,
+        })
+      );
+      expect(firstMessages).not.toContain('recalled_user_context');
       expect(firstEvents).toContainEqual(
         expect.objectContaining({ type: 'memory_status', phase: 'writeback', status: 'ready' })
       );

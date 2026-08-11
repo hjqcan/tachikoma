@@ -80,6 +80,13 @@ test "$(head -n 1 "$TACHIKOMA_UNPACK_DIR/package/dist/cli.js")" = '#!/usr/bin/en
 (
   cd "$TACHIKOMA_CONSUMER_DIR"
   bun init -y
+  # bun 不会用同名 file: 直接依赖满足 CLI 包的 @tachikoma/core@0.2.0 传递区间，
+  # 用 overrides 把该名字固定到本地 tarball，避免打到 npm registry。
+  bun -e '
+    const manifest = await Bun.file("package.json").json();
+    manifest.overrides = { "@tachikoma/core": `file:${process.argv[1]}` };
+    await Bun.write("package.json", JSON.stringify(manifest, null, 2));
+  ' "$TACHIKOMA_CORE_TGZ"
   bun add --exact "$TACHIKOMA_CORE_TGZ" "$TACHIKOMA_CLI_TGZ"
   bun -e '
     const core = await import("@tachikoma/core");

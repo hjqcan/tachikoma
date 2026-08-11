@@ -25,3 +25,6 @@ Thumbs.db
 
 # Local reference checkouts are not part of the build or package graph.
 third-party/
+
+# Eval run artifacts
+packages/core/evals/reports/

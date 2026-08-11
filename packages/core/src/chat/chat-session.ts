@@ -8,6 +8,7 @@ import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { randomUUID } from 'node:crypto';
 
 import { EventQueue } from './event-queue';
+import { recallHasHits } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
 import type {
   ChatCompactionResult,
@@ -473,7 +474,10 @@ export class ChatSession {
         retrievalProfile: 'general_chat',
         messages: [{ role: 'user', content: text }],
       });
-      const hasContext = result.context.content.trim().length > 0;
+      // 空库时渲染文本仍含框架头，命中与否以召回桶为准（recall 缺失时退回文本判定）
+      const hasContext =
+        (result.recall === undefined || recallHasHits(result.recall)) &&
+        result.context.content.trim().length > 0;
       this.promptMemoryContext.value = hasContext ? result.context.content : '';
       const status: ChatMemoryStatus = hasContext ? 'recalled' : 'empty';
       this.setMemoryState(status);
