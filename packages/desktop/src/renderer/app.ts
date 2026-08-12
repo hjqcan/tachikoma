@@ -45,6 +45,11 @@ const sessionsPanel = document.getElementById('sessions') as HTMLElement;
 const sessionList = document.getElementById('session-list') as HTMLElement;
 const sessionFilter = document.getElementById('session-filter') as HTMLInputElement;
 const newSessionButton = document.getElementById('new-session') as HTMLButtonElement;
+const memoryToggle = document.getElementById('memory-toggle') as HTMLButtonElement;
+const memoryPanel = document.getElementById('memory') as HTMLElement;
+const memorySearch = document.getElementById('memory-search') as HTMLInputElement;
+const memoryListPane = document.getElementById('memory-list') as HTMLElement;
+const memoryClearButton = document.getElementById('memory-clear') as HTMLButtonElement;
 const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
 const modelPicker = document.getElementById('model-picker') as HTMLElement;
 const modelFilter = document.getElementById('model-filter') as HTMLInputElement;
@@ -472,6 +477,23 @@ async function boot(): Promise<void> {
         if (event.status === 'degraded' || event.status === 'write-failed') {
           block('status-line memory').textContent =
             `[memory:${event.phase}] ${event.status}${event.error ? `: ${event.error}` : ''}`;
+        } else if (event.phase === 'recall' && event.recalled && event.recalled.length > 0) {
+          // 机器想起了什么：琥珀行，可展开命中明细
+          const details = document.createElement('details');
+          details.className = 'recall';
+          const summary = document.createElement('summary');
+          summary.textContent = `召回 ${event.recalled.length} 条记忆`;
+          details.appendChild(summary);
+          for (const hit of event.recalled) {
+            const row = document.createElement('div');
+            row.className = 'hit';
+            const kind = document.createElement('span');
+            kind.className = 'kind';
+            kind.textContent = MEMORY_TYPE_LABELS[hit.type] ?? hit.type;
+            row.append(kind, hit.preview || hit.id);
+            details.appendChild(row);
+          }
+          appendToLog(details);
         }
         break;
       case 'retry':
@@ -815,6 +837,164 @@ async function boot(): Promise<void> {
     sessionListRefreshTimer = setTimeout(() => void refreshSessionList(), 400);
   }
 
+  // ── 记忆抽屉：琥珀支柱——看得见、搜得着、删得掉 ────────────────
+
+  interface MemoryRecordLite {
+    id: string;
+    type: string;
+    content: string;
+    tags?: string[];
+    createdAt?: string;
+    score?: number;
+  }
+
+  const MEMORY_TYPE_LABELS: Record<string, string> = {
+    fact: '事实',
+    preference: '偏好',
+    reference: '引用',
+    episode: '情景',
+    feedback: '反馈',
+    archive: '会话档案',
+    experience: '系统经验',
+    profile: '画像',
+  };
+
+  function memoryRow(record: MemoryRecordLite): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'memory-row';
+    const content = document.createElement('div');
+    content.className = 'content';
+    content.textContent = record.content;
+    content.title = record.content;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = [
+      record.createdAt ? relativeWhen(Date.parse(record.createdAt)) : '',
+      ...(record.tags ?? []),
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.title = '删除这条记忆';
+    del.innerHTML = TRASH_SVG;
+    del.onclick = () => {
+      if (row.querySelector('.confirm-bar')) return;
+      meta.hidden = true;
+      const bar = document.createElement('div');
+      bar.className = 'confirm-bar';
+      const yes = document.createElement('button');
+      yes.className = 'yes';
+      yes.textContent = '确认删除';
+      yes.onclick = () => {
+        void rpc('memory.forget', { memoryId: record.id }).then((result) => {
+          if (!result.ok) {
+            block('status-line error').textContent = `[error] ${result.error.message}`;
+          }
+          void refreshMemoryList();
+        });
+      };
+      const no = document.createElement('button');
+      no.className = 'no';
+      no.textContent = '取消';
+      no.onclick = () => {
+        bar.remove();
+        meta.hidden = false;
+      };
+      bar.append(yes, no);
+      row.appendChild(bar);
+    };
+    row.append(content, meta, del);
+    return row;
+  }
+
+  function renderMemoryList(records: MemoryRecordLite[]): void {
+    memoryListPane.innerHTML = '';
+    if (records.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'memory-empty';
+      empty.textContent = memorySearch.value.trim() ? '没有匹配的记忆' : '还没有持久记忆';
+      memoryListPane.appendChild(empty);
+      return;
+    }
+    const groups = new Map<string, MemoryRecordLite[]>();
+    for (const record of records) {
+      const list = groups.get(record.type) ?? [];
+      list.push(record);
+      groups.set(record.type, list);
+    }
+    for (const [type, list] of groups) {
+      const head = document.createElement('div');
+      head.className = 'memory-group';
+      head.textContent = `${MEMORY_TYPE_LABELS[type] ?? type} · ${list.length}`;
+      memoryListPane.appendChild(head);
+      list.sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''));
+      for (const record of list) {
+        memoryListPane.appendChild(memoryRow(record));
+      }
+    }
+  }
+
+  async function refreshMemoryList(): Promise<void> {
+    const query = memorySearch.value.trim();
+    const listed = await (query ? rpc('memory.search', { query }) : rpc('memory.list'));
+    if (!listed.ok) {
+      memoryListPane.innerHTML = '';
+      const failed = document.createElement('div');
+      failed.className = 'memory-empty';
+      failed.textContent = `记忆库不可用：${listed.error.message}`;
+      memoryListPane.appendChild(failed);
+      return;
+    }
+    renderMemoryList((listed.result as { records: MemoryRecordLite[] }).records);
+  }
+
+  function toggleMemoryPanel(): void {
+    memoryPanel.hidden = !memoryPanel.hidden;
+    memoryToggle.setAttribute('aria-pressed', String(!memoryPanel.hidden));
+    if (!memoryPanel.hidden) {
+      void refreshMemoryList();
+      memorySearch.focus();
+    }
+  }
+  memoryToggle.onclick = toggleMemoryPanel;
+
+  let memorySearchTimer: ReturnType<typeof setTimeout> | undefined;
+  memorySearch.addEventListener('input', () => {
+    clearTimeout(memorySearchTimer);
+    memorySearchTimer = setTimeout(() => void refreshMemoryList(), 250);
+  });
+
+  memoryClearButton.onclick = () => {
+    const foot = memoryClearButton.parentElement as HTMLElement;
+    if (foot.querySelector('.confirm-bar')) return;
+    memoryClearButton.hidden = true;
+    const bar = document.createElement('div');
+    bar.className = 'confirm-bar';
+    const yes = document.createElement('button');
+    yes.className = 'yes';
+    yes.textContent = '确认清空全部';
+    yes.onclick = () => {
+      void rpc('memory.clear').then((result) => {
+        if (!result.ok) {
+          block('status-line error').textContent = `[error] ${result.error.message}`;
+        }
+        bar.remove();
+        memoryClearButton.hidden = false;
+        void refreshMemoryList();
+      });
+    };
+    const no = document.createElement('button');
+    no.className = 'no';
+    no.textContent = '取消';
+    no.onclick = () => {
+      bar.remove();
+      memoryClearButton.hidden = false;
+    };
+    bar.append(yes, no);
+    foot.appendChild(bar);
+  };
+
   // ── 控件 ────────────────────────────────────────────────────
 
   workspaceChip.onclick = async () => {
@@ -872,7 +1052,7 @@ async function boot(): Promise<void> {
   }
   sessionsToggle.onclick = toggleSessionsPanel;
 
-  // 全局快捷键：⌘N 新会话、⌘B 会话栏（Windows/Linux 用 Ctrl）
+  // 全局快捷键：⌘N 新会话、⌘B 会话栏、⌘M 记忆抽屉（Windows/Linux 用 Ctrl）
   document.addEventListener('keydown', (key) => {
     if (!(key.metaKey || key.ctrlKey)) return;
     if (key.key === 'n') {
@@ -881,6 +1061,9 @@ async function boot(): Promise<void> {
     } else if (key.key === 'b') {
       key.preventDefault();
       toggleSessionsPanel();
+    } else if (key.key === 'm') {
+      key.preventDefault();
+      toggleMemoryPanel();
     }
   });
 

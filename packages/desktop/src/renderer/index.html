@@ -359,6 +359,169 @@
         margin-top: 3px;
       }
 
+      /* ── 记忆抽屉：机油琥珀——机器的长期记忆可见、可管理 ── */
+      #memory-toggle {
+        font: 12px var(--mono);
+        color: var(--text-dim);
+        background: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 14px;
+        cursor: pointer;
+      }
+      #memory-toggle:hover {
+        border-color: var(--oil);
+        color: var(--oil);
+      }
+      #memory-toggle[aria-pressed='true'] {
+        color: var(--oil);
+        border-color: color-mix(in srgb, var(--oil) 65%, transparent);
+        background: color-mix(in srgb, var(--oil) 10%, transparent);
+      }
+      #memory {
+        width: 300px;
+        flex: none;
+        border-left: 1px solid var(--line);
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+      }
+      #memory[hidden] {
+        display: none;
+      }
+      .memory-head {
+        padding: 12px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      #memory-search {
+        width: 100%;
+        font: 11px var(--mono);
+        color: var(--text);
+        background: var(--ground);
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        padding: 5px 10px;
+        outline: none;
+        transition: border-color 0.15s ease;
+      }
+      #memory-search:focus {
+        border-color: var(--oil);
+      }
+      #memory-search::placeholder {
+        color: var(--text-faint);
+      }
+      #memory-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px 0 8px;
+      }
+      .memory-group {
+        font: 600 10px var(--human);
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: color-mix(in srgb, var(--oil) 75%, var(--text-dim));
+        padding: 12px 14px 4px;
+      }
+      .memory-row {
+        position: relative;
+        margin: 1px 6px;
+        padding: 7px 30px 7px 10px;
+        border-left: 2px solid color-mix(in srgb, var(--oil) 40%, transparent);
+        border-radius: 6px;
+        transition: background-color 0.15s ease;
+      }
+      .memory-row:hover {
+        background: color-mix(in srgb, var(--oil) 7%, transparent);
+      }
+      .memory-row .content {
+        font: 12px/1.5 var(--human);
+        color: var(--text);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        word-break: break-word;
+      }
+      .memory-row .meta {
+        font: 10px var(--mono);
+        color: var(--text-faint);
+        margin-top: 3px;
+      }
+      .memory-row .del {
+        position: absolute;
+        right: 6px;
+        top: 7px;
+        display: flex;
+        background: none;
+        border: none;
+        color: var(--sensor);
+        cursor: pointer;
+        opacity: 0;
+        padding: 4px;
+        border-radius: 5px;
+      }
+      .memory-row:hover .del,
+      .memory-row .del:focus-visible {
+        opacity: 0.75;
+      }
+      .memory-row .del:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--sensor) 14%, transparent);
+      }
+      .memory-empty {
+        font: 11px var(--mono);
+        color: var(--text-faint);
+        text-align: center;
+        padding: 28px 14px;
+      }
+      .memory-foot {
+        border-top: 1px solid var(--line-soft);
+        padding: 8px 12px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #memory-clear {
+        font: 11px var(--human);
+        color: var(--text-faint);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+      }
+      #memory-clear:hover {
+        color: var(--sensor);
+      }
+      .memory-foot .confirm-bar {
+        display: flex;
+        gap: 6px;
+      }
+
+      /* 时间线里的召回行：琥珀，可展开命中明细 */
+      details.recall {
+        margin: 8px auto;
+      }
+      details.recall summary {
+        font: 11px var(--mono);
+        color: var(--oil);
+        cursor: pointer;
+        list-style: none;
+      }
+      details.recall summary::before {
+        content: '⟡ ';
+      }
+      details.recall .hit {
+        font: 11px/1.55 var(--mono);
+        color: var(--text-dim);
+        border-left: 1px solid color-mix(in srgb, var(--oil) 45%, transparent);
+        padding-left: 12px;
+        margin: 6px 0 0 2px;
+      }
+      details.recall .hit .kind {
+        color: var(--oil);
+        margin-right: 8px;
+      }
+
       /* ── 对话日志 ───────────────────────────────────── */
       #log {
         flex: 1;
@@ -937,6 +1100,7 @@
         <button data-toolset="coding" title="加 write / edit / bash，逐次审批">编码</button>
       </span>
       <span class="spacer"></span>
+      <button id="memory-toggle" aria-pressed="false" title="记忆（⌘M）">记忆</button>
       <span id="status">connecting…</span>
     </header>
     <div id="shell">
@@ -948,6 +1112,15 @@
         <div id="session-list"></div>
       </aside>
       <main id="log"></main>
+      <aside id="memory" hidden>
+        <div class="memory-head">
+          <input id="memory-search" spellcheck="false" placeholder="搜索记忆…" />
+        </div>
+        <div id="memory-list"></div>
+        <div class="memory-foot">
+          <button id="memory-clear">清空全部记忆</button>
+        </div>
+      </aside>
     </div>
     <footer>
       <span class="inner">
