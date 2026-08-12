@@ -124,6 +124,9 @@ Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面�
 
 ### 4.1 `@tachikoma/protocol`（E1）
 
+> 2026-08-12：本节的实现级设计已细化于 `docs/tachikoma-protocol-design.md`
+> （对齐架构重启后的 ChatEvent/ChatSession 契约，含方法表、帧模型、演进与测试规则）；本节保留为总设计语境。
+
 **定位**：纯类型 + zod schema，renderer 安全（无 bun/node types、无 DOM 依赖、仅依赖
 `zod`）。desktop 永不直接依赖 `@tachikoma/core`。
 

@@ -44,4 +44,5 @@ approval escalation). Its protocol, shell, security, and packaging tracks stay v
 engine-core strategy is superseded by this roadmap: the engine grows from `ChatSession`, and the
 frozen turn-1 `ChatEvent` contract (sessionId/turnId on every event) is the event family the desktop
 protocol package will carry. Desktop shell work starts after turn 2 stabilizes the tool-facing event
-surface.
+surface. The protocol package's implementation-level design lives in
+`docs/tachikoma-protocol-design.md`; the package itself lands together with its first real consumer.
