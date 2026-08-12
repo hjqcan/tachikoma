@@ -28,6 +28,7 @@ import type { ToolApprovalBridge } from './workspace-guard';
 import { buildChatSystemPrompt } from './system-prompt';
 import type {
   ChatEngineConfig,
+  ChatEvent,
   ChatModelListing,
   ChatModelRef,
   ChatSessionInit,
@@ -176,6 +177,73 @@ export class ChatEngine {
     } catch (error) {
       throw credentialSafeError(error);
     }
+  }
+
+  /**
+   * 从 pi 转录导出会话历史为 ChatEvent 序列（文本回合：user_message +
+   * message_start/delta/complete；工具/思考细节不参与）。server 用它在事件账本
+   * 缺失或缺"人"侧时重建重放缓存——转录是唯一事实源，账本只是派生缓存。
+   */
+  async history(sessionId: string): Promise<ChatEvent[]> {
+    await this.ensureDirectories();
+    const info = await this.findSessionInfo(sessionId);
+    if (!info) return [];
+    const manager = SessionManager.open(info.path, this.sessionsDir, this.dataDir);
+    const context = manager.buildSessionContext();
+    const events: ChatEvent[] = [];
+    let turn = 0;
+    for (const [index, message] of context.messages.entries()) {
+      if ('customType' in message) continue; // 扩展注入（记忆上下文等）不属于对话双方
+      if (message.role === 'user') {
+        const text =
+          typeof message.content === 'string'
+            ? message.content
+            : message.content
+                .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+                .map((part) => part.text)
+                .join('');
+        if (!text.trim()) continue;
+        turn += 1;
+        events.push({
+          type: 'user_message',
+          sessionId,
+          turnId: `history-${turn}`,
+          timestamp: message.timestamp,
+          text,
+        });
+      } else if (message.role === 'assistant') {
+        const text = message.content
+          .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+          .map((part) => part.text)
+          .join('');
+        if (!text.trim()) continue; // 纯工具调用轮次：文本历史里跳过
+        const turnId = `history-${Math.max(turn, 1)}`;
+        const messageId = `history-m${index}`;
+        const base = { sessionId, turnId, timestamp: message.timestamp };
+        events.push(
+          { ...base, type: 'message_start', messageId },
+          { ...base, type: 'message_delta', messageId, text },
+          {
+            ...base,
+            type: 'message_complete',
+            messageId,
+            status: 'success',
+            content: text,
+            model: { provider: message.provider, model: message.model },
+            stopReason: message.stopReason,
+            usage: {
+              input: 0,
+              output: 0,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 0,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            },
+          }
+        );
+      }
+    }
+    return events;
   }
 
   /** 可选模型目录（含 models.json 自定义条目）；按 provider/model 稳定排序 */

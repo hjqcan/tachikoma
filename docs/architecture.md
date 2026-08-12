@@ -108,6 +108,11 @@ event stream: it assigns the monotonic `seq`, appends to the WAL first, then fan
 crash, an unterminated turn is completed with a synthetic `failed` frame written into the WAL so
 replay cursors stay consistent.
 
+The WAL lives at `<dataDir>/events/<sessionId>.jsonl` (never inside pi's `sessions/` directory) and
+is a derived replay cache: the pi transcript is the source of truth. A ledger that is missing or has
+no `user_message` frames is rebuilt from the transcript on first access (text turns only — tool-call
+frames are not reconstructed).
+
 ## Desktop shell (walking skeleton)
 
 `@tachikoma/desktop` is the Electron shell: the main process supervises `tachikoma-engined` (token

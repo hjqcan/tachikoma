@@ -84,10 +84,28 @@ export async function startTachikomaServer(
 
   // 缓存 load 的 Promise 而非结果：冷会话上 subscribe 与 send 并发时，
   // 缓存结果会造出两个 WAL 实例（订阅端重放空实例、注册太迟，整回合丢失）。
+  // 账本是转录的派生缓存：缺失或缺"人"侧（user_message 出现前的旧账本、被误删的
+  // 账本）时，从转录回填文本回合。promise 缓存天然单飞，无双回填竞态。
   function wal(sessionId: string): Promise<SessionWal> {
     let existing = wals.get(sessionId);
     if (!existing) {
-      existing = SessionWal.load(options.dataDir, sessionId);
+      existing = SessionWal.load(options.dataDir, sessionId).then(async (loaded) => {
+        const hasUserSide = loaded.read(0).some((frame) => frame.event.type === 'user_message');
+        if (!hasUserSide) {
+          try {
+            const history = await engine.history(sessionId);
+            if (history.length > 0) {
+              await loaded.destroy();
+              for (const event of history) {
+                await loaded.append(event);
+              }
+            }
+          } catch {
+            // 转录读取失败：保留现有账本原样，不因回填失败拒绝订阅。
+          }
+        }
+        return loaded;
+      });
       wals.set(sessionId, existing);
     }
     return existing;

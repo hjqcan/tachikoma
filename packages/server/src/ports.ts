@@ -45,4 +45,6 @@ export interface ServerEnginePort {
   listSessions(): Promise<SessionSummary[]>;
   deleteSession(sessionId: string): Promise<boolean>;
   listModels(): Promise<ModelListing[]>;
+  /** 从转录导出文本回合历史；账本缺失/缺"人"侧时 server 用它重建重放缓存 */
+  history(sessionId: string): Promise<ChatEventWire[]>;
 }

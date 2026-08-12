@@ -166,6 +166,12 @@ class FakeEngine implements ServerEnginePort {
     return this.sessions.delete(sessionId);
   }
 
+  historyEvents: ChatEventWire[] = [];
+
+  async history(): Promise<ChatEventWire[]> {
+    return this.historyEvents;
+  }
+
   async listModels(): Promise<ModelListing[]> {
     return [{ provider: 'faux', model: 'chat', reasoning: true }];
   }
@@ -420,6 +426,60 @@ describe('sidecar', () => {
         approved: true,
         scope: 'session',
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('缺"人"侧的账本从转录回填重建：残缺旧帧被替换为完整文本回合', async () => {
+    const harness = await startHarness();
+    try {
+      const created = await harness.rpc('session.create');
+      if (!created.ok) throw new Error('create failed');
+      const sessionId = (created.result as SessionSummary).sessionId;
+
+      // 铺一个只有助手侧的残缺账本（user_message 出现前的旧版本写的）
+      const stale = {
+        v: 1,
+        sessionId,
+        seq: 1,
+        event: {
+          type: 'message_start',
+          sessionId,
+          turnId: 'stale-t1',
+          timestamp: 1,
+          messageId: 'stale-m1',
+        },
+      };
+      await mkdir(join(harness.dataDir, 'events'), { recursive: true });
+      await writeFile(
+        join(harness.dataDir, 'events', `${sessionId}.jsonl`),
+        `${JSON.stringify(stale)}\n`
+      );
+      const historyTurn = turnEvents(sessionId, 'history-1', '回填的历史');
+      harness.engine.historyEvents = [
+        {
+          sessionId,
+          turnId: 'history-1',
+          timestamp: 2,
+          type: 'user_message',
+          text: '当年的提问',
+        },
+        ...historyTurn,
+      ];
+
+      const replay = await harness.ws(sessionId, 0);
+      await replay.waitFor(4);
+      expect(replay.frames[0]?.event).toMatchObject({
+        type: 'user_message',
+        text: '当年的提问',
+      });
+      expect(replay.frames.some((frame) => frame.event.turnId === 'stale-t1')).toBeFalse();
+      expect(replay.frames.at(-1)?.event).toMatchObject({
+        type: 'message_complete',
+        content: '回填的历史',
+      });
+      replay.close();
     } finally {
       await harness.stop();
     }

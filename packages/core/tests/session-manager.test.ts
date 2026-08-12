@@ -130,6 +130,40 @@ describe('pi JSONL session ownership', () => {
     }
   });
 
+  it('history() 从转录导出文本回合：user_message + 完整助手回合，事件形状与 live 流一致', async () => {
+    const harness = await createFauxHarness();
+    try {
+      harness.faux.setResponses([fauxAssistantMessage('回答一')]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession();
+      const sessionId = session.id;
+      for await (const event of session.send('问题一')) void event;
+      await session.close();
+
+      const history = await engine.history(sessionId);
+      expect(history.map((event) => event.type)).toEqual([
+        'user_message',
+        'message_start',
+        'message_delta',
+        'message_complete',
+      ]);
+      expect(history[0]).toMatchObject({ type: 'user_message', text: '问题一', sessionId });
+      expect(history[2]).toMatchObject({ type: 'message_delta', text: '回答一' });
+      expect(history[3]).toMatchObject({ type: 'message_complete', status: 'success' });
+
+      expect(await engine.history('does-not-exist')).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it('server 的事件账本（*.events.jsonl）绝不被列为幻影会话，也不可经幻影 id 删除', async () => {
     const harness = await createFauxHarness();
     try {
