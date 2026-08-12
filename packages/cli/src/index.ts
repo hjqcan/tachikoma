@@ -23,6 +23,7 @@ export interface ChatSessionPort {
   readonly model: ChatModelRef;
   readonly thinkingLevel: ChatThinkingLevel;
   readonly memoryStatus: ChatMemorySnapshot;
+  readonly activeTools: readonly string[];
   abort(): Promise<boolean>;
   close(): Promise<void>;
   compact(instructions?: string): Promise<unknown>;
@@ -67,6 +68,8 @@ interface ParsedArguments {
   prompt?: string;
   resumeId?: string;
   thinkingLevel?: ChatThinkingLevel;
+  /** 工具是能力授予：只走显式 --workdir，不设环境变量回退 */
+  workDir?: string;
 }
 
 interface TurnResult {
@@ -137,7 +140,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /thinking [<level>]          show or change the thinking level\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -163,6 +166,7 @@ function parseArguments(
   let modelId: string | undefined;
   let thinkingLevel: ChatThinkingLevel | undefined;
   let resumeId: string | undefined;
+  let workDir: string | undefined;
   let noMemory = false;
   let forceHelp = false;
   let forceVersion = false;
@@ -185,6 +189,10 @@ function parseArguments(
         break;
       case '--resume':
         resumeId = takeValue(args, index, argument);
+        index += 1;
+        break;
+      case '--workdir':
+        workDir = takeValue(args, index, argument);
         index += 1;
         break;
       case '--no-memory':
@@ -232,6 +240,7 @@ function parseArguments(
     ...(prompt ? { prompt } : {}),
     ...(resumeId ? { resumeId } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(workDir ? { workDir } : {}),
   };
 }
 
@@ -243,6 +252,7 @@ function engineConfig(
     ...(env.TACHIKOMA_DATA_DIR ? { dataDir: env.TACHIKOMA_DATA_DIR } : {}),
     ...(parsed.model ? { model: parsed.model } : {}),
     ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
+    ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
     memory: parsed.noMemory
       ? false
       : {
@@ -254,6 +264,19 @@ function engineConfig(
 function formatMemoryEvent(event: Extract<ChatEvent, { type: 'memory_status' }>): string {
   const detail = event.error ? `: ${event.error}` : '';
   return `[memory:${event.phase}] ${event.status}${detail}\n`;
+}
+
+function formatToolInput(input: unknown): string {
+  const text = JSON.stringify(input) ?? '';
+  return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+}
+
+function formatToolResult(event: Extract<ChatEvent, { type: 'tool_result' }>): string {
+  if (event.isError) {
+    const firstLine = event.output.split('\n')[0]?.slice(0, 120) ?? '';
+    return `[tool:${event.tool}] error: ${firstLine}\n`;
+  }
+  return `[tool:${event.tool}] ok (${event.output.length} chars)\n`;
 }
 
 function formatMemorySnapshot(memory: ChatMemorySnapshot): string {
@@ -287,6 +310,14 @@ async function consumeTurn(
         break;
       case 'memory_status':
         dependencies.writeError(formatMemoryEvent(event));
+        break;
+      case 'tool_call':
+        dependencies.writeError(`[tool:${event.tool}] ${formatToolInput(event.input)}\n`);
+        break;
+      case 'tool_result':
+        dependencies.writeError(formatToolResult(event));
+        break;
+      case 'tool_update':
         break;
       case 'message_complete':
         terminal = event.status;
@@ -397,6 +428,11 @@ async function handleSlashCommand(
     case 'memory':
       dependencies.write(`[memory] ${formatMemorySnapshot(session.memoryStatus)}\n`);
       return { exit: false, session };
+    case 'tools':
+      dependencies.write(
+        `[tools] ${session.activeTools.length > 0 ? session.activeTools.join(', ') : 'none'}\n`
+      );
+      return { exit: false, session };
     case 'help':
       dependencies.write(helpText());
       return { exit: false, session };
@@ -448,7 +484,9 @@ async function runRepl(
   });
 
   dependencies.write(
-    `Tachikoma ${VERSION}\n[session] ${session.id}\n[memory] ${formatMemorySnapshot(session.memoryStatus)}\n`
+    `Tachikoma ${VERSION}\n[session] ${session.id}\n[memory] ${formatMemorySnapshot(session.memoryStatus)}\n${
+      session.activeTools.length > 0 ? `[tools] ${session.activeTools.join(', ')}\n` : ''
+    }`
   );
   terminal.prompt();
 

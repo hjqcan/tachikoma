@@ -50,6 +50,7 @@ class FakeSession implements ChatSessionPort {
   model: ChatModelRef = { provider: 'faux', model: 'test' };
   thinkingLevel: ChatThinkingLevel = 'medium';
   memoryStatus = { enabled: true, status: 'ready' } as const;
+  activeTools: readonly string[] = [];
   abortCount = 0;
   closeCount = 0;
   compactCount = 0;
@@ -207,6 +208,101 @@ function createHarness(
 }
 
 describe('runCli', () => {
+  test('--workdir flows into the engine config; no env fallback exists', async () => {
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+    harness.dependencies.env = { TACHIKOMA_WORKDIR: '/should/be/ignored' };
+
+    const code = await runCli(['run', 'hi', '--workdir', '/tmp/workspace'], harness.dependencies);
+
+    expect(code).toBe(0);
+    expect(config?.workDir).toBe('/tmp/workspace');
+
+    let secondConfig: ChatEngineConfig | undefined;
+    const withoutFlag = createHarness({
+      onConfig: (received) => {
+        secondConfig = received;
+      },
+    });
+    withoutFlag.dependencies.env = { TACHIKOMA_WORKDIR: '/should/be/ignored' };
+    await runCli(['run', 'hi'], withoutFlag.dependencies);
+    expect(secondConfig?.workDir).toBeUndefined();
+  });
+
+  test('renders tool_call and tool_result on stderr, keeping stdout as the answer', async () => {
+    const session = new FakeSession();
+    session.activeTools = ['read', 'grep', 'find', 'ls'];
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_call',
+        callId: 'call-1',
+        tool: 'read',
+        input: { path: 'hello.txt' },
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_result',
+        callId: 'call-1',
+        tool: 'read',
+        output: 'TOOL_MARKER',
+        isError: false,
+      } as ChatEvent,
+      ...successEvents('answer with TOOL_MARKER'),
+    ];
+    const harness = createHarness({ engine: new FakeEngine(session) });
+
+    const code = await runCli(['run', 'question'], harness.dependencies);
+
+    expect(code).toBe(0);
+    const stderr = harness.stderr.join('');
+    expect(stderr).toContain('[tool:read] {"path":"hello.txt"}');
+    expect(stderr).toContain('[tool:read] ok (11 chars)');
+    expect(harness.stdout.join('')).toContain('answer with TOOL_MARKER');
+    expect(harness.stdout.join('')).not.toContain('[tool:');
+  });
+
+  test('blocked tool results render as errors with the guard reason', async () => {
+    const session = new FakeSession();
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_result',
+        callId: 'call-1',
+        tool: 'read',
+        output: 'Path is outside the workspace: ../secret\nmore detail',
+        isError: true,
+      } as ChatEvent,
+      ...successEvents('adjusted'),
+    ];
+    const harness = createHarness({ engine: new FakeEngine(session) });
+
+    await runCli(['run', 'question'], harness.dependencies);
+
+    expect(harness.stderr.join('')).toContain(
+      '[tool:read] error: Path is outside the workspace: ../secret'
+    );
+  });
+
+  test('/tools reports active tools and the startup banner lists them', async () => {
+    const session = new FakeSession();
+    session.activeTools = ['read', 'grep', 'find', 'ls'];
+    const harness = createHarness({
+      engine: new FakeEngine(session),
+      lines: ['/tools', '/exit'],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('[tools] read, grep, find, ls');
+  });
+
   test('runs one-shot chat through the same session surface and reports memory degradation', async () => {
     const session = new FakeSession();
     session.events = [
