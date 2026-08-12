@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { EventQueue } from './event-queue';
 import { recallHasHits } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
+import type { ToolApprovalBridge } from './workspace-guard';
 import type {
   ChatCompactionResult,
   ChatEvent,
@@ -57,6 +58,9 @@ export interface ChatSessionDependencies {
   promptMemoryContext: PromptMemoryContext;
   /** 本会话允许的工具名集合；空集 = 零工具（第一圈默认） */
   allowedTools: readonly string[];
+  /** 策略扩展的审批桥；ChatSession 在回合内挂 request，回合外审批一律拒绝 */
+  approvalBridge: ToolApprovalBridge;
+  approvalTimeoutMs: number;
   onClose(sessionId: string): void;
 }
 
@@ -130,6 +134,12 @@ export class ChatSession {
   private readonly modelRuntime: ModelRuntime;
   private readonly memory: ChatMemoryBinding;
   private readonly promptMemoryContext: PromptMemoryContext;
+  private readonly approvalBridge: ToolApprovalBridge;
+  private readonly approvalTimeoutMs: number;
+  private readonly pendingApprovals = new Map<
+    string,
+    (approved: boolean, reason: 'reply' | 'timeout' | 'aborted') => void
+  >();
   private readonly onClose: (sessionId: string) => void;
   private memoryStarted = false;
   private memoryState: ChatMemorySnapshot;
@@ -150,6 +160,8 @@ export class ChatSession {
     this.modelRuntime = dependencies.modelRuntime;
     this.memory = dependencies.memory;
     this.promptMemoryContext = dependencies.promptMemoryContext;
+    this.approvalBridge = dependencies.approvalBridge;
+    this.approvalTimeoutMs = dependencies.approvalTimeoutMs;
     this.onClose = dependencies.onClose;
     this.memoryState = dependencies.memory.enabled
       ? {
@@ -237,7 +249,21 @@ export class ChatSession {
       return false;
     }
     this.promptMemoryContext.abortRequested = true;
-    await this.agentSession.abort();
+    // 先发中止信号再解审批：钩子解锁时 pi 循环已见 abort，不会再跑下一步模型调用。
+    // 不能先 await——abort 可能等待被审批挂起的工具收尾，互相等死。
+    const aborting = this.agentSession.abort();
+    this.resolveAllApprovals(false, 'aborted');
+    await aborting;
+    return true;
+  }
+
+  /** 应答一个在途的工具审批；返回是否命中待决项 */
+  respondToApproval(callId: string, approved: boolean): boolean {
+    const finish = this.pendingApprovals.get(callId);
+    if (!finish) {
+      return false;
+    }
+    finish(approved, 'reply');
     return true;
   }
 
@@ -312,6 +338,7 @@ export class ChatSession {
     let terminalSent = false;
 
     const emit = (event: ChatEvent): void => events.push(event);
+    this.approvalBridge.request = (request) => this.requestApproval(request, turnId, emit);
     const unsubscribe = this.agentSession.subscribe((event) => {
       finalMessage = this.handlePiEvent(event, turnId, messageId, emit, finalMessage);
     });
@@ -336,7 +363,13 @@ export class ChatSession {
       if (!finalMessage) {
         throw new Error('pi AgentSession ended without a terminal assistant message.');
       }
-      const status = terminalStatus(finalMessage);
+      // 用户请求过中止时，非成功终结一律归为 interrupted——abort 命中工具执行窗口时
+      // pi 会以 stopReason 'error'（AbortError 文本）结束，而不是 'aborted'。
+      const rawStatus = terminalStatus(finalMessage);
+      const status =
+        this.promptMemoryContext.abortRequested && rawStatus !== 'success'
+          ? 'interrupted'
+          : rawStatus;
       const content = textContent(finalMessage);
       if (status === 'success') {
         await this.finishMemory(text, content, turnId, emit);
@@ -382,6 +415,8 @@ export class ChatSession {
       terminalSent = true;
     } finally {
       unsubscribe();
+      delete this.approvalBridge.request;
+      this.resolveAllApprovals(false, 'aborted');
       this.promptMemoryContext.value = '';
       this.promptMemoryContext.abortRequested = false;
       this.activeTurnId = null;
@@ -580,6 +615,50 @@ export class ChatSession {
         status: 'write-failed',
         error: message,
       });
+    }
+  }
+
+  private requestApproval(
+    request: { callId: string; tool: string; input: unknown },
+    turnId: string,
+    emit: (event: ChatEvent) => void
+  ): Promise<boolean> {
+    emit({
+      type: 'tool_approval_request',
+      sessionId: this.id,
+      turnId,
+      timestamp: Date.now(),
+      callId: request.callId,
+      tool: request.tool,
+      input: request.input,
+      timeoutMs: this.approvalTimeoutMs,
+    });
+    return new Promise((resolveApproval) => {
+      // finish 只会在 timer 初始化之后被调用（超时回调或 pendingApprovals 应答）
+      const finish = (approved: boolean, reason: 'reply' | 'timeout' | 'aborted'): void => {
+        if (!this.pendingApprovals.delete(request.callId)) {
+          return;
+        }
+        clearTimeout(timer);
+        emit({
+          type: 'tool_approval_resolved',
+          sessionId: this.id,
+          turnId,
+          timestamp: Date.now(),
+          callId: request.callId,
+          approved,
+          reason,
+        });
+        resolveApproval(approved);
+      };
+      const timer = setTimeout(() => finish(false, 'timeout'), this.approvalTimeoutMs);
+      this.pendingApprovals.set(request.callId, finish);
+    });
+  }
+
+  private resolveAllApprovals(approved: boolean, reason: 'reply' | 'timeout' | 'aborted'): void {
+    for (const finish of [...this.pendingApprovals.values()]) {
+      finish(approved, reason);
     }
   }
 

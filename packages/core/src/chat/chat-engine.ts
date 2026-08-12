@@ -18,7 +18,13 @@ import type { ChatMemoryBinding } from './chat-session';
 import { createChatMemoryRuntime } from './memory';
 import type { ChatMemoryRuntime } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
-import { createWorkspaceGuardExtension, WORKSPACE_TOOLS } from './workspace-guard';
+import {
+  APPROVAL_REQUIRED_TOOLS,
+  CODING_TOOLS,
+  createWorkspaceGuardExtension,
+  WORKSPACE_TOOLS,
+} from './workspace-guard';
+import type { ToolApprovalBridge } from './workspace-guard';
 import { buildChatSystemPrompt } from './system-prompt';
 import type {
   ChatEngineConfig,
@@ -76,6 +82,8 @@ export class ChatEngine {
   private readonly configuredModel: ChatModelRef | undefined;
   private readonly configuredThinkingLevel: ChatThinkingLevel | undefined;
   private readonly workDir: string | undefined;
+  private readonly toolset: 'read-only' | 'coding';
+  private readonly approvalTimeoutMs: number;
   private workspaceRootPromise: Promise<string> | undefined;
   private readonly systemPrompt: string;
   private readonly injectedMemoryKit: GoodMemoryRuntimeKit | undefined;
@@ -94,6 +102,8 @@ export class ChatEngine {
     this.configuredModel = config.model;
     this.configuredThinkingLevel = config.thinkingLevel;
     this.workDir = config.workDir ? resolve(config.workDir) : undefined;
+    this.toolset = config.toolset ?? 'read-only';
+    this.approvalTimeoutMs = config.approvalTimeoutMs ?? 120_000;
     this.systemPrompt = config.systemPrompt ?? buildChatSystemPrompt();
     this.memoryEnabled = config.memory !== false;
     this.memoryUserId =
@@ -258,7 +268,12 @@ export class ChatEngine {
     }
 
     const workspaceRoot = await this.resolveWorkspaceRoot();
-    const allowedTools = workspaceRoot ? WORKSPACE_TOOLS : [];
+    const allowedTools = workspaceRoot
+      ? this.toolset === 'coding'
+        ? CODING_TOOLS
+        : WORKSPACE_TOOLS
+      : [];
+    const approvalBridge: ToolApprovalBridge = {};
     const promptMemoryContext: PromptMemoryContext = { value: '', abortRequested: false };
     const settingsManager = SettingsManager.inMemory({
       compaction: { enabled: true },
@@ -293,7 +308,9 @@ export class ChatEngine {
       },
     };
     const effectiveSystemPrompt = workspaceRoot
-      ? `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.`
+      ? this.toolset === 'coding'
+        ? `${this.systemPrompt}\n\nYou have coding tools (read/grep/find/ls/write/edit/bash) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected. write/edit/bash calls require user approval and may be denied; adapt when they are.`
+        : `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.`
       : this.systemPrompt;
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspaceRoot ?? this.dataDir,
@@ -307,7 +324,14 @@ export class ChatEngine {
       systemPrompt: effectiveSystemPrompt,
       extensionFactories: [
         memoryExtension,
-        ...(workspaceRoot ? [createWorkspaceGuardExtension(workspaceRoot)] : []),
+        ...(workspaceRoot
+          ? [
+              createWorkspaceGuardExtension(workspaceRoot, {
+                approvalRequired: new Set(this.toolset === 'coding' ? APPROVAL_REQUIRED_TOOLS : []),
+                approvalBridge,
+              }),
+            ]
+          : []),
       ],
     });
     await resourceLoader.reload();
@@ -320,7 +344,7 @@ export class ChatEngine {
       sessionManager,
       settingsManager,
       resourceLoader,
-      ...(workspaceRoot ? { tools: [...WORKSPACE_TOOLS] } : { noTools: 'all' as const }),
+      ...(workspaceRoot ? { tools: [...allowedTools] } : { noTools: 'all' as const }),
       ...(model ? { model } : {}),
       ...(effectiveThinkingLevel ? { thinkingLevel: effectiveThinkingLevel } : {}),
     });
@@ -348,6 +372,8 @@ export class ChatEngine {
       memory,
       promptMemoryContext,
       allowedTools,
+      approvalBridge,
+      approvalTimeoutMs: this.approvalTimeoutMs,
       onClose: (sessionId) => this.openSessions.delete(sessionId),
     });
     this.openSessions.set(session.id, session);

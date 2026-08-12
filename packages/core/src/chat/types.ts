@@ -20,12 +20,23 @@ export interface ChatEngineConfig {
   systemPrompt?: string;
   memory?: false | ChatMemoryConfig;
   /**
-   * 工作区根目录。设置后启用 pi 只读工具集（read/grep/find/ls），
+   * 工作区根目录。设置后启用 pi 工具集（见 toolset），
    * 路径边界由 workspace-guard 强制（canonical root + symlink 检查）。
    * 缺省不设 —— 默认产品保持零工具（第一圈保证不被削弱）。
    */
   workDir?: string;
+  /**
+   * 'read-only'（默认）：read/grep/find/ls，免审批。
+   * 'coding'：额外启用 write/edit/bash，三者逐调用审批
+   * （tool_approval_request 事件 + respondToApproval，超时默认拒绝）。
+   * 仅在设置了 workDir 时生效。
+   */
+  toolset?: ChatToolset;
+  /** 审批等待超时（毫秒），超时默认拒绝。默认 120000 */
+  approvalTimeoutMs?: number;
 }
+
+export type ChatToolset = 'read-only' | 'coding';
 
 export interface ChatSessionInit {
   title?: string;
@@ -152,6 +163,22 @@ export interface ChatToolResultEvent extends BaseChatEvent {
   isError: boolean;
 }
 
+/** 需审批的工具调用等待放行；消费者用 respondToApproval(callId, approved) 应答 */
+export interface ChatToolApprovalRequestEvent extends BaseChatEvent {
+  type: 'tool_approval_request';
+  callId: string;
+  tool: string;
+  input: unknown;
+  timeoutMs: number;
+}
+
+export interface ChatToolApprovalResolvedEvent extends BaseChatEvent {
+  type: 'tool_approval_resolved';
+  callId: string;
+  approved: boolean;
+  reason: 'reply' | 'timeout' | 'aborted';
+}
+
 /**
  * 契约演进规则：只做增量扩展（新事件类型），不改既有事件语义；
  * 消费者必须容忍未知事件类型（跳过而非报错），否则圈层推进即破坏性变更。
@@ -166,4 +193,6 @@ export type ChatEvent =
   | ChatToolCallEvent
   | ChatToolUpdateEvent
   | ChatToolResultEvent
+  | ChatToolApprovalRequestEvent
+  | ChatToolApprovalResolvedEvent
   | ChatMessageCompleteEvent;

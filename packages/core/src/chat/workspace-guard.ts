@@ -11,8 +11,22 @@ import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-/** 第二圈 v1 启用的只读工具集（pi createReadOnlyTools 同集） */
+/** 只读工具集（pi createReadOnlyTools 同集），免审批 */
 export const WORKSPACE_TOOLS: readonly string[] = ['read', 'grep', 'find', 'ls'];
+
+/** 逐调用审批的工具；bash 无法做路径分析，审批本身就是它的控制面 */
+export const APPROVAL_REQUIRED_TOOLS: readonly string[] = ['write', 'edit', 'bash'];
+
+/** toolset: 'coding' 的完整允许集 */
+export const CODING_TOOLS: readonly string[] = [...WORKSPACE_TOOLS, ...APPROVAL_REQUIRED_TOOLS];
+
+/**
+ * ChatSession 与策略扩展之间的审批桥。
+ * 每回合由 ChatSession 挂上 request；缺席（无在途回合等异常态）一律拒绝。
+ */
+export interface ToolApprovalBridge {
+  request?: (input: { callId: string; tool: string; input: unknown }) => Promise<boolean>;
+}
 
 /** 工具入参中按路径语义解释的字段名（pattern 等匹配串不在其列） */
 const PATH_INPUT_FIELDS = [
@@ -57,18 +71,40 @@ export function findWorkspaceViolation(input: unknown, root: string): string | n
   return null;
 }
 
-export function createWorkspaceGuardExtension(root: string): InlineExtension {
+export function createWorkspaceGuardExtension(
+  root: string,
+  options: {
+    approvalRequired?: ReadonlySet<string>;
+    approvalBridge?: ToolApprovalBridge;
+  } = {}
+): InlineExtension {
+  const approvalRequired = options.approvalRequired ?? new Set<string>();
   return {
     name: 'tachikoma-workspace-guard',
     hidden: true,
     factory(pi) {
-      pi.on('tool_call', (event) => {
+      pi.on('tool_call', async (event) => {
+        // 路径边界先于审批：越界调用即使被批准也不执行。
         const violation = findWorkspaceViolation(event.input, root);
         if (violation) {
           return {
             block: true,
             reason: `Path is outside the workspace: ${violation} (workspace root: ${root})`,
           };
+        }
+        if (approvalRequired.has(event.toolName)) {
+          const approved =
+            (await options.approvalBridge?.request?.({
+              callId: event.toolCallId,
+              tool: event.toolName,
+              input: event.input,
+            })) ?? false;
+          if (!approved) {
+            return {
+              block: true,
+              reason: `Tool call was not approved: ${event.toolName}`,
+            };
+          }
         }
         return undefined;
       });

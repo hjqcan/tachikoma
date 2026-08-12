@@ -66,6 +66,13 @@ class FakeSession implements ChatSessionPort {
     return true;
   }
 
+  approvals: { callId: string; approved: boolean }[] = [];
+
+  respondToApproval(callId: string, approved: boolean): boolean {
+    this.approvals.push({ callId, approved });
+    return true;
+  }
+
   async close(): Promise<void> {
     this.closeCount += 1;
   }
@@ -301,6 +308,77 @@ describe('runCli', () => {
     expect(code).toBe(0);
     const output = harness.stdout.join('');
     expect(output).toContain('[tools] read, grep, find, ls');
+  });
+
+  test('--allow grants listed tools; ungranted requests are denied immediately', async () => {
+    const session = new FakeSession();
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_approval_request',
+        callId: 'call-w',
+        tool: 'write',
+        input: { path: 'a.txt' },
+        timeoutMs: 120_000,
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_approval_request',
+        callId: 'call-b',
+        tool: 'bash',
+        input: { command: 'ls' },
+        timeoutMs: 120_000,
+      } as ChatEvent,
+      ...successEvents('done'),
+    ];
+    const harness = createHarness({ engine: new FakeEngine(session) });
+
+    const code = await runCli(
+      ['run', 'do it', '--workdir', '/tmp/ws', '--allow', 'write'],
+      harness.dependencies
+    );
+
+    expect(code).toBe(0);
+    expect(session.approvals).toEqual([
+      { callId: 'call-w', approved: true },
+      { callId: 'call-b', approved: false },
+    ]);
+    const stderr = harness.stderr.join('');
+    expect(stderr).toContain('[approval:write] granted (--allow)');
+    expect(stderr).toContain('[approval:bash] denied (add --allow bash to grant)');
+  });
+
+  test('--allow validates tool names and requires --workdir', async () => {
+    const badName = createHarness();
+    expect(
+      await runCli(['run', 'x', '--workdir', '/w', '--allow', 'read'], badName.dependencies)
+    ).toBe(2);
+    expect(badName.stderr.join('')).toContain('--allow accepts write,edit,bash');
+
+    const noWorkdir = createHarness();
+    expect(await runCli(['run', 'x', '--allow', 'write'], noWorkdir.dependencies)).toBe(2);
+    expect(noWorkdir.stderr.join('')).toContain('--allow requires --workdir');
+  });
+
+  test('--allow switches the engine to the coding toolset', async () => {
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+
+    await runCli(['run', 'x', '--workdir', '/w', '--allow', 'write,edit'], harness.dependencies);
+    expect(config?.toolset).toBe('coding');
+
+    let readOnlyConfig: ChatEngineConfig | undefined;
+    const readOnly = createHarness({
+      onConfig: (received) => {
+        readOnlyConfig = received;
+      },
+    });
+    await runCli(['run', 'x', '--workdir', '/w'], readOnly.dependencies);
+    expect(readOnlyConfig?.toolset).toBeUndefined();
   });
 
   test('runs one-shot chat through the same session surface and reports memory degradation', async () => {

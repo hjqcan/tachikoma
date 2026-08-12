@@ -17,6 +17,9 @@ export const VERSION = CORE_VERSION;
 
 const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
+/** 与 core 的 APPROVAL_REQUIRED_TOOLS 同集（core 公共面刻意不导出内部策略常量） */
+const APPROVABLE_TOOLS = ['write', 'edit', 'bash'] as const;
+
 /** @internal */
 export interface ChatSessionPort {
   readonly id: string;
@@ -25,6 +28,7 @@ export interface ChatSessionPort {
   readonly memoryStatus: ChatMemorySnapshot;
   readonly activeTools: readonly string[];
   abort(): Promise<boolean>;
+  respondToApproval(callId: string, approved: boolean): boolean;
   close(): Promise<void>;
   compact(instructions?: string): Promise<unknown>;
   send(text: string, options?: { signal?: AbortSignal }): AsyncGenerator<ChatEvent>;
@@ -70,6 +74,8 @@ interface ParsedArguments {
   thinkingLevel?: ChatThinkingLevel;
   /** 工具是能力授予：只走显式 --workdir，不设环境变量回退 */
   workDir?: string;
+  /** --allow 按次授予的审批工具（write/edit/bash 子集）；隐含 toolset: 'coding' */
+  allowTools?: readonly string[];
 }
 
 interface TurnResult {
@@ -140,7 +146,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     ungranted approval requests are denied immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -167,6 +173,7 @@ function parseArguments(
   let thinkingLevel: ChatThinkingLevel | undefined;
   let resumeId: string | undefined;
   let workDir: string | undefined;
+  let allowTools: readonly string[] | undefined;
   let noMemory = false;
   let forceHelp = false;
   let forceVersion = false;
@@ -195,6 +202,20 @@ function parseArguments(
         workDir = takeValue(args, index, argument);
         index += 1;
         break;
+      case '--allow': {
+        const requested = takeValue(args, index, argument)
+          .split(',')
+          .map((name) => name.trim())
+          .filter(Boolean);
+        for (const name of requested) {
+          if (!APPROVABLE_TOOLS.includes(name as (typeof APPROVABLE_TOOLS)[number])) {
+            throw new CliUsageError(`--allow accepts ${APPROVABLE_TOOLS.join(',')}; got: ${name}`);
+          }
+        }
+        allowTools = requested;
+        index += 1;
+        break;
+      }
       case '--no-memory':
         noMemory = true;
         break;
@@ -220,6 +241,9 @@ function parseArguments(
   if (Boolean(provider) !== Boolean(modelId)) {
     throw new CliUsageError('Model selection requires both provider and model');
   }
+  if (allowTools && !workDir) {
+    throw new CliUsageError('--allow requires --workdir');
+  }
 
   const first = positional[0];
   const command = first === undefined ? 'chat' : first;
@@ -241,6 +265,7 @@ function parseArguments(
     ...(resumeId ? { resumeId } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(workDir ? { workDir } : {}),
+    ...(allowTools ? { allowTools } : {}),
   };
 }
 
@@ -253,6 +278,7 @@ function engineConfig(
     ...(parsed.model ? { model: parsed.model } : {}),
     ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
     ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
+    ...(parsed.allowTools?.length ? { toolset: 'coding' as const } : {}),
     memory: parsed.noMemory
       ? false
       : {
@@ -287,13 +313,29 @@ function formatMemorySnapshot(memory: ChatMemorySnapshot): string {
 async function consumeTurn(
   session: ChatSessionPort,
   text: string,
-  dependencies: Pick<CliDependencies, 'write' | 'writeError'>
+  dependencies: Pick<CliDependencies, 'write' | 'writeError'>,
+  approvedTools: ReadonlySet<string> = new Set()
 ): Promise<TurnResult> {
   let wroteText = false;
   let terminal: TurnResult['status'] | undefined;
 
   for await (const event of session.send(text)) {
     switch (event.type) {
+      case 'tool_approval_request': {
+        const granted = approvedTools.has(event.tool);
+        session.respondToApproval(event.callId, granted);
+        dependencies.writeError(
+          granted
+            ? `[approval:${event.tool}] granted (--allow)\n`
+            : `[approval:${event.tool}] denied (add --allow ${event.tool} to grant)\n`
+        );
+        break;
+      }
+      case 'tool_approval_resolved':
+        if (event.reason === 'timeout') {
+          dependencies.writeError('[approval] timed out — denied\n');
+        }
+        break;
       case 'message_delta':
         dependencies.write(event.text);
         wroteText = true;
@@ -456,7 +498,12 @@ async function runOneShot(
   });
 
   try {
-    const result = await consumeTurn(session, parsed.prompt ?? '', dependencies);
+    const result = await consumeTurn(
+      session,
+      parsed.prompt ?? '',
+      dependencies,
+      new Set(parsed.allowTools ?? [])
+    );
     if (interrupted || result.status === 'interrupted') return 130;
     return result.status === 'success' ? 0 : 1;
   } finally {
@@ -505,7 +552,7 @@ async function runRepl(
           if (result.exit) break;
         } else {
           processing = true;
-          await consumeTurn(session, line, dependencies);
+          await consumeTurn(session, line, dependencies, new Set(parsed.allowTools ?? []));
           processing = false;
         }
       } catch (error) {
