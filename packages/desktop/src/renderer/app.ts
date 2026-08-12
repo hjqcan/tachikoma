@@ -252,7 +252,10 @@ async function boot(): Promise<void> {
   }
 
   let sessionId = '';
-  let socket: WebSocket | undefined;
+  /** 每会话一条 WS：活动会话驱动全量渲染，后台会话只驱动侧栏状态点 */
+  const sockets = new Map<string, WebSocket>();
+  const busySessions = new Set<string>();
+  const unreadSessions = new Set<string>();
   let selectedToolset: 'read-only' | 'coding' = 'read-only';
   let grantedWorkspace: SessionWorkspace | null = null;
   let currentModel = '';
@@ -531,8 +534,24 @@ async function boot(): Promise<void> {
     if (summary.thinkingLevel) thinkingSelect.value = summary.thinkingLevel;
   }
 
+  /** 后台会话的事件只驱动侧栏状态：生成中呼吸点，完成变未读点并释放连接 */
+  function handleBackgroundEvent(target: string, event: ChatEventWire): void {
+    if (event.type === 'message_start') {
+      busySessions.add(target);
+      updateSessionRowState(target);
+    } else if (event.type === 'message_complete') {
+      busySessions.delete(target);
+      unreadSessions.add(target);
+      updateSessionRowState(target);
+      sockets.get(target)?.close();
+      sockets.delete(target);
+      scheduleSessionListRefresh();
+    }
+  }
+
   async function connect(targetSessionId: string): Promise<void> {
-    socket?.close();
+    sockets.get(targetSessionId)?.close();
+    sockets.delete(targetSessionId);
     const ticketResponse = await fetch(`${base}/v1/auth/ws-ticket`, { method: 'POST', headers });
     const { ticket } = (await ticketResponse.json()) as { ticket: string };
     const next = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${ticket}`);
@@ -541,18 +560,32 @@ async function boot(): Promise<void> {
     });
     next.addEventListener('message', (message) => {
       const parsed = parseSessionEventFrame(JSON.parse(String(message.data)));
-      if (parsed.ok && parsed.known) {
+      if (!parsed.ok) return;
+      if (!parsed.known) {
+        if (targetSessionId === sessionId) {
+          block('status-line').textContent = `[未识别事件 ${parsed.frame.type}]`;
+        }
+        return;
+      }
+      // 路由按"当下"的活动会话判定：切走后同一条 socket 自动降级为后台状态源
+      if (parsed.frame.event.sessionId === sessionId) {
         handleEvent(parsed.frame.event);
-      } else if (parsed.ok) {
-        block('status-line').textContent = `[未识别事件 ${parsed.frame.type}]`;
+      } else {
+        handleBackgroundEvent(targetSessionId, parsed.frame.event);
       }
     });
-    socket = next;
+    sockets.set(targetSessionId, next);
   }
 
-  async function stopIfGenerating(): Promise<void> {
-    if (generating && sessionId) {
-      await rpc('session.abort', { sessionId });
+  /** 离开当前会话：生成中则留在后台跑完（WAL 全量记录，切回重放即完整），空闲则断开 */
+  function detachActiveSession(): void {
+    if (!sessionId) return;
+    if (generating) {
+      busySessions.add(sessionId);
+      updateSessionRowState(sessionId);
+    } else {
+      sockets.get(sessionId)?.close();
+      sockets.delete(sessionId);
     }
   }
 
@@ -560,7 +593,7 @@ async function boot(): Promise<void> {
     workDir?: string;
     toolset?: 'read-only' | 'coding';
   }): Promise<void> {
-    await stopIfGenerating();
+    detachActiveSession();
     const created = await rpc('session.create', params);
     if (!created.ok) {
       block('status-line error').textContent = `[error] ${created.error.message}`;
@@ -577,7 +610,8 @@ async function boot(): Promise<void> {
   /** 恢复历史会话：WS 从 seq 0 重放 WAL，双方对话与工具轨迹全量重建 */
   async function openExisting(targetSessionId: string): Promise<void> {
     if (targetSessionId === sessionId) return;
-    await stopIfGenerating();
+    detachActiveSession();
+    unreadSessions.delete(targetSessionId);
     const opened = await rpc('session.open', { sessionId: targetSessionId });
     if (!opened.ok) {
       block('status-line error').textContent = `[error] ${opened.error.message}`;
@@ -627,8 +661,14 @@ async function boot(): Promise<void> {
       block('status-line error').textContent = `[error] ${result.error.message}`;
       return;
     }
+    sockets.get(target)?.close();
+    sockets.delete(target);
+    busySessions.delete(target);
+    unreadSessions.delete(target);
     if (target === sessionId) {
-      // 删的是当前会话：按当前授予状态接一个新会话
+      // 删的是当前会话（引擎已连带关闭）：按当前授予状态接一个新会话
+      setGenerating(false);
+      sessionId = '';
       await startSession(
         grantedWorkspace ? { workDir: grantedWorkspace.root, toolset: selectedToolset } : {}
       );
@@ -673,9 +713,27 @@ async function boot(): Promise<void> {
     editor.onclick = (click) => click.stopPropagation();
   }
 
+  /** 侧栏行状态点：后台生成中=呼吸，完成未读=常亮（复用传感镜头母题） */
+  function sessionRowStateClass(target: string): string {
+    if (busySessions.has(target)) return ' busy';
+    if (unreadSessions.has(target)) return ' unread';
+    return '';
+  }
+
+  function updateSessionRowState(target: string): void {
+    const row = sessionList.querySelector<HTMLElement>(`[data-sid="${target}"]`);
+    if (!row) return;
+    row.classList.toggle('busy', busySessions.has(target));
+    row.classList.toggle('unread', unreadSessions.has(target));
+  }
+
   function sessionRow(summary: SessionSummaryLite): HTMLElement {
     const row = document.createElement('div');
-    row.className = `session-row${summary.sessionId === sessionId ? ' current' : ''}`;
+    row.className = `session-row${summary.sessionId === sessionId ? ' current' : ''}${sessionRowStateClass(summary.sessionId)}`;
+    row.dataset.sid = summary.sessionId;
+    const state = document.createElement('span');
+    state.className = 'state-dot';
+    row.appendChild(state);
     const title = document.createElement('div');
     title.className = 'session-title';
     title.textContent = summary.title?.trim() || summary.sessionId.slice(0, 8);

@@ -276,6 +276,27 @@
       .session-row.current .session-title {
         color: var(--chassis);
       }
+      /* 后台会话状态点：生成中呼吸、完成未读常亮（悬停时让位给垃圾桶） */
+      .session-row .state-dot {
+        display: none;
+        position: absolute;
+        right: 11px;
+        top: 13px;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--chassis);
+      }
+      .session-row.busy .state-dot {
+        display: block;
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      .session-row.unread .state-dot {
+        display: block;
+      }
+      .session-row:hover .state-dot {
+        display: none;
+      }
       .session-row .del {
         position: absolute;
         right: 6px;
