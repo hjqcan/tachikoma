@@ -54,17 +54,36 @@ async function rpc(method: string, params: unknown): Promise<unknown> {
 }
 
 function createWindow(): void {
+  // show:false + ready-to-show：等首帧再显示——消除白闪，也避免 macOS 上
+  // renderer widget 未就绪导致的 "Message rejected by blink.mojom.WidgetHost" 刷屏。
   const window = new BrowserWindow({
     width: 960,
     height: 720,
     title: 'Tachikoma',
+    show: false,
+    backgroundColor: '#171a21',
     webPreferences: {
       preload: join(here, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
+  window.once('ready-to-show', () => window.show());
   void window.loadFile(join(here, '..', 'renderer', 'index.html'));
+
+  // 开发诊断：TACHIKOMA_CAPTURE=<png 路径> 时加载完成后截渲染结果落盘（无窗口环境下验证 UI）。
+  const capturePath = process.env.TACHIKOMA_CAPTURE;
+  if (capturePath) {
+    window.webContents.once('did-finish-load', () => {
+      setTimeout(() => {
+        void window.webContents.capturePage().then(async (image) => {
+          const { writeFile } = await import('node:fs/promises');
+          await writeFile(capturePath, image.toPNG());
+          console.log(`[desktop] capture written: ${capturePath}`);
+        });
+      }, 1_500);
+    });
+  }
 }
 
 ipcMain.handle('tachikoma:server-info', () => {
