@@ -1,0 +1,28 @@
+{
+  "name": "@tachikoma/desktop",
+  "version": "0.2.0",
+  "description": "The Tachikoma desktop shell: Electron supervisor over the local sidecar.",
+  "type": "module",
+  "private": true,
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "build": "bun run clean && tsc -p tsconfig.main.json --noEmit && bun build src/main/main.ts --format=esm --target=node --external electron --outfile dist/main/main.js && bun build src/main/preload.ts --format=cjs --target=node --external electron --outfile dist/main/preload.cjs && tsc -p tsconfig.renderer.json --noEmit && bun build src/renderer/app.ts --outdir dist/renderer --target browser && cp src/renderer/index.html dist/renderer/index.html",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "start": "electron .",
+    "smoke": "electron . --smoke",
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.renderer.json"
+  },
+  "dependencies": {
+    "@tachikoma/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "electron": "^37.0.0",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "license": "MIT"
+}
