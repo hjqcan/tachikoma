@@ -13,14 +13,20 @@
        *   底盘蓝 = 机器的声音与工具动作；传感红 = 机器请求对世界动手（仅审批）；
        *   机油琥珀 = 记忆事件。红色从不用作装饰。
        * 机器说话用等宽字，人类用人文无衬线 —— 声音的边界就是审批守住的边界。
+       * 签名元素：传感镜头（wordmark 的圆点）——空闲静止、生成中底盘蓝呼吸、
+       * 待审批传感红脉动。一个母题，三个语义态。
        */
       :root {
         color-scheme: dark;
         --ground: #171a21;
+        --well: #12151b;
         --surface: #1f242e;
+        --raised: #262c39;
         --line: #303747;
+        --line-soft: #272d3a;
         --text: #e4e8f1;
         --text-dim: #8b93a7;
+        --text-faint: #5c6478;
         --chassis: #8fa8e8;
         --chassis-strong: #5b79d6;
         --sensor: #e8524a;
@@ -32,6 +38,27 @@
       * {
         box-sizing: border-box;
       }
+      ::selection {
+        background: color-mix(in srgb, var(--chassis-strong) 45%, transparent);
+      }
+      ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: var(--line);
+        border-radius: 5px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-faint);
+        background-clip: padding-box;
+        border: 2px solid transparent;
+      }
+      ::-webkit-scrollbar-corner {
+        background: transparent;
+      }
       body {
         margin: 0;
         background: var(--ground);
@@ -40,35 +67,68 @@
         display: flex;
         flex-direction: column;
         height: 100vh;
+        overflow: hidden;
+      }
+      button {
+        transition:
+          color 0.15s ease,
+          background-color 0.15s ease,
+          border-color 0.15s ease,
+          opacity 0.15s ease;
       }
 
-      /* ── 仪表条 ─────────────────────────────────────── */
+      /* ── 仪表条（hiddenInset 标题栏的拖拽区） ─────────────── */
       header {
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 10px 18px;
+        padding: 0 16px;
+        height: 46px;
+        flex: none;
         border-bottom: 1px solid var(--line);
         background: var(--surface);
         user-select: none;
-        flex-wrap: wrap;
+        -webkit-app-region: drag;
+      }
+      body.mac header {
+        padding-left: 84px; /* macOS 红绿灯 */
+      }
+      header button,
+      header select {
+        -webkit-app-region: no-drag;
       }
       .wordmark {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
         font: 600 12px var(--human);
         letter-spacing: 0.32em;
         color: var(--chassis);
       }
-      .wordmark::before {
-        content: '';
-        display: inline-block;
-        width: 8px;
-        height: 8px;
+      /* 传感镜头：签名状态灯 */
+      .lens {
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
         background: var(--chassis);
-        margin-right: 10px;
-        vertical-align: 1px;
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--chassis) 22%, transparent);
+        flex: none;
       }
-      #workspace-chip {
+      body.generating .lens {
+        animation: breathe 1.6s ease-in-out infinite;
+      }
+      body.awaiting-approval .lens {
+        background: var(--sensor);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--sensor) 26%, transparent);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        50% {
+          box-shadow: 0 0 0 5px color-mix(in srgb, var(--chassis) 14%, transparent);
+        }
+      }
+      #workspace-chip,
+      #sessions-toggle {
         font: 12px var(--mono);
         color: var(--text-dim);
         background: none;
@@ -81,9 +141,15 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      #workspace-chip:hover {
+      #workspace-chip:hover,
+      #sessions-toggle:hover {
         border-color: var(--chassis);
         color: var(--chassis);
+      }
+      #sessions-toggle[aria-pressed='true'] {
+        color: var(--chassis);
+        border-color: var(--chassis-strong);
+        background: color-mix(in srgb, var(--chassis) 10%, transparent);
       }
       #workspace-chip.granted {
         color: var(--chassis);
@@ -94,6 +160,7 @@
         border: 1px solid var(--line);
         border-radius: 999px;
         overflow: hidden;
+        -webkit-app-region: no-drag;
       }
       #toolset button {
         font: 12px var(--mono);
@@ -102,6 +169,9 @@
         color: var(--text-dim);
         padding: 4px 12px;
         cursor: pointer;
+      }
+      #toolset button:hover {
+        color: var(--chassis);
       }
       #toolset button.active {
         background: var(--chassis-strong);
@@ -112,8 +182,11 @@
       }
       #status {
         font: 11px var(--mono);
-        color: var(--text-dim);
+        color: var(--text-faint);
         text-align: right;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       /* ── 主体：会话栏 + 对话日志 ─────────────────────── */
@@ -122,21 +195,8 @@
         display: flex;
         overflow: hidden;
       }
-      #sessions-toggle {
-        font: 12px var(--mono);
-        color: var(--text-dim);
-        background: none;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 4px 14px;
-        cursor: pointer;
-      }
-      #sessions-toggle:hover {
-        border-color: var(--chassis);
-        color: var(--chassis);
-      }
       #sessions {
-        width: 270px;
+        width: 272px;
         flex: none;
         border-right: 1px solid var(--line);
         background: var(--surface);
@@ -147,37 +207,50 @@
         display: none;
       }
       .aside-head {
-        padding: 10px 12px;
-        border-bottom: 1px solid var(--line);
+        padding: 12px;
+        border-bottom: 1px solid var(--line-soft);
       }
       #new-session {
         width: 100%;
         font: 600 12px var(--human);
         background: none;
         color: var(--chassis);
-        border: 1px dashed var(--chassis-strong);
-        border-radius: 6px;
+        border: 1px solid var(--chassis-strong);
+        border-radius: 7px;
         padding: 7px 0;
         cursor: pointer;
       }
       #new-session:hover {
-        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+        background: color-mix(in srgb, var(--chassis) 12%, transparent);
       }
       #session-list {
         flex: 1;
         overflow-y: auto;
+        padding: 4px 0;
       }
       .session-row {
         position: relative;
-        padding: 10px 34px 10px 14px;
-        border-bottom: 1px solid var(--line);
+        margin: 1px 6px;
+        padding: 8px 30px 8px 10px;
+        border-left: 2px solid transparent;
+        border-radius: 7px;
         cursor: pointer;
+        transition: background-color 0.15s ease;
+      }
+      .session-row:hover {
+        background: color-mix(in srgb, var(--chassis) 8%, transparent);
+      }
+      .session-row.current {
+        border-left-color: var(--chassis-strong);
+        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+      }
+      .session-row.current .session-title {
+        color: var(--chassis);
       }
       .session-row .del {
         position: absolute;
-        right: 8px;
-        top: 50%;
-        transform: translateY(-50%);
+        right: 6px;
+        top: 8px;
         display: flex;
         background: none;
         border: none;
@@ -185,7 +258,7 @@
         cursor: pointer;
         opacity: 0;
         padding: 5px;
-        border-radius: 4px;
+        border-radius: 5px;
       }
       .session-row:hover .del,
       .session-row .del:focus-visible {
@@ -198,12 +271,12 @@
       .session-row .confirm-bar {
         display: flex;
         gap: 6px;
-        margin-top: 5px;
+        margin-top: 6px;
       }
       .confirm-bar button {
         font: 600 11px var(--human);
-        border-radius: 4px;
-        padding: 2px 10px;
+        border-radius: 5px;
+        padding: 3px 10px;
         cursor: pointer;
         border: 1px solid transparent;
       }
@@ -219,12 +292,9 @@
         border-color: var(--line);
         color: var(--text-dim);
       }
-      .session-row:hover {
-        background: color-mix(in srgb, var(--chassis) 7%, transparent);
-      }
-      .session-row.current {
-        border-left: 2px solid var(--chassis-strong);
-        background: color-mix(in srgb, var(--chassis) 5%, transparent);
+      .confirm-bar .no:hover {
+        border-color: var(--text-dim);
+        color: var(--text);
       }
       .session-title {
         font: 13px var(--human);
@@ -235,7 +305,7 @@
       }
       .session-meta {
         font: 10px var(--mono);
-        color: var(--text-dim);
+        color: var(--text-faint);
         margin-top: 3px;
       }
 
@@ -243,17 +313,18 @@
       #log {
         flex: 1;
         overflow-y: auto;
-        padding: 28px 0 40px;
+        padding: 26px 0 44px;
+        scroll-padding-bottom: 44px;
       }
       #log > * {
-        max-width: 74ch;
+        max-width: 76ch;
         margin-left: auto;
         margin-right: auto;
-        padding-left: 24px;
-        padding-right: 24px;
+        padding-left: 28px;
+        padding-right: 28px;
       }
       .turn {
-        margin-bottom: 26px;
+        margin-bottom: 28px;
         animation: rise 0.18s ease-out;
       }
       @keyframes rise {
@@ -266,27 +337,118 @@
         font: 600 10px var(--human);
         letter-spacing: 0.24em;
         text-transform: uppercase;
-        color: var(--text-dim);
-        margin-bottom: 6px;
+        color: var(--text-faint);
+        margin-bottom: 7px;
       }
       .turn.machine .role {
         color: var(--chassis);
       }
       .turn.you .body {
         white-space: pre-wrap;
+        color: var(--text);
       }
       .turn.machine .body {
-        font: 13px/1.7 var(--mono);
+        font: 13px/1.75 var(--mono);
+      }
+
+      /* 机器声音里的 Markdown：等宽为底，结构轻起伏 */
+      .body .md-p {
+        margin: 0 0 10px;
         white-space: pre-wrap;
       }
+      .body > :last-child {
+        margin-bottom: 0;
+      }
+      .body .md-h {
+        font-weight: 700;
+        color: var(--text);
+        margin: 16px 0 8px;
+      }
+      .body .md-h1 {
+        font-size: 15px;
+        border-bottom: 1px solid var(--line-soft);
+        padding-bottom: 6px;
+      }
+      .body .md-h2 {
+        font-size: 14px;
+      }
+      .body .md-h3,
+      .body .md-h4 {
+        font-size: 13px;
+        color: var(--chassis);
+      }
+      .body ul,
+      .body ol {
+        margin: 0 0 10px;
+        padding-left: 22px;
+      }
+      .body li {
+        margin: 3px 0;
+      }
+      .body li::marker {
+        color: var(--text-faint);
+      }
+      .body code {
+        font: 12px var(--mono);
+        color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 9%, transparent);
+        border-radius: 4px;
+        padding: 1px 5px;
+      }
+      .body pre.code {
+        margin: 0 0 12px;
+        padding: 10px 12px;
+        background: var(--well);
+        border: 1px solid var(--line-soft);
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+      .body pre.code code {
+        background: none;
+        color: var(--text);
+        padding: 0;
+        font: 12px/1.6 var(--mono);
+        white-space: pre;
+      }
+      .body blockquote {
+        margin: 0 0 10px;
+        padding: 2px 0 2px 12px;
+        border-left: 2px solid var(--line);
+        color: var(--text-dim);
+        white-space: pre-wrap;
+      }
+      .body hr {
+        border: none;
+        border-top: 1px solid var(--line-soft);
+        margin: 14px 0;
+      }
+      .body a {
+        color: var(--chassis);
+        text-decoration: underline;
+        text-decoration-color: color-mix(in srgb, var(--chassis) 45%, transparent);
+        text-underline-offset: 3px;
+        cursor: pointer;
+      }
+      .body a:hover {
+        text-decoration-color: var(--chassis);
+      }
+      .body strong {
+        color: var(--text);
+        font-weight: 700;
+      }
+
       details.thinking {
-        margin: 4px 0 8px;
+        margin: 4px 0 10px;
       }
       details.thinking summary {
         font: 11px var(--mono);
-        color: var(--text-dim);
+        color: var(--text-faint);
         cursor: pointer;
         list-style: none;
+        transition: color 0.15s ease;
+      }
+      details.thinking summary:hover {
+        color: var(--text-dim);
       }
       details.thinking summary::before {
         content: '▸ ';
@@ -305,6 +467,37 @@
         white-space: pre-wrap;
       }
 
+      /* ── 空状态：机器就绪，等待第一句话 ───────────────── */
+      .hero {
+        margin-top: 16vh;
+        text-align: center;
+        animation: rise 0.3s ease-out;
+      }
+      .hero .hero-lens {
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        margin: 0 auto 18px;
+        border: 2px solid color-mix(in srgb, var(--chassis) 45%, transparent);
+        position: relative;
+      }
+      .hero .hero-lens::after {
+        content: '';
+        position: absolute;
+        inset: 9px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--chassis) 65%, transparent);
+      }
+      .hero .hero-title {
+        font: 600 14px var(--human);
+        color: var(--text-dim);
+        margin-bottom: 10px;
+      }
+      .hero .hero-hint {
+        font: 11px/2 var(--mono);
+        color: var(--text-faint);
+      }
+
       /* ── 工具遥测：底盘蓝左轨 ───────────────────────── */
       .tool {
         border-left: 2px solid var(--chassis-strong);
@@ -314,10 +507,27 @@
         color: var(--text-dim);
       }
       .tool .head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        min-width: 0;
+      }
+      .tool .head .name {
         color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+        border-radius: 4px;
+        padding: 0 6px;
+        flex: none;
+      }
+      .tool .head .args {
+        color: var(--text-faint);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
       .tool .head .verdict {
         color: var(--text-dim);
+        flex: none;
       }
       .tool .head .verdict.err {
         color: var(--sensor);
@@ -325,7 +535,8 @@
       .tool pre {
         margin: 6px 0 2px;
         padding: 8px 10px;
-        background: var(--surface);
+        background: var(--well);
+        border: 1px solid var(--line-soft);
         border-radius: 6px;
         max-height: 200px;
         overflow: auto;
@@ -363,17 +574,13 @@
           opacity: 0.25;
         }
       }
-      @media (prefers-reduced-motion: reduce) {
-        .approval .eye {
-          animation: none;
-        }
-        .turn {
-          animation: none;
-        }
+      .approval.resolved {
+        border-color: var(--line);
+        background: var(--surface);
       }
       .approval.resolved .eye {
         animation: none;
-        background: var(--text-dim);
+        background: var(--text-faint);
       }
       .approval code {
         font: 12px var(--mono);
@@ -381,7 +588,7 @@
       }
       .approval pre {
         font: 11px/1.55 var(--mono);
-        background: var(--ground);
+        background: var(--well);
         border-radius: 6px;
         padding: 8px 10px;
         max-height: 220px;
@@ -423,6 +630,7 @@
         display: flex;
         gap: 8px;
         align-items: center;
+        margin-top: 10px;
       }
       .approval button {
         font: 600 12px var(--human);
@@ -449,6 +657,7 @@
       .approval .verdict-line {
         font: 12px var(--mono);
         color: var(--text-dim);
+        margin-top: 8px;
       }
 
       /* ── 状态与分隔 ─────────────────────────────────── */
@@ -468,21 +677,22 @@
         align-items: center;
         gap: 12px;
         font: 11px var(--mono);
-        color: var(--text-dim);
+        color: var(--text-faint);
         margin: 22px auto;
+        white-space: nowrap;
       }
       .session-divider::before,
       .session-divider::after {
         content: '';
         flex: 1;
-        border-top: 1px solid var(--line);
+        border-top: 1px solid var(--line-soft);
+        min-width: 24px;
       }
 
       /* ── 输入区：人类的材质 ─────────────────────────── */
       footer {
-        display: flex;
-        gap: 10px;
-        padding: 14px 18px 16px;
+        flex: none;
+        padding: 12px 18px 12px;
         border-top: 1px solid var(--line);
         background: var(--surface);
       }
@@ -490,13 +700,55 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
-        flex: 1;
-        max-width: 74ch;
+        max-width: 76ch;
         margin: 0 auto;
+        padding: 0 10px;
       }
       footer .compose {
         display: flex;
         gap: 10px;
+        align-items: flex-end;
+      }
+      #input {
+        flex: 1;
+        font: 14px/1.55 var(--human);
+        color: var(--text);
+        background: var(--ground);
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 9px 12px;
+        outline: none;
+        resize: none;
+        max-height: 168px;
+        transition: border-color 0.15s ease;
+      }
+      #input:focus {
+        border-color: var(--chassis-strong);
+      }
+      #input::placeholder {
+        color: var(--text-faint);
+      }
+      #send {
+        font: 600 13px var(--human);
+        background: var(--chassis-strong);
+        color: #fff;
+        border: none;
+        border-radius: 9px;
+        padding: 9px 20px;
+        cursor: pointer;
+        flex: none;
+      }
+      #send:hover {
+        background: var(--chassis);
+        color: var(--ground);
+      }
+      /* 生成中送出键变为"停止"：传感红——人对机器行动的即时控制权 */
+      #send.generating {
+        background: var(--sensor-deep);
+      }
+      #send.generating:hover {
+        background: var(--sensor);
+        color: #fff;
       }
       footer .params {
         display: flex;
@@ -508,16 +760,19 @@
       footer .params select {
         font: 11px var(--mono);
         color: var(--text-dim);
-        background: var(--ground);
-        border: 1px solid var(--line);
+        background: none;
+        border: 1px solid var(--line-soft);
         border-radius: 6px;
-        padding: 4px 10px;
+        padding: 3px 10px;
         outline: none;
         cursor: pointer;
         max-width: 40ch;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        transition:
+          color 0.15s ease,
+          border-color 0.15s ease;
       }
       footer .params button:hover,
       footer .params select:hover {
@@ -533,18 +788,19 @@
       /* 模型选择面板：主题内自绘（原生 datalist 会被预填值过滤成单条 + 白底跳戏） */
       #model-picker {
         position: absolute;
-        bottom: calc(100% + 8px);
+        bottom: calc(100% + 10px);
         right: 0;
         width: 46ch;
         max-height: 320px;
         display: flex;
         flex-direction: column;
-        background: var(--surface);
+        background: var(--raised);
         border: 1px solid var(--line);
-        border-radius: 8px;
-        box-shadow: 0 8px 28px #0008;
+        border-radius: 9px;
+        box-shadow: 0 12px 36px #000a;
         overflow: hidden;
         z-index: 10;
+        animation: rise 0.14s ease-out;
       }
       #model-picker[hidden] {
         display: none;
@@ -552,14 +808,18 @@
       #model-filter {
         font: 12px var(--mono);
         color: var(--text);
-        background: var(--ground);
+        background: var(--well);
         border: none;
         border-bottom: 1px solid var(--line);
-        padding: 8px 12px;
+        padding: 9px 12px;
         outline: none;
+      }
+      #model-filter::placeholder {
+        color: var(--text-faint);
       }
       #model-options {
         overflow-y: auto;
+        padding: 4px 0;
       }
       .model-row {
         display: flex;
@@ -571,69 +831,54 @@
         cursor: pointer;
         white-space: nowrap;
         overflow: hidden;
+        transition: background-color 0.12s ease;
       }
-      .model-row:hover,
-      .model-row.hint:hover {
+      .model-row span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .model-row:hover {
         background: color-mix(in srgb, var(--chassis) 10%, transparent);
       }
       .model-row.active {
         color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 7%, transparent);
       }
       .model-row .tag {
         margin-left: auto;
         color: var(--chassis);
         font-size: 10px;
+        border: 1px solid color-mix(in srgb, var(--chassis) 35%, transparent);
+        border-radius: 999px;
+        padding: 0 7px;
+        flex: none;
       }
       .model-row.hint {
-        color: var(--text-dim);
+        color: var(--text-faint);
         cursor: default;
       }
-      #input {
-        flex: 1;
-        font: 14px var(--human);
-        color: var(--text);
-        background: var(--ground);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 9px 12px;
-        outline: none;
+      .model-row.hint:hover {
+        background: none;
       }
-      #input:focus {
-        border-color: var(--chassis-strong);
-      }
-      #send {
-        font: 600 13px var(--human);
-        background: var(--chassis-strong);
-        color: #fff;
-        border: none;
-        border-radius: 8px;
-        padding: 0 20px;
-        cursor: pointer;
-      }
-      #send:hover {
-        background: var(--chassis);
-        color: var(--ground);
-      }
-      /* 生成中送出键变为"停止"：传感红——人对机器行动的即时控制权 */
-      #send.generating {
-        background: var(--sensor-deep);
-      }
-      #send.generating:hover {
-        background: var(--sensor);
-        color: #fff;
-      }
+
       button:focus-visible,
-      #workspace-chip:focus-visible,
-      #input:focus-visible {
+      #workspace-chip:focus-visible {
         outline: 2px solid var(--chassis);
         outline-offset: 1px;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
       }
     </style>
   </head>
   <body>
     <header>
-      <span class="wordmark">TACHIKOMA</span>
-      <button id="sessions-toggle" title="会话列表">会话</button>
+      <span class="wordmark"><span class="lens"></span>TACHIKOMA</span>
+      <button id="sessions-toggle" aria-pressed="false" title="会话列表">会话</button>
       <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
       <span id="toolset">
         <button data-toolset="read-only" class="active" title="read / grep / find / ls">
@@ -656,7 +901,12 @@
     <footer>
       <span class="inner">
         <span class="compose">
-          <input id="input" placeholder="发消息…（Enter 发送）" autofocus />
+          <textarea
+            id="input"
+            rows="1"
+            placeholder="发消息…（Enter 发送，Shift+Enter 换行）"
+            autofocus
+          ></textarea>
           <button id="send">发送</button>
         </span>
         <span class="params">

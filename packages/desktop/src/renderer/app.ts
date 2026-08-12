@@ -36,7 +36,7 @@ interface SessionSummaryLite {
 
 const statusBar = document.getElementById('status') as HTMLElement;
 const log = document.getElementById('log') as HTMLElement;
-const input = document.getElementById('input') as HTMLInputElement;
+const input = document.getElementById('input') as HTMLTextAreaElement;
 const sendButton = document.getElementById('send') as HTMLButtonElement;
 const workspaceChip = document.getElementById('workspace-chip') as HTMLButtonElement;
 const toolsetGroup = document.getElementById('toolset') as HTMLElement;
@@ -50,8 +50,136 @@ const modelFilter = document.getElementById('model-filter') as HTMLInputElement;
 const modelOptions = document.getElementById('model-options') as HTMLElement;
 const thinkingSelect = document.getElementById('thinking') as HTMLSelectElement;
 
+if (navigator.platform.startsWith('Mac')) document.body.classList.add('mac');
+
 function statusLine(text: string): void {
   statusBar.textContent = text;
+}
+
+/** textarea 自动增高：1 行起步，封顶交给 CSS max-height */
+function autosizeInput(): void {
+  input.style.height = 'auto';
+  input.style.height = `${input.scrollHeight}px`;
+}
+input.addEventListener('input', autosizeInput);
+
+/**
+ * 机器声音的 Markdown 渲染：纯 DOM 构建（textContent，不信任内容进 innerHTML）。
+ * 覆盖：标题/列表/围栏代码/行内代码/加粗/引用/分隔线/链接；流式期间对未闭合
+ * 围栏按开放代码块渲染。刻意不做表格与嵌套列表——等宽底子上保持安静。
+ */
+function renderInline(text: string): DocumentFragment {
+  const fragment = document.createDocumentFragment();
+  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\[[^\]\n]+\]\(https?:[^)\s]+\))/g;
+  let last = 0;
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    if (match.index > last) fragment.append(text.slice(last, match.index));
+    const token = match[0];
+    if (token.startsWith('`')) {
+      const code = document.createElement('code');
+      code.textContent = token.slice(1, -1);
+      fragment.append(code);
+    } else if (token.startsWith('**')) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2);
+      fragment.append(strong);
+    } else {
+      const split = token.indexOf('](');
+      const anchor = document.createElement('a');
+      anchor.textContent = token.slice(1, split);
+      anchor.href = token.slice(split + 2, -1);
+      anchor.title = anchor.href;
+      fragment.append(anchor);
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) fragment.append(text.slice(last));
+  return fragment;
+}
+
+function renderMarkdown(source: string, into: HTMLElement): void {
+  into.textContent = '';
+  const lines = source.split('\n');
+  let list: HTMLUListElement | HTMLOListElement | null = null;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index] ?? '';
+    if (/^```/.test(line)) {
+      const buffer: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index] ?? '')) {
+        buffer.push(lines[index] ?? '');
+        index += 1;
+      }
+      index += 1; // 闭合围栏（或流式中的文件尾）
+      const pre = document.createElement('pre');
+      pre.className = 'code';
+      const code = document.createElement('code');
+      code.textContent = buffer.join('\n');
+      pre.append(code);
+      into.append(pre);
+      list = null;
+      continue;
+    }
+    const heading = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (heading?.[1] && heading[2] !== undefined) {
+      const block = document.createElement('div');
+      block.className = `md-h md-h${heading[1].length}`;
+      block.append(renderInline(heading[2]));
+      into.append(block);
+      list = null;
+      index += 1;
+      continue;
+    }
+    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
+    const ordered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+    const item = bullet?.[1] ?? ordered?.[1];
+    if (item !== undefined) {
+      const wantOrdered = Boolean(ordered);
+      if (!list || (list.tagName === 'OL') !== wantOrdered) {
+        list = document.createElement(wantOrdered ? 'ol' : 'ul');
+        into.append(list);
+      }
+      const li = document.createElement('li');
+      li.append(renderInline(item));
+      list.append(li);
+      index += 1;
+      continue;
+    }
+    list = null;
+    const quote = /^>\s?(.*)$/.exec(line);
+    if (quote !== null) {
+      const block = document.createElement('blockquote');
+      block.append(renderInline(quote[1] ?? ''));
+      into.append(block);
+      index += 1;
+      continue;
+    }
+    if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+      into.append(document.createElement('hr'));
+      index += 1;
+      continue;
+    }
+    if (line.trim() === '') {
+      index += 1;
+      continue;
+    }
+    // 连续文本行合成一段（保留段内换行）
+    const paragraph: string[] = [line];
+    while (
+      index + 1 < lines.length &&
+      (lines[index + 1] ?? '').trim() !== '' &&
+      !/^(```|#{1,4}\s|\s*[-*]\s|\s*\d+[.)]\s|>)/.test(lines[index + 1] ?? '')
+    ) {
+      index += 1;
+      paragraph.push(lines[index] ?? '');
+    }
+    const block = document.createElement('div');
+    block.className = 'md-p';
+    block.append(renderInline(paragraph.join('\n')));
+    into.append(block);
+    index += 1;
+  }
 }
 
 function appendToLog(element: HTMLElement): void {
@@ -134,6 +262,7 @@ async function boot(): Promise<void> {
     generating = next;
     sendButton.textContent = next ? '停止' : '发送';
     sendButton.classList.toggle('generating', next);
+    document.body.classList.toggle('generating', next); // 传感镜头呼吸
   }
 
   function refreshInstrumentCluster(): void {
@@ -151,16 +280,14 @@ async function boot(): Promise<void> {
     for (const button of toolsetGroup.querySelectorAll('button')) {
       button.classList.toggle('active', button.dataset.toolset === selectedToolset);
     }
-    statusLine(
-      `engine ${engineVersion}${currentModel ? ` · ${currentModel}` : ''} · session ${
-        sessionId ? sessionId.slice(0, 8) : '—'
-      }${memoryNote ? ` · memory: ${memoryNote}` : ''}`
-    );
+    // 仪表条只留机器自身的状态；模型归页脚 chip，会话身份归侧栏
+    statusLine(`engine ${engineVersion}${memoryNote ? ` · memory ${memoryNote}` : ''}`);
   }
 
   // ── 事件渲染 ────────────────────────────────────────────────
 
   let assistantBlock: HTMLElement | null = null;
+  let assistantRaw = ''; // 当前助手回合累积的 Markdown 原文（渲染的唯一来源）
   let reasoningOpen = false;
   const toolNodes = new Map<
     string,
@@ -172,10 +299,15 @@ async function boot(): Promise<void> {
     const container = block('tool');
     const head = document.createElement('div');
     head.className = 'head';
-    head.textContent = `${tool} · ${preview} `;
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = tool;
+    const args = document.createElement('span');
+    args.className = 'args';
+    args.textContent = preview;
     const verdict = document.createElement('span');
     verdict.className = 'verdict';
-    head.appendChild(verdict);
+    head.append(name, args, verdict);
     container.appendChild(head);
     const node = { head, verdict, container } as {
       head: HTMLElement;
@@ -202,6 +334,7 @@ async function boot(): Promise<void> {
   function handleEvent(event: ChatEventWire): void {
     switch (event.type) {
       case 'user_message': {
+        log.querySelector('.hero')?.remove(); // 第一句话说出口，空状态退场
         // 用户回合也来自事件流：live 与 WAL 重放共用同一渲染路径
         const userBlock = block('turn you');
         userBlock.innerHTML = '<div class="role">you</div>';
@@ -215,6 +348,7 @@ async function boot(): Promise<void> {
         setGenerating(true);
         assistantBlock = block('turn machine');
         assistantBlock.innerHTML = '<div class="role">tachikoma</div>';
+        assistantRaw = '';
         reasoningOpen = false;
         break;
       case 'reasoning_delta': {
@@ -235,13 +369,14 @@ async function boot(): Promise<void> {
       }
       case 'message_delta': {
         if (!assistantBlock) break;
-        let body = assistantBlock.querySelector('.body');
+        let body = assistantBlock.querySelector('.body') as HTMLElement | null;
         if (!body) {
           body = document.createElement('div');
           body.className = 'body';
           assistantBlock.appendChild(body);
         }
-        body.textContent = `${body.textContent ?? ''}${event.text}`;
+        assistantRaw += event.text;
+        renderMarkdown(assistantRaw, body);
         appendToLog(assistantBlock);
         break;
       }
@@ -272,6 +407,7 @@ async function boot(): Promise<void> {
       case 'tool_approval_request': {
         const card = block('approval');
         approvalCards.set(event.callId, card);
+        document.body.classList.add('awaiting-approval'); // 传感镜头转红
         const ask = document.createElement('div');
         ask.className = 'ask';
         ask.innerHTML = `<span class="eye"></span><span>请求执行 <code>${event.tool}</code></span>`;
@@ -307,6 +443,7 @@ async function boot(): Promise<void> {
       case 'tool_approval_resolved': {
         const card = approvalCards.get(event.callId);
         approvalCards.delete(event.callId);
+        if (approvalCards.size === 0) document.body.classList.remove('awaiting-approval');
         if (!card) break;
         card.classList.add('resolved');
         card.querySelector('.actions')?.remove();
@@ -336,13 +473,17 @@ async function boot(): Promise<void> {
       case 'retry':
         block('status-line').textContent = `[retry] ${event.attempt}/${event.maxAttempts}`;
         break;
-      case 'message_complete':
+      case 'message_complete': {
         setGenerating(false);
+        // 以权威全文重渲染一次：流式期间未闭合的结构（围栏等）在此收口
+        const body = assistantBlock?.querySelector('.body') as HTMLElement | null;
+        if (body && event.content) renderMarkdown(event.content, body);
         if (event.status !== 'success') {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
         }
         assistantBlock = null;
         break;
+      }
       default:
         break;
     }
@@ -354,9 +495,29 @@ async function boot(): Promise<void> {
     log.innerHTML = '';
     toolNodes.clear();
     approvalCards.clear();
+    document.body.classList.remove('awaiting-approval');
     assistantBlock = null;
+    assistantRaw = '';
     reasoningOpen = false;
     setGenerating(false);
+  }
+
+  /** 空状态：机器就绪，等第一句话（仅新会话；第一条 user_message 到来即退场）。
+   *  授予状态直接写进 hero——新会话不再另画分隔线。 */
+  function showHero(): void {
+    const hero = block('hero');
+    const lens = document.createElement('div');
+    lens.className = 'hero-lens';
+    const title = document.createElement('div');
+    title.className = 'hero-title';
+    title.textContent = '机器就绪。';
+    const hint = document.createElement('div');
+    hint.className = 'hero-hint';
+    const grantLine = grantedWorkspace
+      ? `工作区 ${grantedWorkspace.root} · ${grantedWorkspace.tools.join(' / ')}`
+      : '零工具 · 点击上方「无工作区」选择目录，授予工具权限';
+    hint.append(grantLine, document.createElement('br'), 'Enter 发送 · Shift+Enter 换行');
+    hero.append(lens, title, hint);
   }
 
   function adoptSummary(summary: SessionSummaryLite): void {
@@ -406,10 +567,7 @@ async function boot(): Promise<void> {
     clearTimeline();
     adoptSummary(created.result as SessionSummaryLite);
     await connect(sessionId);
-    const divider = block('session-divider');
-    divider.textContent = grantedWorkspace
-      ? `新会话 · 工作区 ${grantedWorkspace.root} · ${grantedWorkspace.tools.join(' / ')}`
-      : '新会话 · 零工具';
+    showHero();
     refreshInstrumentCluster();
     input.focus();
   }
@@ -433,6 +591,29 @@ async function boot(): Promise<void> {
     refreshInstrumentCluster();
     void refreshSessionList();
     input.focus();
+  }
+
+  /** 会话时间：今天只给时刻，昨天点名，更早给日期——列表里时间是导航不是档案 */
+  function relativeWhen(timestamp: number): string {
+    const then = new Date(timestamp);
+    const now = new Date();
+    const sameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    const hhmm = then.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    if (sameDay(then, now)) return hhmm;
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (sameDay(then, yesterday)) return `昨天 ${hhmm}`;
+    if (then.getFullYear() === now.getFullYear()) {
+      return then.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
+    }
+    return then.toLocaleDateString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
   }
 
   const TRASH_SVG =
@@ -461,15 +642,12 @@ async function boot(): Promise<void> {
     title.textContent = summary.title?.trim() || summary.sessionId.slice(0, 8);
     const meta = document.createElement('div');
     meta.className = 'session-meta';
-    const when = summary.updatedAt
-      ? new Date(summary.updatedAt).toLocaleString('zh-CN', {
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        })
-      : '';
-    meta.textContent = [when, `${summary.messageCount ?? 0} 条`].filter(Boolean).join(' · ');
+    meta.textContent = [
+      summary.updatedAt ? relativeWhen(summary.updatedAt) : '',
+      `${summary.messageCount ?? 0} 条`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
     const del = document.createElement('button');
     del.className = 'del';
@@ -546,6 +724,7 @@ async function boot(): Promise<void> {
     const text = input.value.trim();
     if (!text || !sessionId || generating) return;
     input.value = '';
+    autosizeInput();
     // 用户回合不本地回显：user_message 事件是唯一渲染来源（live 与重放一致）
     const sent = await rpc('session.send', { sessionId, text });
     if (!sent.ok) {
@@ -569,6 +748,7 @@ async function boot(): Promise<void> {
 
   sessionsToggle.onclick = () => {
     sessionsPanel.hidden = !sessionsPanel.hidden;
+    sessionsToggle.setAttribute('aria-pressed', String(!sessionsPanel.hidden));
     if (!sessionsPanel.hidden) void refreshSessionList();
   };
 

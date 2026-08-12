@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { startSidecar } from './supervisor';
 import type { SidecarHandle } from './supervisor';
 
@@ -57,11 +57,15 @@ function createWindow(): void {
   // show:false + ready-to-show：等首帧再显示——消除白闪，也避免 macOS 上
   // renderer widget 未就绪导致的 "Message rejected by blink.mojom.WidgetHost" 刷屏。
   const window = new BrowserWindow({
-    width: 960,
-    height: 720,
+    width: 1120,
+    height: 760,
+    minWidth: 720,
+    minHeight: 520,
     title: 'Tachikoma',
     show: false,
     backgroundColor: '#171a21',
+    // macOS：标题栏融进仪表条（header 是拖拽区），窗口即机体
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(here, 'preload.cjs'),
       contextIsolation: true,
@@ -69,19 +73,31 @@ function createWindow(): void {
     },
   });
   window.once('ready-to-show', () => window.show());
+  // 时间线里的 Markdown 链接：一律交给系统浏览器，窗口本身永不离开 renderer
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  window.webContents.on('will-navigate', (navigation, url) => {
+    navigation.preventDefault();
+    if (/^https?:/.test(url)) void shell.openExternal(url);
+  });
   void window.loadFile(join(here, '..', 'renderer', 'index.html'));
 
   // 开发诊断：TACHIKOMA_CAPTURE=<png 路径> 时加载完成后截渲染结果落盘（无窗口环境下验证 UI）；
-  // TACHIKOMA_CAPTURE_CLICK=<selector> 可在截屏前先点击一个元素（验证弹层等交互态）。
+  // TACHIKOMA_CAPTURE_CLICK=<selector[,selector…]> 截屏前按序逐个点击（验证弹层/侧栏/恢复会话等多步交互态）。
   const capturePath = process.env.TACHIKOMA_CAPTURE;
   if (capturePath) {
-    const clickSelector = process.env.TACHIKOMA_CAPTURE_CLICK;
+    const clickSelectors = (process.env.TACHIKOMA_CAPTURE_CLICK ?? '')
+      .split(',')
+      .map((selector) => selector.trim())
+      .filter(Boolean);
     window.webContents.once('did-finish-load', () => {
       setTimeout(() => {
         void (async () => {
-          if (clickSelector) {
+          for (const selector of clickSelectors) {
             await window.webContents.executeJavaScript(
-              `document.querySelector(${JSON.stringify(clickSelector)})?.click()`
+              `document.querySelector(${JSON.stringify(selector)})?.click()`
             );
             await new Promise((resolveDelay) => setTimeout(resolveDelay, 800));
           }
@@ -89,6 +105,7 @@ function createWindow(): void {
           const { writeFile } = await import('node:fs/promises');
           await writeFile(capturePath, image.toPNG());
           console.log(`[desktop] capture written: ${capturePath}`);
+          app.quit(); // 诊断模式截完即退：不留孤儿实例
         })();
       }, 1_500);
     });

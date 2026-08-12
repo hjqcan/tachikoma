@@ -121,8 +121,10 @@ transcript does not store (thinking deltas, `tool_update`) are not reconstructed
 via stdin, three-stage stop: shutdown RPC → SIGTERM → SIGKILL), exposes `serverInfo` and a native
 workspace picker over a context-isolated preload, and the renderer is vanilla TS that speaks only
 `@tachikoma/protocol` — streaming, collapsible reasoning, live tool telemetry, approval cards, and
-session-level workspace grants from the header. React, packaging/signing, and a compiled sidecar
-binary belong to later desktop iterations.
+session-level workspace grants from the header. The machine voice renders a minimal safe Markdown
+subset (DOM construction only, never innerHTML with model output); links open in the system browser
+and the window itself never navigates. On macOS the title bar is `hiddenInset` with the header as
+the drag region. React and packaging/signing belong to later desktop iterations.
 
 ## Explicitly absent
 
