@@ -1,0 +1,49 @@
+{
+  "name": "@tachikoma/server",
+  "version": "0.2.0",
+  "description": "The Tachikoma local sidecar: HTTP RPC + WS event frames over a WAL.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tachikoma-engined": "./dist/engined.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "bun run clean && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "dev": "bun src/engined.ts",
+    "test": "bun test tests",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@tachikoma/core": "workspace:*",
+    "@tachikoma/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  },
+  "keywords": [
+    "tachikoma",
+    "server",
+    "sidecar"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hjqcan/tachikoma.git",
+    "directory": "packages/server"
+  }
+}

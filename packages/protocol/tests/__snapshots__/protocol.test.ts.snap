@@ -1,0 +1,2487 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSON Schema 导出与快照一致 1`] = `
+{
+  "chatEventWire": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "messageId": {
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "message_start",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "messageId",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "messageId": {
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "text": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "message_delta",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "messageId",
+          "text",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "messageId": {
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "text": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "reasoning_delta",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "messageId",
+          "text",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "type": "number",
+          },
+          "delayMs": {
+            "type": "number",
+          },
+          "error": {
+            "type": "string",
+          },
+          "maxAttempts": {
+            "type": "number",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "retry",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "attempt",
+          "maxAttempts",
+          "delayMs",
+          "error",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "aborted": {
+            "type": "boolean",
+          },
+          "error": {
+            "type": "string",
+          },
+          "phase": {
+            "enum": [
+              "start",
+              "complete",
+            ],
+            "type": "string",
+          },
+          "reason": {
+            "enum": [
+              "manual",
+              "threshold",
+              "overflow",
+            ],
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "compaction",
+            "type": "string",
+          },
+          "willRetry": {
+            "type": "boolean",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "phase",
+          "reason",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "type": "string",
+          },
+          "estimatedTokens": {
+            "type": "number",
+          },
+          "hasContext": {
+            "type": "boolean",
+          },
+          "phase": {
+            "enum": [
+              "session_start",
+              "recall",
+              "writeback",
+            ],
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "disabled",
+              "ready",
+              "recalled",
+              "empty",
+              "degraded",
+              "write-failed",
+            ],
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "memory_status",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "phase",
+          "status",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "callId": {
+            "type": "string",
+          },
+          "input": {},
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "tool": {
+            "type": "string",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "tool_call",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "callId",
+          "tool",
+          "input",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "callId": {
+            "type": "string",
+          },
+          "output": {
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "tool": {
+            "type": "string",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "tool_update",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "callId",
+          "tool",
+          "output",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "callId": {
+            "type": "string",
+          },
+          "isError": {
+            "type": "boolean",
+          },
+          "output": {
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "tool": {
+            "type": "string",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "tool_result",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "callId",
+          "tool",
+          "output",
+          "isError",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "callId": {
+            "type": "string",
+          },
+          "input": {},
+          "sessionId": {
+            "type": "string",
+          },
+          "timeoutMs": {
+            "type": "number",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "tool": {
+            "type": "string",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "tool_approval_request",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "callId",
+          "tool",
+          "input",
+          "timeoutMs",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "approved": {
+            "type": "boolean",
+          },
+          "callId": {
+            "type": "string",
+          },
+          "reason": {
+            "enum": [
+              "reply",
+              "timeout",
+              "aborted",
+            ],
+            "type": "string",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "tool_approval_resolved",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "callId",
+          "approved",
+          "reason",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string",
+          },
+          "error": {
+            "type": "string",
+          },
+          "messageId": {
+            "type": "string",
+          },
+          "model": {
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+              },
+              "provider": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "provider",
+              "model",
+            ],
+            "type": "object",
+          },
+          "sessionId": {
+            "type": "string",
+          },
+          "status": {
+            "enum": [
+              "success",
+              "interrupted",
+              "failed",
+            ],
+            "type": "string",
+          },
+          "stopReason": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "message_complete",
+            "type": "string",
+          },
+          "usage": {
+            "additionalProperties": false,
+            "properties": {
+              "cacheRead": {
+                "type": "number",
+              },
+              "cacheWrite": {
+                "type": "number",
+              },
+              "cacheWrite1h": {
+                "type": "number",
+              },
+              "cost": {
+                "additionalProperties": false,
+                "properties": {
+                  "cacheRead": {
+                    "type": "number",
+                  },
+                  "cacheWrite": {
+                    "type": "number",
+                  },
+                  "input": {
+                    "type": "number",
+                  },
+                  "output": {
+                    "type": "number",
+                  },
+                  "total": {
+                    "type": "number",
+                  },
+                },
+                "required": [
+                  "input",
+                  "output",
+                  "cacheRead",
+                  "cacheWrite",
+                  "total",
+                ],
+                "type": "object",
+              },
+              "input": {
+                "type": "number",
+              },
+              "output": {
+                "type": "number",
+              },
+              "reasoning": {
+                "type": "number",
+              },
+              "totalTokens": {
+                "type": "number",
+              },
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite",
+              "totalTokens",
+              "cost",
+            ],
+            "type": "object",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "messageId",
+          "status",
+          "content",
+          "model",
+          "stopReason",
+          "usage",
+        ],
+        "type": "object",
+      },
+    ],
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "compactionResult": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "estimatedTokensAfter": {
+        "type": "number",
+      },
+      "firstKeptEntryId": {
+        "type": "string",
+      },
+      "summary": {
+        "type": "string",
+      },
+      "tokensBefore": {
+        "type": "number",
+      },
+      "usage": {
+        "additionalProperties": false,
+        "properties": {
+          "cacheRead": {
+            "type": "number",
+          },
+          "cacheWrite": {
+            "type": "number",
+          },
+          "cacheWrite1h": {
+            "type": "number",
+          },
+          "cost": {
+            "additionalProperties": false,
+            "properties": {
+              "cacheRead": {
+                "type": "number",
+              },
+              "cacheWrite": {
+                "type": "number",
+              },
+              "input": {
+                "type": "number",
+              },
+              "output": {
+                "type": "number",
+              },
+              "total": {
+                "type": "number",
+              },
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite",
+              "total",
+            ],
+            "type": "object",
+          },
+          "input": {
+            "type": "number",
+          },
+          "output": {
+            "type": "number",
+          },
+          "reasoning": {
+            "type": "number",
+          },
+          "totalTokens": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite",
+          "totalTokens",
+          "cost",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "summary",
+      "firstKeptEntryId",
+      "tokensBefore",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.hello.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "client": {
+        "type": "string",
+      },
+      "protocolVersion": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+    },
+    "required": [
+      "protocolVersion",
+      "client",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.hello.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "capabilities": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "engineVersion": {
+        "type": "string",
+      },
+      "protocolVersion": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "session": {
+        "additionalProperties": false,
+        "properties": {
+          "toolset": {
+            "enum": [
+              "read-only",
+              "coding",
+            ],
+            "type": "string",
+          },
+          "workDir": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+    },
+    "required": [
+      "protocolVersion",
+      "engineVersion",
+      "capabilities",
+      "session",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.listModels.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.listModels.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "models": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "model": {
+              "type": "string",
+            },
+            "provider": {
+              "type": "string",
+            },
+            "reasoning": {
+              "type": "boolean",
+            },
+          },
+          "required": [
+            "provider",
+            "model",
+            "reasoning",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "models",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.shutdown.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "engine.shutdown.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "helloResponse": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "capabilities": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
+      "engineVersion": {
+        "type": "string",
+      },
+      "protocolVersion": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer",
+      },
+      "session": {
+        "additionalProperties": false,
+        "properties": {
+          "toolset": {
+            "enum": [
+              "read-only",
+              "coding",
+            ],
+            "type": "string",
+          },
+          "workDir": {
+            "type": "string",
+          },
+        },
+        "type": "object",
+      },
+    },
+    "required": [
+      "protocolVersion",
+      "engineVersion",
+      "capabilities",
+      "session",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memorySnapshot": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "databasePath": {
+        "type": "string",
+      },
+      "enabled": {
+        "type": "boolean",
+      },
+      "error": {
+        "type": "string",
+      },
+      "status": {
+        "enum": [
+          "disabled",
+          "ready",
+          "recalled",
+          "empty",
+          "degraded",
+          "write-failed",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "enabled",
+      "status",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "rpcRequest": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "id": {
+        "type": "string",
+      },
+      "method": {
+        "type": "string",
+      },
+      "params": {},
+    },
+    "required": [
+      "id",
+      "method",
+      "params",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.abort.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.abort.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "aborted": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "aborted",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.compact.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "instructions": {
+        "type": "string",
+      },
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.compact.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "estimatedTokensAfter": {
+        "type": "number",
+      },
+      "firstKeptEntryId": {
+        "type": "string",
+      },
+      "summary": {
+        "type": "string",
+      },
+      "tokensBefore": {
+        "type": "number",
+      },
+      "usage": {
+        "additionalProperties": false,
+        "properties": {
+          "cacheRead": {
+            "type": "number",
+          },
+          "cacheWrite": {
+            "type": "number",
+          },
+          "cacheWrite1h": {
+            "type": "number",
+          },
+          "cost": {
+            "additionalProperties": false,
+            "properties": {
+              "cacheRead": {
+                "type": "number",
+              },
+              "cacheWrite": {
+                "type": "number",
+              },
+              "input": {
+                "type": "number",
+              },
+              "output": {
+                "type": "number",
+              },
+              "total": {
+                "type": "number",
+              },
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite",
+              "total",
+            ],
+            "type": "object",
+          },
+          "input": {
+            "type": "number",
+          },
+          "output": {
+            "type": "number",
+          },
+          "reasoning": {
+            "type": "number",
+          },
+          "totalTokens": {
+            "type": "number",
+          },
+        },
+        "required": [
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite",
+          "totalTokens",
+          "cost",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "summary",
+      "firstKeptEntryId",
+      "tokensBefore",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.create.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "model": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+          },
+          "provider": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "provider",
+          "model",
+        ],
+        "type": "object",
+      },
+      "thinkingLevel": {
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+        "type": "string",
+      },
+      "title": {
+        "type": "string",
+      },
+    },
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.create.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "createdAt": {
+        "type": "number",
+      },
+      "error": {
+        "type": "string",
+      },
+      "messageCount": {
+        "type": "number",
+      },
+      "model": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+              },
+              "provider": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "provider",
+              "model",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "sessionId": {
+        "type": "string",
+      },
+      "status": {
+        "enum": [
+          "ready",
+          "corrupt",
+        ],
+        "type": "string",
+      },
+      "thinkingLevel": {
+        "anyOf": [
+          {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "title": {
+        "type": "string",
+      },
+      "updatedAt": {
+        "type": "number",
+      },
+    },
+    "required": [
+      "sessionId",
+      "createdAt",
+      "updatedAt",
+      "messageCount",
+      "model",
+      "thinkingLevel",
+      "status",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.delete.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.delete.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deleted": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "deleted",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.list.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.list.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "createdAt": {
+              "type": "number",
+            },
+            "error": {
+              "type": "string",
+            },
+            "messageCount": {
+              "type": "number",
+            },
+            "model": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "model": {
+                      "type": "string",
+                    },
+                    "provider": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "provider",
+                    "model",
+                  ],
+                  "type": "object",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "sessionId": {
+              "type": "string",
+            },
+            "status": {
+              "enum": [
+                "ready",
+                "corrupt",
+              ],
+              "type": "string",
+            },
+            "thinkingLevel": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "off",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                  ],
+                  "type": "string",
+                },
+                {
+                  "type": "null",
+                },
+              ],
+            },
+            "title": {
+              "type": "string",
+            },
+            "updatedAt": {
+              "type": "number",
+            },
+          },
+          "required": [
+            "sessionId",
+            "createdAt",
+            "updatedAt",
+            "messageCount",
+            "model",
+            "thinkingLevel",
+            "status",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "sessions",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.open.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.open.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "createdAt": {
+        "type": "number",
+      },
+      "error": {
+        "type": "string",
+      },
+      "messageCount": {
+        "type": "number",
+      },
+      "model": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+              },
+              "provider": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "provider",
+              "model",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "sessionId": {
+        "type": "string",
+      },
+      "status": {
+        "enum": [
+          "ready",
+          "corrupt",
+        ],
+        "type": "string",
+      },
+      "thinkingLevel": {
+        "anyOf": [
+          {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "title": {
+        "type": "string",
+      },
+      "updatedAt": {
+        "type": "number",
+      },
+    },
+    "required": [
+      "sessionId",
+      "createdAt",
+      "updatedAt",
+      "messageCount",
+      "model",
+      "thinkingLevel",
+      "status",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.respondToApproval.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "approved": {
+        "type": "boolean",
+      },
+      "callId": {
+        "type": "string",
+      },
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+      "callId",
+      "approved",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.respondToApproval.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "matched": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "matched",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.send.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+      },
+      "text": {
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+      "text",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.send.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "turnId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "turnId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.setModel.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "model": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+          },
+          "provider": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "provider",
+          "model",
+        ],
+        "type": "object",
+      },
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+      "model",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.setModel.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "model": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+          },
+          "provider": {
+            "type": "string",
+          },
+        },
+        "required": [
+          "provider",
+          "model",
+        ],
+        "type": "object",
+      },
+    },
+    "required": [
+      "model",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.setThinkingLevel.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "level": {
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+        "type": "string",
+      },
+      "sessionId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+      "level",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.setThinkingLevel.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "level": {
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ],
+        "type": "string",
+      },
+    },
+    "required": [
+      "level",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "sessionEventFrame": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "event": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "messageId": {
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "message_start",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "messageId",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "messageId": {
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "text": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "message_delta",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "messageId",
+              "text",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "messageId": {
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "text": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "reasoning_delta",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "messageId",
+              "text",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attempt": {
+                "type": "number",
+              },
+              "delayMs": {
+                "type": "number",
+              },
+              "error": {
+                "type": "string",
+              },
+              "maxAttempts": {
+                "type": "number",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "retry",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "attempt",
+              "maxAttempts",
+              "delayMs",
+              "error",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "aborted": {
+                "type": "boolean",
+              },
+              "error": {
+                "type": "string",
+              },
+              "phase": {
+                "enum": [
+                  "start",
+                  "complete",
+                ],
+                "type": "string",
+              },
+              "reason": {
+                "enum": [
+                  "manual",
+                  "threshold",
+                  "overflow",
+                ],
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "compaction",
+                "type": "string",
+              },
+              "willRetry": {
+                "type": "boolean",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "phase",
+              "reason",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "error": {
+                "type": "string",
+              },
+              "estimatedTokens": {
+                "type": "number",
+              },
+              "hasContext": {
+                "type": "boolean",
+              },
+              "phase": {
+                "enum": [
+                  "session_start",
+                  "recall",
+                  "writeback",
+                ],
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "disabled",
+                  "ready",
+                  "recalled",
+                  "empty",
+                  "degraded",
+                  "write-failed",
+                ],
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "memory_status",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "phase",
+              "status",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "callId": {
+                "type": "string",
+              },
+              "input": {},
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "tool": {
+                "type": "string",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "tool_call",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "callId",
+              "tool",
+              "input",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "callId": {
+                "type": "string",
+              },
+              "output": {
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "tool": {
+                "type": "string",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "tool_update",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "callId",
+              "tool",
+              "output",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "callId": {
+                "type": "string",
+              },
+              "isError": {
+                "type": "boolean",
+              },
+              "output": {
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "tool": {
+                "type": "string",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "tool_result",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "callId",
+              "tool",
+              "output",
+              "isError",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "callId": {
+                "type": "string",
+              },
+              "input": {},
+              "sessionId": {
+                "type": "string",
+              },
+              "timeoutMs": {
+                "type": "number",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "tool": {
+                "type": "string",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "tool_approval_request",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "callId",
+              "tool",
+              "input",
+              "timeoutMs",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "approved": {
+                "type": "boolean",
+              },
+              "callId": {
+                "type": "string",
+              },
+              "reason": {
+                "enum": [
+                  "reply",
+                  "timeout",
+                  "aborted",
+                ],
+                "type": "string",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "tool_approval_resolved",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "callId",
+              "approved",
+              "reason",
+            ],
+            "type": "object",
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "type": "string",
+              },
+              "error": {
+                "type": "string",
+              },
+              "messageId": {
+                "type": "string",
+              },
+              "model": {
+                "additionalProperties": false,
+                "properties": {
+                  "model": {
+                    "type": "string",
+                  },
+                  "provider": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "provider",
+                  "model",
+                ],
+                "type": "object",
+              },
+              "sessionId": {
+                "type": "string",
+              },
+              "status": {
+                "enum": [
+                  "success",
+                  "interrupted",
+                  "failed",
+                ],
+                "type": "string",
+              },
+              "stopReason": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "message_complete",
+                "type": "string",
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "cacheRead": {
+                    "type": "number",
+                  },
+                  "cacheWrite": {
+                    "type": "number",
+                  },
+                  "cacheWrite1h": {
+                    "type": "number",
+                  },
+                  "cost": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "cacheRead": {
+                        "type": "number",
+                      },
+                      "cacheWrite": {
+                        "type": "number",
+                      },
+                      "input": {
+                        "type": "number",
+                      },
+                      "output": {
+                        "type": "number",
+                      },
+                      "total": {
+                        "type": "number",
+                      },
+                    },
+                    "required": [
+                      "input",
+                      "output",
+                      "cacheRead",
+                      "cacheWrite",
+                      "total",
+                    ],
+                    "type": "object",
+                  },
+                  "input": {
+                    "type": "number",
+                  },
+                  "output": {
+                    "type": "number",
+                  },
+                  "reasoning": {
+                    "type": "number",
+                  },
+                  "totalTokens": {
+                    "type": "number",
+                  },
+                },
+                "required": [
+                  "input",
+                  "output",
+                  "cacheRead",
+                  "cacheWrite",
+                  "totalTokens",
+                  "cost",
+                ],
+                "type": "object",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "messageId",
+              "status",
+              "content",
+              "model",
+              "stopReason",
+              "usage",
+            ],
+            "type": "object",
+          },
+        ],
+      },
+      "seq": {
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991,
+        "type": "integer",
+      },
+      "sessionId": {
+        "type": "string",
+      },
+      "v": {
+        "const": 1,
+        "type": "number",
+      },
+    },
+    "required": [
+      "v",
+      "sessionId",
+      "seq",
+      "event",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "sessionSummary": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "createdAt": {
+        "type": "number",
+      },
+      "error": {
+        "type": "string",
+      },
+      "messageCount": {
+        "type": "number",
+      },
+      "model": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+              },
+              "provider": {
+                "type": "string",
+              },
+            },
+            "required": [
+              "provider",
+              "model",
+            ],
+            "type": "object",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "sessionId": {
+        "type": "string",
+      },
+      "status": {
+        "enum": [
+          "ready",
+          "corrupt",
+        ],
+        "type": "string",
+      },
+      "thinkingLevel": {
+        "anyOf": [
+          {
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+            ],
+            "type": "string",
+          },
+          {
+            "type": "null",
+          },
+        ],
+      },
+      "title": {
+        "type": "string",
+      },
+      "updatedAt": {
+        "type": "number",
+      },
+    },
+    "required": [
+      "sessionId",
+      "createdAt",
+      "updatedAt",
+      "messageCount",
+      "model",
+      "thinkingLevel",
+      "status",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+}
+`;

@@ -31,28 +31,32 @@
   "packageManager": "bun@1.3.14",
   "private": true,
   "scripts": {
-    "build": "bun run build:core && bun run build:cli",
+    "build": "bun run build:core && bun run build:protocol && bun run build:server && bun run build:cli",
     "build:core": "bun run --cwd packages/core build",
     "build:cli": "bun run --cwd packages/cli build",
-    "clean": "bun run --cwd packages/core clean && bun run --cwd packages/cli clean",
+    "clean": "bun run --cwd packages/core clean && bun run --cwd packages/protocol clean && bun run --cwd packages/server clean && bun run --cwd packages/cli clean",
     "dev": "bun run packages/cli/src/cli.ts",
     "eval:chat": "bun run packages/core/evals/chat-quality.ts",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix --max-warnings=0",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/cli typecheck",
-    "test": "bun test --preload ./packages/core/tests/offline-guard.ts packages/core/tests packages/cli/tests --path-ignore-patterns '**/tests/live/**' --path-ignore-patterns '**/tests/package/**'",
+    "typecheck": "bun run --cwd packages/core typecheck && bun run --cwd packages/protocol typecheck && bun run --cwd packages/server typecheck && bun run --cwd packages/cli typecheck",
+    "test": "bun test --preload ./packages/core/tests/offline-guard.ts packages/core/tests packages/protocol/tests packages/server/tests packages/cli/tests --path-ignore-patterns '**/tests/live/**' --path-ignore-patterns '**/tests/package/**'",
     "test:package": "bun test --preload ./packages/core/tests/offline-guard.ts packages/cli/tests/package",
     "test:pack": "bash ./scripts/verify-packed-packages.sh",
     "test:coverage": "bun run test --coverage",
-    "test:live": "bun test packages/core/tests/live",
+    "test:live": "TACHIKOMA_RUN_LIVE_TESTS=1 bun test packages/core/tests/live",
     "audit": "bun audit",
-    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && bun run test:package && bun run test:pack && bun run audit"
+    "verify": "bun run format:check && bun run lint && bun run typecheck && bun run build && bun run test && bun run test:package && bun run test:pack && bun run audit",
+    "build:protocol": "bun run --cwd packages/protocol build",
+    "build:server": "bun run --cwd packages/server build"
   },
   "type": "module",
   "workspaces": [
     "packages/core",
+    "packages/protocol",
+    "packages/server",
     "packages/cli"
   ]
 }
