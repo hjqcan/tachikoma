@@ -180,9 +180,10 @@ export class ChatEngine {
   }
 
   /**
-   * 从 pi 转录导出会话历史为 ChatEvent 序列（文本回合：user_message +
-   * message_start/delta/complete；工具/思考细节不参与）。server 用它在事件账本
-   * 缺失或缺"人"侧时重建重放缓存——转录是唯一事实源，账本只是派生缓存。
+   * 从 pi 转录导出会话历史为 ChatEvent 序列，按回合重建 live 流的形状：
+   * user_message → message_start → (message_delta | tool_call | tool_result)* →
+   * message_complete（每回合恰一次；思考与 tool_update 增量不重建）。server 用它在
+   * 事件账本缺失或缺"人"侧时重建重放缓存——转录是唯一事实源，账本只是派生缓存。
    */
   async history(sessionId: string): Promise<ChatEvent[]> {
     await this.ensureDirectories();
@@ -191,7 +192,41 @@ export class ChatEngine {
     const manager = SessionManager.open(info.path, this.sessionsDir, this.dataDir);
     const context = manager.buildSessionContext();
     const events: ChatEvent[] = [];
+    const zeroUsage = () => ({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    });
     let turn = 0;
+    let current: {
+      turnId: string;
+      messageId: string;
+      content: string;
+      // 首个助手消息出现时置位；回合收尾用最后一个助手消息的元数据
+      meta?: { model: ChatModelRef; stopReason: string; timestamp: number };
+    } | null = null;
+    const finishTurn = () => {
+      if (current?.meta) {
+        const statusOf = (stopReason: string): 'success' | 'interrupted' | 'failed' =>
+          stopReason === 'aborted' ? 'interrupted' : stopReason === 'error' ? 'failed' : 'success';
+        events.push({
+          type: 'message_complete',
+          sessionId,
+          turnId: current.turnId,
+          timestamp: current.meta.timestamp,
+          messageId: current.messageId,
+          status: statusOf(current.meta.stopReason),
+          content: current.content,
+          model: current.meta.model,
+          stopReason: current.meta.stopReason,
+          usage: zeroUsage(),
+        });
+      }
+      current = null;
+    };
     for (const [index, message] of context.messages.entries()) {
       if ('customType' in message) continue; // 扩展注入（记忆上下文等）不属于对话双方
       if (message.role === 'user') {
@@ -203,46 +238,69 @@ export class ChatEngine {
                 .map((part) => part.text)
                 .join('');
         if (!text.trim()) continue;
+        finishTurn();
         turn += 1;
+        current = { turnId: `history-${turn}`, messageId: `history-m${index}`, content: '' };
         events.push({
           type: 'user_message',
           sessionId,
-          turnId: `history-${turn}`,
+          turnId: current.turnId,
           timestamp: message.timestamp,
           text,
         });
       } else if (message.role === 'assistant') {
-        const text = message.content
-          .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
-          .map((part) => part.text)
-          .join('');
-        if (!text.trim()) continue; // 纯工具调用轮次：文本历史里跳过
-        const turnId = `history-${Math.max(turn, 1)}`;
-        const messageId = `history-m${index}`;
-        const base = { sessionId, turnId, timestamp: message.timestamp };
-        events.push(
-          { ...base, type: 'message_start', messageId },
-          { ...base, type: 'message_delta', messageId, text },
-          {
-            ...base,
-            type: 'message_complete',
-            messageId,
-            status: 'success',
-            content: text,
-            model: { provider: message.provider, model: message.model },
-            stopReason: message.stopReason,
-            usage: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheWrite: 0,
-              totalTokens: 0,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-            },
+        // 压缩后可能以助手消息开场：给它一个没有 user_message 的回合
+        current ??= {
+          turnId: `history-${Math.max(turn, 1)}`,
+          messageId: `history-m${index}`,
+          content: '',
+        };
+        const base = { sessionId, turnId: current.turnId, timestamp: message.timestamp };
+        if (!current.meta) {
+          events.push({ ...base, type: 'message_start', messageId: current.messageId });
+        }
+        for (const part of message.content) {
+          if (part.type === 'text' && part.text) {
+            current.content += part.text;
+            events.push({
+              ...base,
+              type: 'message_delta',
+              messageId: current.messageId,
+              text: part.text,
+            });
+          } else if (part.type === 'toolCall') {
+            events.push({
+              ...base,
+              type: 'tool_call',
+              callId: part.id,
+              tool: part.name,
+              input: part.arguments,
+            });
           }
-        );
+        }
+        current.meta = {
+          model: { provider: message.provider, model: message.model },
+          stopReason: message.stopReason,
+          timestamp: message.timestamp,
+        };
+      } else if (message.role === 'toolResult') {
+        if (!current?.meta) continue; // 没有所属回合的孤儿结果：跳过
+        events.push({
+          type: 'tool_result',
+          sessionId,
+          turnId: current.turnId,
+          timestamp: message.timestamp,
+          callId: message.toolCallId,
+          tool: message.toolName,
+          output: message.content
+            .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
+            .map((part) => part.text)
+            .join(''),
+          isError: message.isError,
+        });
       }
     }
+    finishTurn();
     return events;
   }
 

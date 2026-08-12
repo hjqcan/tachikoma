@@ -1,7 +1,8 @@
-import { fauxAssistantMessage } from '@earendil-works/pi-ai';
+import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ChatEngine } from '../src';
@@ -160,6 +161,65 @@ describe('pi JSONL session ownership', () => {
 
       expect(await engine.history('does-not-exist')).toEqual([]);
     } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('history() 重建工具回合：tool_call/tool_result 帧带原 callId，回合恰一个 message_complete', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'tachikoma-history-tools-'));
+    try {
+      await writeFile(join(workDir, 'hello.txt'), 'TOOL_MARKER_7734\n');
+      harness.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall('read', { path: 'hello.txt' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('文件内容是 TOOL_MARKER_7734'),
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+          workDir,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession();
+      const sessionId = session.id;
+      await drain(session.send('读一下 hello.txt'));
+      await session.close();
+
+      const history = await engine.history(sessionId);
+      expect(history.map((event) => event.type)).toEqual([
+        'user_message',
+        'message_start',
+        'tool_call',
+        'tool_result',
+        'message_delta',
+        'message_complete',
+      ]);
+      const toolCall = history[2];
+      const toolResult = history[3];
+      expect(toolCall).toMatchObject({
+        type: 'tool_call',
+        tool: 'read',
+        input: { path: 'hello.txt' },
+      });
+      expect(toolResult).toMatchObject({ type: 'tool_result', tool: 'read', isError: false });
+      if (toolCall?.type === 'tool_call' && toolResult?.type === 'tool_result') {
+        expect(toolCall.callId).toBe(toolResult.callId);
+        expect(toolResult.output).toContain('TOOL_MARKER_7734');
+      }
+      expect(history.at(-1)).toMatchObject({
+        type: 'message_complete',
+        status: 'success',
+        content: '文件内容是 TOOL_MARKER_7734',
+      });
+      // 全部帧共享同一回合 id：重放光标与 live 流形状一致
+      expect(new Set(history.map((event) => event.turnId))).toEqual(new Set(['history-1']));
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
       await harness.cleanup();
     }
   });

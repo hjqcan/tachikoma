@@ -110,8 +110,10 @@ replay cursors stay consistent.
 
 The WAL lives at `<dataDir>/events/<sessionId>.jsonl` (never inside pi's `sessions/` directory) and
 is a derived replay cache: the pi transcript is the source of truth. A ledger that is missing or has
-no `user_message` frames is rebuilt from the transcript on first access (text turns only — tool-call
-frames are not reconstructed).
+no `user_message` frames is rebuilt from the transcript on first access, turn by turn in the live
+stream's shape: `user_message`, `message_start`, text deltas, `tool_call`/`tool_result` frames with
+their original call ids, and exactly one `message_complete`. Only streaming increments that the
+transcript does not store (thinking deltas, `tool_update`) are not reconstructed.
 
 ## Desktop shell (walking skeleton)
 
