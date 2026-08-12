@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type {
   ChatEngineConfig,
   ChatEvent,
+  ChatModelListing,
   ChatModelRef,
   ChatSessionSummary,
   ChatThinkingLevel,
@@ -128,6 +129,15 @@ class FakeEngine implements ChatEnginePort {
     this.created.push(session);
     this.sessions.set(session.id, session);
     return session;
+  }
+
+  models: ChatModelListing[] = [
+    { provider: 'faux', model: 'test', reasoning: true },
+    { provider: 'faux', model: 'plain', reasoning: false },
+  ];
+
+  async listModels(): Promise<ChatModelListing[]> {
+    return this.models;
   }
 
   async listSessions(): Promise<ChatSessionSummary[]> {
@@ -293,6 +303,22 @@ describe('runCli', () => {
     expect(harness.stderr.join('')).toContain(
       '[tool:read] error: Path is outside the workspace: ../secret'
     );
+  });
+
+  test('/models lists the catalog, marks reasoning and the active model', async () => {
+    const session = new FakeSession();
+    const harness = createHarness({
+      engine: new FakeEngine(session),
+      lines: ['/models', '/exit'],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('faux/test  [reasoning] *');
+    expect(output).toContain('faux/plain\n');
+    expect(output).toContain('[models] 2 available');
   });
 
   test('/tools reports active tools and the startup banner lists them', async () => {

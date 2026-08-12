@@ -14,6 +14,7 @@ export type {
   ChatMessageCompleteEvent,
   ChatMessageDeltaEvent,
   ChatMessageStartEvent,
+  ChatModelListing,
   ChatModelRef,
   ChatReasoningDeltaEvent,
   ChatRetryEvent,

@@ -28,6 +28,7 @@ import type { ToolApprovalBridge } from './workspace-guard';
 import { buildChatSystemPrompt } from './system-prompt';
 import type {
   ChatEngineConfig,
+  ChatModelListing,
   ChatModelRef,
   ChatSessionInit,
   ChatSessionSummary,
@@ -170,6 +171,18 @@ export class ChatEngine {
     } catch (error) {
       throw credentialSafeError(error);
     }
+  }
+
+  /** 可选模型目录（含 models.json 自定义条目）；按 provider/model 稳定排序 */
+  async listModels(): Promise<ChatModelListing[]> {
+    const runtime = await this.modelRuntimePromise;
+    return runtime
+      .getModels()
+      .map((model) => ({ provider: model.provider, model: model.id, reasoning: model.reasoning }))
+      .sort(
+        (left, right) =>
+          left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model)
+      );
   }
 
   async listSessions(): Promise<ChatSessionSummary[]> {

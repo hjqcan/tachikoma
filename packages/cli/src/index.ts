@@ -7,6 +7,7 @@ import {
 } from '@tachikoma/core';
 import type {
   ChatMemorySnapshot,
+  ChatModelListing,
   ChatModelRef,
   ChatSession,
   ChatSessionSummary,
@@ -43,6 +44,7 @@ export interface ChatEnginePort {
     thinkingLevel?: ChatThinkingLevel;
     title?: string;
   }): Promise<ChatSessionPort>;
+  listModels(): Promise<ChatModelListing[]>;
   listSessions(): Promise<ChatSessionSummary[]>;
   openSession(sessionId: string): Promise<ChatSessionPort | null>;
 }
@@ -128,6 +130,7 @@ const defaultDependencies: CliDependencies = {
     const engine = new ChatEngine(config);
     return {
       createSession: async (input) => asSessionPort(await engine.createSession(input)),
+      listModels: () => engine.listModels(),
       listSessions: () => engine.listSessions(),
       openSession: async (sessionId) => {
         const session = await engine.openSession(sessionId);
@@ -146,7 +149,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     ungranted approval requests are denied immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     ungranted approval requests are denied immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -455,6 +458,19 @@ async function handleSlashCommand(
         dependencies.write(`[model] ${model.provider}/${model.model}\n`);
       }
       return { exit: false, session };
+    case 'models': {
+      const current = session.model;
+      const models = await engine.listModels();
+      for (const listing of models) {
+        const active =
+          listing.provider === current.provider && listing.model === current.model ? ' *' : '';
+        dependencies.write(
+          `${listing.provider}/${listing.model}${listing.reasoning ? '  [reasoning]' : ''}${active}\n`
+        );
+      }
+      dependencies.write(`[models] ${models.length} available\n`);
+      return { exit: false, session };
+    }
     case 'thinking':
       if (!value) {
         dependencies.write(`[thinking] ${session.thinkingLevel}\n`);

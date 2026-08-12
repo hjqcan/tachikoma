@@ -6,6 +6,13 @@ export interface ChatModelRef {
   model: string;
 }
 
+/** 模型发现条目（pi ModelRuntime 目录的薄投影：内建 catalog + models.json 自定义） */
+export interface ChatModelListing {
+  provider: string;
+  model: string;
+  reasoning: boolean;
+}
+
 export type ChatThinkingLevel = ThinkingLevel;
 
 export interface ChatMemoryConfig {

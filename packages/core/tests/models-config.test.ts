@@ -45,6 +45,18 @@ describe('custom models.json resolution', () => {
       expect(session.model).toEqual({ provider: 'custom-gateway', model: 'custom-model' });
       expect(session.activeTools).toHaveLength(0);
       await session.close();
+
+      const models = await engine.listModels();
+      expect(models).toContainEqual({
+        provider: 'custom-gateway',
+        model: 'custom-model',
+        reasoning: true,
+      });
+      const sorted = [...models].sort(
+        (left, right) =>
+          left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model)
+      );
+      expect(models).toEqual(sorted);
     } finally {
       if (previousKey === undefined) {
         delete process.env.CUSTOM_GATEWAY_KEY;
