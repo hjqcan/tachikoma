@@ -30,6 +30,7 @@ interface SessionSummaryLite {
   updatedAt?: number;
   messageCount?: number;
   model?: { provider: string; model: string } | null;
+  thinkingLevel?: string | null;
   workspace?: SessionWorkspace;
 }
 
@@ -43,6 +44,9 @@ const sessionsToggle = document.getElementById('sessions-toggle') as HTMLButtonE
 const sessionsPanel = document.getElementById('sessions') as HTMLElement;
 const sessionList = document.getElementById('session-list') as HTMLElement;
 const newSessionButton = document.getElementById('new-session') as HTMLButtonElement;
+const modelInput = document.getElementById('model-input') as HTMLInputElement;
+const modelsDatalist = document.getElementById('models-list') as HTMLDataListElement;
+const thinkingSelect = document.getElementById('thinking') as HTMLSelectElement;
 
 function statusLine(text: string): void {
   statusBar.textContent = text;
@@ -358,6 +362,8 @@ async function boot(): Promise<void> {
     grantedWorkspace = summary.workspace ?? null;
     if (summary.workspace) selectedToolset = summary.workspace.toolset;
     currentModel = summary.model ? `${summary.model.provider}/${summary.model.model}` : '';
+    modelInput.value = currentModel;
+    if (summary.thinkingLevel) thinkingSelect.value = summary.thinkingLevel;
   }
 
   async function connect(targetSessionId: string): Promise<void> {
@@ -508,6 +514,55 @@ async function boot(): Promise<void> {
     sessionsPanel.hidden = !sessionsPanel.hidden;
     if (!sessionsPanel.hidden) void refreshSessionList();
   };
+
+  // ── 生成参数：模型与 thinking（RPC 均为既有方法） ──────────────
+  let modelsLoaded = false;
+  modelInput.addEventListener('focus', () => {
+    if (modelsLoaded) return;
+    modelsLoaded = true;
+    void rpc('engine.listModels').then((listed) => {
+      if (!listed.ok) return;
+      const models = (
+        listed.result as { models: { provider: string; model: string; reasoning: boolean }[] }
+      ).models;
+      for (const entry of models) {
+        const option = document.createElement('option');
+        option.value = `${entry.provider}/${entry.model}`;
+        if (entry.reasoning) option.label = `${entry.provider}/${entry.model} · reasoning`;
+        modelsDatalist.appendChild(option);
+      }
+    });
+  });
+  modelInput.addEventListener('change', async () => {
+    const value = modelInput.value.trim();
+    const separator = value.indexOf('/');
+    if (!value || value === currentModel) return;
+    if (separator <= 0 || separator === value.length - 1) {
+      block('status-line error').textContent = '[error] 模型格式：provider/model';
+      modelInput.value = currentModel;
+      return;
+    }
+    const changed = await rpc('session.setModel', {
+      sessionId,
+      model: { provider: value.slice(0, separator), model: value.slice(separator + 1) },
+    });
+    if (changed.ok) {
+      currentModel = value;
+      refreshInstrumentCluster();
+    } else {
+      block('status-line error').textContent = `[error] ${changed.error.message}`;
+      modelInput.value = currentModel;
+    }
+  });
+  thinkingSelect.addEventListener('change', async () => {
+    const changed = await rpc('session.setThinkingLevel', {
+      sessionId,
+      level: thinkingSelect.value,
+    });
+    if (!changed.ok) {
+      block('status-line error').textContent = `[error] ${changed.error.message}`;
+    }
+  });
   newSessionButton.onclick = () => {
     void startSession(
       grantedWorkspace ? { workDir: grantedWorkspace.root, toolset: selectedToolset } : {}

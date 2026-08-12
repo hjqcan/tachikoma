@@ -322,3 +322,38 @@ describe('第二圈：会话级放行（scope session）', () => {
     }
   });
 });
+
+describe('第二圈：bash 超时策略', () => {
+  it('模型未传 timeout 时兜底 120s；超上限钳到 600s——审批请求里看到的即执行值', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      harness.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall('bash', { command: 'echo ok' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage([fauxToolCall('bash', { command: 'echo again', timeout: 99_999 })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('都执行完了。'),
+      ]);
+      const engine = codingEngine(harness, workDir);
+      const session = await engine.createSession();
+
+      const seenTimeouts: unknown[] = [];
+      const events = await collectWithApprovals(session, '跑两条命令', (request) => {
+        seenTimeouts.push((request.input as { timeout?: number }).timeout);
+        session.respondToApproval(request.callId, true);
+      });
+
+      expect(seenTimeouts).toEqual([120, 600]);
+      const results = events.filter((event) => event.type === 'tool_result');
+      expect(results).toHaveLength(2);
+      expect(results.every((event) => event.type === 'tool_result' && !event.isError)).toBeTrue();
+      await session.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+});

@@ -21,6 +21,13 @@ export const APPROVAL_REQUIRED_TOOLS: readonly string[] = ['write', 'edit', 'bas
 export const CODING_TOOLS: readonly string[] = [...WORKSPACE_TOOLS, ...APPROVAL_REQUIRED_TOOLS];
 
 /**
+ * bash 超时策略（秒）：模型未传 timeout 时兜底 120s；显式传值钳到 600s 上限。
+ * 在 tool_call 钩子里原位改参（pi 官方语义），先于审批——审批卡展示的即实际执行值。
+ */
+export const BASH_DEFAULT_TIMEOUT_SECS = 120;
+export const BASH_MAX_TIMEOUT_SECS = 600;
+
+/**
  * ChatSession 与策略扩展之间的审批桥。
  * 每回合由 ChatSession 挂上 request；缺席（无在途回合等异常态）一律拒绝。
  */
@@ -84,6 +91,14 @@ export function createWorkspaceGuardExtension(
     hidden: true,
     factory(pi) {
       pi.on('tool_call', async (event) => {
+        // bash 超时钳制先于一切：审批者看到的就是将要执行的值。
+        if (event.toolName === 'bash') {
+          const input = event.input as { timeout?: number };
+          input.timeout =
+            typeof input.timeout === 'number' && Number.isFinite(input.timeout)
+              ? Math.min(Math.max(input.timeout, 1), BASH_MAX_TIMEOUT_SECS)
+              : BASH_DEFAULT_TIMEOUT_SECS;
+        }
         // 路径边界先于审批：越界调用即使被批准也不执行。
         const violation = findWorkspaceViolation(event.input, root);
         if (violation) {

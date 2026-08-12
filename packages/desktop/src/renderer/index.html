@@ -441,10 +441,38 @@
       }
       footer .inner {
         display: flex;
-        gap: 10px;
+        flex-direction: column;
+        gap: 8px;
         flex: 1;
         max-width: 74ch;
         margin: 0 auto;
+      }
+      footer .compose {
+        display: flex;
+        gap: 10px;
+      }
+      footer .params {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+      footer .params input,
+      footer .params select {
+        font: 11px var(--mono);
+        color: var(--text-dim);
+        background: var(--ground);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 8px;
+        outline: none;
+      }
+      footer .params input {
+        width: 34ch;
+      }
+      footer .params input:focus,
+      footer .params select:focus {
+        border-color: var(--chassis-strong);
+        color: var(--text);
       }
       #input {
         flex: 1;
@@ -513,8 +541,29 @@
     </div>
     <footer>
       <span class="inner">
-        <input id="input" placeholder="发消息…（Enter 发送）" autofocus />
-        <button id="send">发送</button>
+        <span class="compose">
+          <input id="input" placeholder="发消息…（Enter 发送）" autofocus />
+          <button id="send">发送</button>
+        </span>
+        <span class="params">
+          <input
+            id="model-input"
+            list="models-list"
+            spellcheck="false"
+            placeholder="model…"
+            title="切换模型（provider/model，可输入过滤）"
+          />
+          <datalist id="models-list"></datalist>
+          <select id="thinking" title="thinking 深度">
+            <option value="off">thinking: off</option>
+            <option value="minimal">thinking: minimal</option>
+            <option value="low">thinking: low</option>
+            <option value="medium">thinking: medium</option>
+            <option value="high">thinking: high</option>
+            <option value="xhigh">thinking: xhigh</option>
+            <option value="max">thinking: max</option>
+          </select>
+        </span>
       </span>
     </footer>
     <script type="module" src="./app.js"></script>

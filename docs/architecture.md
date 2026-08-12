@@ -82,6 +82,9 @@ assertion enforces the empty set. Tool enablement is a per-invocation grant, nev
 - The workspace guard runs before approval: paths that resolve — or symlink — outside the canonical
   workspace root are blocked without ever asking. bash has no path analysis; approval itself is its
   control surface, so the request carries the full command for the user to judge.
+- bash timeout policy (guard-level, mutate-in-hook): a call without `timeout` gets 120s; explicit
+  values are clamped to 600s. The approval request already shows the clamped value — what you
+  approve is what runs.
 - Grants are engine-level (`ChatEngineConfig.workDir`/`toolset`) or session-level
   (`createSession({ workDir, toolset })`, RPC `session.create`, capability `session-workspace`).
   Session grants are live-session state: they never persist, and a reopened session returns to the
