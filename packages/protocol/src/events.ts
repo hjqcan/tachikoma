@@ -104,6 +104,8 @@ export const toolApprovalResolvedEventSchema = z.strictObject({
   callId: z.string(),
   approved: z.boolean(),
   reason: z.enum(['reply', 'timeout', 'aborted']),
+  /** 'session' = 放行并在本会话内对该工具不再询问；缺省 'call' */
+  scope: z.enum(['call', 'session']).optional(),
 });
 
 export const messageCompleteEventSchema = z.strictObject({

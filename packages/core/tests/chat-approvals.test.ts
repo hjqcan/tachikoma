@@ -247,3 +247,78 @@ describe('第二圈：工具审批门', () => {
     }
   });
 });
+
+describe('第二圈：会话级放行（scope session）', () => {
+  it("respondToApproval(…, 'session') 后同工具不再发审批事件，且真实执行", async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      harness.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall('write', { path: 'a.txt', content: 'one' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage([fauxToolCall('write', { path: 'b.txt', content: 'two' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('两个都写完了。'),
+      ]);
+      const engine = codingEngine(harness, workDir);
+      const session = await engine.createSession();
+
+      const events = await collectWithApprovals(session, '写两个文件', (request) => {
+        session.respondToApproval(request.callId, true, 'session');
+      });
+
+      const requests = events.filter((event) => event.type === 'tool_approval_request');
+      expect(requests).toHaveLength(1);
+      const resolved = events.find((event) => event.type === 'tool_approval_resolved');
+      expect(resolved).toMatchObject({ approved: true, reason: 'reply', scope: 'session' });
+      const results = events.filter((event) => event.type === 'tool_result');
+      expect(results).toHaveLength(2);
+      expect(results.every((event) => event.type === 'tool_result' && !event.isError)).toBeTrue();
+      expect(existsSync(join(workDir, 'a.txt'))).toBeTrue();
+      expect(existsSync(join(workDir, 'b.txt'))).toBeTrue();
+      await session.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+
+  it('拒绝时 scope session 被忽略（只拒这一次），下次同工具仍询问', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      harness.faux.setResponses([
+        fauxAssistantMessage([fauxToolCall('write', { path: 'x.txt', content: 'no' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('被拒了，作罢。'),
+        fauxAssistantMessage([fauxToolCall('write', { path: 'y.txt', content: 'again' })], {
+          stopReason: 'toolUse',
+        }),
+        fauxAssistantMessage('这次写好了。'),
+      ]);
+      const engine = codingEngine(harness, workDir);
+      const session = await engine.createSession();
+
+      const first = await collectWithApprovals(session, '写 x.txt', (request) => {
+        session.respondToApproval(request.callId, false, 'session');
+      });
+      expect(first.find((event) => event.type === 'tool_approval_resolved')).toMatchObject({
+        approved: false,
+      });
+      expect(existsSync(join(workDir, 'x.txt'))).toBeFalse();
+
+      const second = await collectWithApprovals(session, '再写 y.txt', (request) => {
+        session.respondToApproval(request.callId, true);
+      });
+      expect(second.filter((event) => event.type === 'tool_approval_request')).toHaveLength(1);
+      expect(existsSync(join(workDir, 'y.txt'))).toBeTrue();
+      await session.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+});

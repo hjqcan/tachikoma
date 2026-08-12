@@ -143,8 +143,17 @@ export class ChatSession {
   private readonly approvalTimeoutMs: number;
   private readonly pendingApprovals = new Map<
     string,
-    (approved: boolean, reason: 'reply' | 'timeout' | 'aborted') => void
+    {
+      tool: string;
+      finish: (
+        approved: boolean,
+        reason: 'reply' | 'timeout' | 'aborted',
+        scope?: 'call' | 'session'
+      ) => void;
+    }
   >();
+  /** 本会话内免询问放行的工具（respondToApproval scope 'session' 建立；随会话消亡） */
+  private readonly sessionApprovedTools = new Set<string>();
   private readonly onClose: (sessionId: string) => void;
   private memoryStarted = false;
   private memoryState: ChatMemorySnapshot;
@@ -270,13 +279,24 @@ export class ChatSession {
     return true;
   }
 
-  /** 应答一个在途的工具审批；返回是否命中待决项 */
-  respondToApproval(callId: string, approved: boolean): boolean {
-    const finish = this.pendingApprovals.get(callId);
-    if (!finish) {
+  /**
+   * 应答一个在途的工具审批；返回是否命中待决项。
+   * scope 'session'（仅在 approved 时有意义）：该工具本会话内此后自动放行、不再发审批事件。
+   */
+  respondToApproval(
+    callId: string,
+    approved: boolean,
+    scope: 'call' | 'session' = 'call'
+  ): boolean {
+    const pending = this.pendingApprovals.get(callId);
+    if (!pending) {
       return false;
     }
-    finish(approved, 'reply');
+    const effectiveScope = approved ? scope : 'call';
+    if (effectiveScope === 'session') {
+      this.sessionApprovedTools.add(pending.tool);
+    }
+    pending.finish(approved, 'reply', effectiveScope);
     return true;
   }
 
@@ -636,6 +656,10 @@ export class ChatSession {
     turnId: string,
     emit: (event: ChatEvent) => void
   ): Promise<boolean> {
+    // 会话级放行过的工具直接通过，不再制造审批噪音（tool_call 事件仍然可见）。
+    if (this.sessionApprovedTools.has(request.tool)) {
+      return Promise.resolve(true);
+    }
     emit({
       type: 'tool_approval_request',
       sessionId: this.id,
@@ -648,7 +672,11 @@ export class ChatSession {
     });
     return new Promise((resolveApproval) => {
       // finish 只会在 timer 初始化之后被调用（超时回调或 pendingApprovals 应答）
-      const finish = (approved: boolean, reason: 'reply' | 'timeout' | 'aborted'): void => {
+      const finish = (
+        approved: boolean,
+        reason: 'reply' | 'timeout' | 'aborted',
+        scope?: 'call' | 'session'
+      ): void => {
         if (!this.pendingApprovals.delete(request.callId)) {
           return;
         }
@@ -661,17 +689,18 @@ export class ChatSession {
           callId: request.callId,
           approved,
           reason,
+          ...(scope && scope !== 'call' ? { scope } : {}),
         });
         resolveApproval(approved);
       };
       const timer = setTimeout(() => finish(false, 'timeout'), this.approvalTimeoutMs);
-      this.pendingApprovals.set(request.callId, finish);
+      this.pendingApprovals.set(request.callId, { tool: request.tool, finish });
     });
   }
 
   private resolveAllApprovals(approved: boolean, reason: 'reply' | 'timeout' | 'aborted'): void {
-    for (const finish of [...this.pendingApprovals.values()]) {
-      finish(approved, reason);
+    for (const pending of [...this.pendingApprovals.values()]) {
+      pending.finish(approved, reason);
     }
   }
 

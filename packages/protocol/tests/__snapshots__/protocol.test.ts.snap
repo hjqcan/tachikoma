@@ -416,6 +416,13 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             ],
             "type": "string",
           },
+          "scope": {
+            "enum": [
+              "call",
+              "session",
+            ],
+            "type": "string",
+          },
           "sessionId": {
             "type": "string",
           },
@@ -1647,6 +1654,13 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "callId": {
         "type": "string",
       },
+      "scope": {
+        "enum": [
+          "call",
+          "session",
+        ],
+        "type": "string",
+      },
       "sessionId": {
         "type": "string",
       },
@@ -2292,6 +2306,13 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
                   "reply",
                   "timeout",
                   "aborted",
+                ],
+                "type": "string",
+              },
+              "scope": {
+                "enum": [
+                  "call",
+                  "session",
                 ],
                 "type": "string",
               },

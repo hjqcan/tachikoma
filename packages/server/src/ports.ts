@@ -25,7 +25,7 @@ export interface ServerSessionPort {
   readonly workspace: WorkspaceState | null;
   send(text: string, options?: { signal?: AbortSignal }): AsyncGenerator<ChatEventWire>;
   abort(): Promise<boolean>;
-  respondToApproval(callId: string, approved: boolean): boolean;
+  respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   setModel(model: ModelRef): Promise<ModelRef>;
   setThinkingLevel(level: ThinkingLevel): ThinkingLevel;
   compact(instructions?: string): Promise<CompactionResult>;

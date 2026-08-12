@@ -66,7 +66,7 @@ class FakeSession implements ServerSessionPort {
   memoryStatus: MemorySnapshot = { enabled: false, status: 'disabled' };
   activeTools: readonly string[] = [];
   workspace: WorkspaceState | null = null;
-  approvals: { callId: string; approved: boolean }[] = [];
+  approvals: { callId: string; approved: boolean; scope?: 'call' | 'session' }[] = [];
   aborted = 0;
   closed = 0;
   sending = false;
@@ -98,8 +98,8 @@ class FakeSession implements ServerSessionPort {
     return true;
   }
 
-  respondToApproval(callId: string, approved: boolean): boolean {
-    this.approvals.push({ callId, approved });
+  respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean {
+    this.approvals.push({ callId, approved, ...(scope ? { scope } : {}) });
     return true;
   }
 
@@ -406,6 +406,19 @@ describe('sidecar', () => {
       expect(harness.engine.sessions.get(sessionId)?.approvals).toEqual([
         { callId: 'call-9', approved: true },
       ]);
+
+      const sessionScoped = await harness.rpc('session.respondToApproval', {
+        sessionId,
+        callId: 'call-10',
+        approved: true,
+        scope: 'session',
+      });
+      expect(sessionScoped).toMatchObject({ ok: true, result: { matched: true } });
+      expect(harness.engine.sessions.get(sessionId)?.approvals.at(-1)).toEqual({
+        callId: 'call-10',
+        approved: true,
+        scope: 'session',
+      });
     } finally {
       await harness.stop();
     }

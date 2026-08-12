@@ -267,6 +267,35 @@
         word-break: break-all;
         margin: 10px 0;
       }
+      .approval .path {
+        font: 11px var(--mono);
+        color: var(--text-dim);
+        margin-top: 8px;
+      }
+      .approval pre.diff-old {
+        border-left: 2px solid var(--line);
+        color: var(--text-dim);
+        margin-bottom: 4px;
+      }
+      .approval pre.diff-old::before,
+      .approval pre.diff-new::before {
+        display: block;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        margin-bottom: 4px;
+      }
+      .approval pre.diff-old::before {
+        content: '− 旧';
+        color: var(--text-dim);
+      }
+      .approval pre.diff-new {
+        border-left: 2px solid var(--chassis-strong);
+        margin-top: 0;
+      }
+      .approval pre.diff-new::before {
+        content: '+ 新';
+        color: var(--chassis);
+      }
       .approval .actions {
         display: flex;
         gap: 8px;

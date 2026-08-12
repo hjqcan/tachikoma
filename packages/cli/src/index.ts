@@ -29,7 +29,7 @@ export interface ChatSessionPort {
   readonly memoryStatus: ChatMemorySnapshot;
   readonly activeTools: readonly string[];
   abort(): Promise<boolean>;
-  respondToApproval(callId: string, approved: boolean): boolean;
+  respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   close(): Promise<void>;
   compact(instructions?: string): Promise<unknown>;
   send(text: string, options?: { signal?: AbortSignal }): AsyncGenerator<ChatEvent>;
@@ -62,11 +62,11 @@ export interface CliTerminal {
   question?(prompt: string, options: { signal: AbortSignal }): Promise<string>;
 }
 
-/** 交互式审批回调：resolve(true)=放行；signal 中止（超时/用户打断）时应 reject */
+/** 交互式审批回调；'approve-session' = 放行且本会话内该工具不再询问。signal 中止时应 reject */
 type AskApproval = (
   request: { callId: string; tool: string; input: unknown },
   signal: AbortSignal
-) => Promise<boolean>;
+) => Promise<'approve' | 'approve-session' | 'deny'>;
 
 interface ApprovalPolicy {
   /** --allow 预授予集合：命中即放行，不提问 */
@@ -368,8 +368,19 @@ function formatToolInput(input: unknown): string {
   return text.length > 80 ? `${text.slice(0, 79)}…` : text;
 }
 
-/** 审批提示需要看清参数（此时 tool_call 尚未发生）：多行 JSON，封顶 800 字符 */
+/** 审批提示需要看清参数（此时 tool_call 尚未发生）：edit/write 走结构化预览，其余 JSON */
 function formatApprovalInput(input: unknown): string {
+  const clip = (text: string): string => (text.length > 600 ? `${text.slice(0, 599)}…` : text);
+  if (input && typeof input === 'object') {
+    const record = input as Record<string, unknown>;
+    if (typeof record.oldText === 'string' && typeof record.newText === 'string') {
+      const path = typeof record.path === 'string' ? `${record.path}\n` : '';
+      return `${path}--- old\n${clip(record.oldText)}\n+++ new\n${clip(record.newText)}`;
+    }
+    if (typeof record.path === 'string' && typeof record.content === 'string') {
+      return `${record.path}\n${clip(record.content)}`;
+    }
+  }
   const text = JSON.stringify(input, null, 2) ?? '';
   return text.length > 800 ? `${text.slice(0, 799)}…` : text;
 }
@@ -411,9 +422,17 @@ async function consumeTurn(
           pendingAsks.set(event.callId, controller);
           void approvals
             .ask(event, controller.signal)
-            .then((approved) => {
-              if (pendingAsks.delete(event.callId)) {
-                session.respondToApproval(event.callId, approved);
+            .then((verdict) => {
+              if (!pendingAsks.delete(event.callId)) return;
+              session.respondToApproval(
+                event.callId,
+                verdict !== 'deny',
+                verdict === 'approve-session' ? 'session' : 'call'
+              );
+              if (verdict === 'approve-session') {
+                dependencies.writeError(
+                  `[approval:${event.tool}] approved for the rest of this session\n`
+                );
               }
             })
             .catch(() => void pendingAsks.delete(event.callId));
@@ -662,8 +681,13 @@ async function runRepl(
         dependencies.writeError(
           `[approval:${request.tool}]\n${formatApprovalInput(request.input)}\n`
         );
-        const answer = await terminal.question!(`approve ${request.tool}? [y/N] `, { signal });
-        return /^y(es)?$/iu.test(answer.trim());
+        const answer = (
+          await terminal.question!(`approve ${request.tool}? [y/N/a=always this session] `, {
+            signal,
+          })
+        ).trim();
+        if (/^a(lways)?$/iu.test(answer)) return 'approve-session';
+        return /^y(es)?$/iu.test(answer) ? 'approve' : 'deny';
       }
     : undefined;
   const approvals: ApprovalPolicy = {

@@ -204,7 +204,9 @@ export async function startTachikomaServer(
     'session.respondToApproval': async (params) => {
       const parsed = RPC_METHODS['session.respondToApproval'].params.parse(params);
       const session = await requireSession(parsed.sessionId);
-      return { matched: session.respondToApproval(parsed.callId, parsed.approved) };
+      return {
+        matched: session.respondToApproval(parsed.callId, parsed.approved, parsed.scope),
+      };
     },
     'session.setModel': async (params) => {
       const parsed = RPC_METHODS['session.setModel'].params.parse(params);

@@ -111,6 +111,8 @@ export const RPC_METHODS = {
       sessionId: z.string(),
       callId: z.string(),
       approved: z.boolean(),
+      /** 'session'（仅在 approved 时有意义）：该工具本会话内此后自动放行 */
+      scope: z.enum(['call', 'session']).optional(),
     }),
     result: z.strictObject({ matched: z.boolean() }),
   },

@@ -63,6 +63,37 @@ function inputPreview(value: unknown): string {
   return text.length > 96 ? `${text.slice(0, 95)}…` : text;
 }
 
+/** 审批详情：edit 渲染 旧→新 对照、write 渲染路径+内容，其余回退 JSON —— 让人看得清再判 */
+function approvalDetail(tool: string, input: unknown): HTMLElement {
+  const container = document.createElement('div');
+  const record = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
+  const pathLine = (): void => {
+    if (typeof record.path === 'string') {
+      const path = document.createElement('div');
+      path.className = 'path';
+      path.textContent = record.path;
+      container.appendChild(path);
+    }
+  };
+  const preBlock = (text: string, label?: 'old' | 'new'): void => {
+    const pre = document.createElement('pre');
+    if (label) pre.className = `diff-${label}`;
+    pre.textContent = text;
+    container.appendChild(pre);
+  };
+  if (tool === 'edit' && typeof record.oldText === 'string' && typeof record.newText === 'string') {
+    pathLine();
+    preBlock(record.oldText, 'old');
+    preBlock(record.newText, 'new');
+  } else if (tool === 'write' && typeof record.content === 'string') {
+    pathLine();
+    preBlock(record.content);
+  } else {
+    preBlock(JSON.stringify(input, null, 2) ?? '');
+  }
+  return container;
+}
+
 async function boot(): Promise<void> {
   const { port, token, engineVersion } = await window.tachikoma.getServerInfo();
   const base = `http://127.0.0.1:${port}`;
@@ -211,23 +242,32 @@ async function boot(): Promise<void> {
         const ask = document.createElement('div');
         ask.className = 'ask';
         ask.innerHTML = `<span class="eye"></span><span>请求执行 <code>${event.tool}</code></span>`;
-        const detail = document.createElement('pre');
-        detail.textContent = JSON.stringify(event.input, null, 2) ?? '';
+        const detail = approvalDetail(event.tool, event.input);
         const actions = document.createElement('div');
         actions.className = 'actions';
         const approve = document.createElement('button');
         approve.className = 'approve';
         approve.textContent = '批准';
+        const always = document.createElement('button');
+        always.className = 'deny';
+        always.textContent = '总是允许';
+        always.title = '放行，且本会话内该工具不再询问';
         const deny = document.createElement('button');
         deny.className = 'deny';
         deny.textContent = '拒绝';
-        const respond = (approved: boolean): void => {
-          void rpc('session.respondToApproval', { sessionId, callId: event.callId, approved });
+        const respond = (approved: boolean, scope: 'call' | 'session' = 'call'): void => {
+          void rpc('session.respondToApproval', {
+            sessionId,
+            callId: event.callId,
+            approved,
+            scope,
+          });
           actions.innerHTML = '';
         };
         approve.onclick = () => respond(true);
+        always.onclick = () => respond(true, 'session');
         deny.onclick = () => respond(false);
-        actions.append(approve, deny);
+        actions.append(approve, always, deny);
         card.append(ask, detail, actions);
         break;
       }
@@ -245,7 +285,9 @@ async function boot(): Promise<void> {
             : event.reason === 'aborted'
               ? '回合中止 — 已取消'
               : event.approved
-                ? '已批准'
+                ? event.scope === 'session'
+                  ? '已批准 · 本会话内该工具不再询问'
+                  : '已批准'
                 : '已拒绝';
         card.appendChild(verdict);
         break;

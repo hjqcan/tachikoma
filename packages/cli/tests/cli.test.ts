@@ -67,10 +67,10 @@ class FakeSession implements ChatSessionPort {
     return true;
   }
 
-  approvals: { callId: string; approved: boolean }[] = [];
+  approvals: { callId: string; approved: boolean; scope?: 'call' | 'session' }[] = [];
 
-  respondToApproval(callId: string, approved: boolean): boolean {
-    this.approvals.push({ callId, approved });
+  respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean {
+    this.approvals.push({ callId, approved, ...(scope && scope !== 'call' ? { scope } : {}) });
     return true;
   }
 
@@ -451,10 +451,42 @@ describe('runCli', () => {
       { callId: 'call-1', approved: true },
       { callId: 'call-2', approved: false },
     ]);
-    expect(prompts).toEqual(['approve write? [y/N] ', 'approve bash? [y/N] ']);
+    expect(prompts).toEqual([
+      'approve write? [y/N/a=always this session] ',
+      'approve bash? [y/N/a=always this session] ',
+    ]);
     const stderr = harness.stderr.join('');
-    expect(stderr).toContain('[approval:write]');
-    expect(stderr).toContain('"path": "a.txt"');
+    // write 走结构化预览（路径 + 内容），非 write/edit 形状回退 JSON
+    expect(stderr).toContain('[approval:write]\na.txt\nhi');
+    expect(stderr).toContain('"command": "rm -rf /"');
+  });
+
+  test("answering 'a' approves with session scope and reports it", async () => {
+    const session = new FakeSession();
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_approval_request',
+        callId: 'call-a',
+        tool: 'bash',
+        input: { command: 'bun test' },
+        timeoutMs: 120_000,
+      } as ChatEvent,
+      ...successEvents('ran'),
+    ];
+    const harness = createHarness({
+      engine: new FakeEngine(session),
+      lines: ['run tests', '/exit'],
+      question: () => Promise.resolve('a'),
+    });
+
+    const code = await runCli(['--workdir', '/w', '--toolset', 'coding'], harness.dependencies);
+
+    expect(code).toBe(0);
+    expect(session.approvals).toEqual([{ callId: 'call-a', approved: true, scope: 'session' }]);
+    expect(harness.stderr.join('')).toContain(
+      '[approval:bash] approved for the rest of this session'
+    );
   });
 
   test('core-resolved approvals (timeout) cancel the pending question and free the input', async () => {

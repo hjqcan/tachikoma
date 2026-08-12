@@ -200,6 +200,8 @@ export interface ChatToolApprovalResolvedEvent extends BaseChatEvent {
   callId: string;
   approved: boolean;
   reason: 'reply' | 'timeout' | 'aborted';
+  /** 'session' = 放行并对该工具在本会话内不再询问（随会话消亡，不落盘）；缺省 'call' */
+  scope?: 'call' | 'session';
 }
 
 /**
