@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import {
   compactionResultSchema,
+  memoryRecordSchema,
   modelListingSchema,
   modelRefSchema,
   sessionSummarySchema,
@@ -131,6 +132,23 @@ export const RPC_METHODS = {
   'session.compact': {
     params: z.strictObject({ sessionId: z.string(), instructions: z.string().optional() }),
     result: compactionResultSchema,
+  },
+  // 记忆管理面（capability 'memory-management'）：跨会话 scope，库禁用时报错
+  'memory.list': {
+    params: empty,
+    result: z.strictObject({ records: z.array(memoryRecordSchema) }),
+  },
+  'memory.search': {
+    params: z.strictObject({ query: z.string().min(1) }),
+    result: z.strictObject({ records: z.array(memoryRecordSchema) }),
+  },
+  'memory.forget': {
+    params: z.strictObject({ memoryId: z.string() }),
+    result: z.strictObject({ forgotten: z.boolean() }),
+  },
+  'memory.clear': {
+    params: empty,
+    result: z.strictObject({ deleted: z.number() }),
   },
 } as const;
 

@@ -113,6 +113,24 @@ class FakeEngine implements ChatEnginePort {
   createFailure: Error | undefined;
   private nextCreated: FakeSession | undefined;
 
+  memoryRecords = [{ id: 'm1', type: 'fact', content: '喜欢等宽字体' }];
+  forgottenIds: string[] = [];
+
+  async memoryList() {
+    return this.memoryRecords;
+  }
+
+  async memorySearch(query: string) {
+    return this.memoryRecords
+      .filter((record) => record.content.includes(query))
+      .map((record) => ({ ...record, score: 0.87 }));
+  }
+
+  async memoryForget(memoryId: string) {
+    this.forgottenIds.push(memoryId);
+    return this.memoryRecords.some((record) => record.id === memoryId);
+  }
+
   constructor(initial?: FakeSession) {
     if (initial) {
       this.nextCreated = initial;
@@ -643,6 +661,24 @@ describe('runCli', () => {
     const usage = createHarness({ lines: ['/delete', '/exit'] });
     await runCli([], usage.dependencies);
     expect(usage.stderr.join('')).toContain('Use /delete <session-id>');
+  });
+
+  test('/memory list|search|forget manage the durable store', async () => {
+    const engine = new FakeEngine();
+    const harness = createHarness({
+      engine,
+      lines: ['/memory list', '/memory search 等宽', '/memory forget m1', '/memory bogus', '/exit'],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('m1  [fact] 喜欢等宽字体');
+    expect(output).toContain('(0.87) 喜欢等宽字体');
+    expect(output).toContain('[forgotten] m1');
+    expect(engine.forgottenIds).toEqual(['m1']);
+    expect(harness.stderr.join('')).toContain('/memory [list | search <query> | forget <id>]');
   });
 
   test('/rename renames the active session and rejects empty titles', async () => {

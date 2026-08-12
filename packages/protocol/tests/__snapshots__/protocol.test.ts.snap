@@ -241,6 +241,32 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             ],
             "type": "string",
           },
+          "recalled": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                },
+                "preview": {
+                  "type": "string",
+                },
+                "score": {
+                  "type": "number",
+                },
+                "type": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "id",
+                "type",
+                "preview",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
           "sessionId": {
             "type": "string",
           },
@@ -921,6 +947,257 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "engineVersion",
       "capabilities",
       "session",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.clear.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.clear.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "deleted": {
+        "type": "number",
+      },
+    },
+    "required": [
+      "deleted",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.forget.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "memoryId": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "memoryId",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.forget.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "forgotten": {
+        "type": "boolean",
+      },
+    },
+    "required": [
+      "forgotten",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.list.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.list.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "records": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "id": {
+              "type": "string",
+            },
+            "importance": {
+              "type": "number",
+            },
+            "score": {
+              "type": "number",
+            },
+            "tags": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "type": {
+              "enum": [
+                "fact",
+                "preference",
+                "reference",
+                "episode",
+                "feedback",
+                "archive",
+                "experience",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "type",
+            "content",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "records",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.search.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "query",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "memory.search.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "records": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string",
+            },
+            "createdAt": {
+              "type": "string",
+            },
+            "id": {
+              "type": "string",
+            },
+            "importance": {
+              "type": "number",
+            },
+            "score": {
+              "type": "number",
+            },
+            "tags": {
+              "items": {
+                "type": "string",
+              },
+              "type": "array",
+            },
+            "type": {
+              "enum": [
+                "fact",
+                "preference",
+                "reference",
+                "episode",
+                "feedback",
+                "archive",
+                "experience",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "id",
+            "type",
+            "content",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "required": [
+      "records",
     ],
     "type": "object",
     "~standard": {
@@ -2211,6 +2488,32 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
                   "writeback",
                 ],
                 "type": "string",
+              },
+              "recalled": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                    },
+                    "preview": {
+                      "type": "string",
+                    },
+                    "score": {
+                      "type": "number",
+                    },
+                    "type": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "id",
+                    "type",
+                    "preview",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
               },
               "sessionId": {
                 "type": "string",

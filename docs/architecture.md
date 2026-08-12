@@ -68,7 +68,12 @@ semantics never change. Consumers must tolerate unknown event types. On the wire
 with core at compile time, and guards its own shape with a JSON Schema snapshot.
 
 GoodMemory failure is non-fatal to model chat but never silent: recall degradation and write failure
-surface as `memory_status` events and CLI status lines.
+surface as `memory_status` events and CLI status lines. A successful recall additionally carries
+`recalled` — the per-hit detail (`id`/`type`/`preview`/`score`) — so consumers can show what the
+machine remembered this turn. The engine also exposes a memory-management face
+(`memoryList`/`memorySearch`/`memoryForget`/`memoryClear`, RPC `memory.*`, capability
+`memory-management`) built entirely on GoodMemory's public API; search is a local filter over the
+exported records because recall is tuned for prompt context, not management enumeration.
 
 ## Tools and approvals (turn 2)
 

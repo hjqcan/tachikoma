@@ -3,6 +3,7 @@ export type { Capability } from './version';
 
 export {
   compactionResultSchema,
+  memoryRecordSchema,
   memorySnapshotSchema,
   memoryStatusSchema,
   modelListingSchema,
@@ -15,6 +16,7 @@ export {
 } from './dto';
 export type {
   CompactionResult,
+  MemoryRecord,
   MemorySnapshot,
   MemoryStatus,
   ModelListing,

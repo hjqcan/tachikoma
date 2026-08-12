@@ -56,6 +56,18 @@ export interface ChatEnginePort {
   listModels(): Promise<ChatModelListing[]>;
   listSessions(): Promise<ChatSessionSummary[]>;
   openSession(sessionId: string): Promise<ChatSessionPort | null>;
+  memoryList(): Promise<CliMemoryRecord[]>;
+  memorySearch(query: string): Promise<CliMemoryRecord[]>;
+  memoryForget(memoryId: string): Promise<boolean>;
+}
+
+/** @internal 记忆管理行（core ChatMemoryRecord 的端口镜像） */
+export interface CliMemoryRecord {
+  id: string;
+  type: string;
+  content: string;
+  createdAt?: string;
+  score?: number;
 }
 
 /** @internal */
@@ -196,6 +208,9 @@ const defaultDependencies: CliDependencies = {
         const session = await engine.openSession(sessionId);
         return session ? asSessionPort(session) : null;
       },
+      memoryList: () => engine.memoryList(),
+      memorySearch: (query) => engine.memorySearch(query),
+      memoryForget: (memoryId) => engine.memoryForget(memoryId),
     };
   },
   createTerminal: createProcessTerminal,
@@ -209,7 +224,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session)\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -647,9 +662,40 @@ async function handleSlashCommand(
       await session.compact(value || undefined);
       dependencies.write('[compaction] complete\n');
       return { exit: false, session };
-    case 'memory':
-      dependencies.write(`[memory] ${formatMemorySnapshot(session.memoryStatus)}\n`);
+    case 'memory': {
+      if (!value) {
+        dependencies.write(`[memory] ${formatMemorySnapshot(session.memoryStatus)}\n`);
+        return { exit: false, session };
+      }
+      const [sub, ...rest] = value.split(/\s+/);
+      const argument = rest.join(' ').trim();
+      const printRecords = (records: CliMemoryRecord[]): void => {
+        if (records.length === 0) {
+          dependencies.write('[memory] no records\n');
+          return;
+        }
+        for (const record of records) {
+          const score = record.score !== undefined ? ` (${record.score.toFixed(2)})` : '';
+          dependencies.write(`${record.id}  [${record.type}]${score} ${record.content}\n`);
+        }
+        dependencies.write(`[memory] ${records.length} records\n`);
+      };
+      if (sub === 'list') {
+        printRecords(await engine.memoryList());
+      } else if (sub === 'search') {
+        if (!argument) throw new CliUsageError('Use /memory search <query>');
+        printRecords(await engine.memorySearch(argument));
+      } else if (sub === 'forget') {
+        if (!argument) throw new CliUsageError('Use /memory forget <id>');
+        const forgotten = await engine.memoryForget(argument);
+        dependencies.write(
+          forgotten ? `[forgotten] ${argument}\n` : `[memory] not found: ${argument}\n`
+        );
+      } else {
+        throw new CliUsageError('Use /memory [list | search <query> | forget <id>]');
+      }
       return { exit: false, session };
+    }
     case 'tools':
       dependencies.write(
         `[tools] ${session.activeTools.length > 0 ? session.activeTools.join(', ') : 'none'}\n`

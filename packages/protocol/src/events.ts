@@ -61,6 +61,14 @@ export const compactionEventSchema = z.strictObject({
   error: z.string().optional(),
 });
 
+/** 本回合召回命中的单条记忆明细（增量字段；preview 为截断内容） */
+export const recalledMemorySchema = z.strictObject({
+  id: z.string(),
+  type: z.string(),
+  preview: z.string(),
+  score: z.number().optional(),
+});
+
 export const memoryStatusEventSchema = z.strictObject({
   ...base,
   type: z.literal('memory_status'),
@@ -68,6 +76,7 @@ export const memoryStatusEventSchema = z.strictObject({
   status: memoryStatusSchema,
   hasContext: z.boolean().optional(),
   estimatedTokens: z.number().optional(),
+  recalled: z.array(recalledMemorySchema).optional(),
   error: z.string().optional(),
 });
 

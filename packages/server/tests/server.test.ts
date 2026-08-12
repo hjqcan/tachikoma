@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import type {
   ChatEventWire,
   CompactionResult,
+  MemoryRecord,
   MemorySnapshot,
   ModelListing,
   ModelRef,
@@ -177,6 +178,32 @@ class FakeEngine implements ServerEnginePort {
 
   async history(): Promise<ChatEventWire[]> {
     return this.historyEvents;
+  }
+
+  memoryRecords: MemoryRecord[] = [
+    { id: 'm1', type: 'fact', content: '用户喜欢等宽字体', createdAt: '2026-08-12T00:00:00Z' },
+  ];
+  forgotten: string[] = [];
+
+  async memoryList(): Promise<MemoryRecord[]> {
+    return this.memoryRecords;
+  }
+
+  async memorySearch(query: string): Promise<MemoryRecord[]> {
+    return this.memoryRecords
+      .filter((record) => record.content.includes(query))
+      .map((record) => ({ ...record, score: 0.9 }));
+  }
+
+  async memoryForget(memoryId: string): Promise<boolean> {
+    this.forgotten.push(memoryId);
+    return this.memoryRecords.some((record) => record.id === memoryId);
+  }
+
+  async memoryClear(): Promise<number> {
+    const count = this.memoryRecords.length;
+    this.memoryRecords = [];
+    return count;
   }
 
   async listModels(): Promise<ModelListing[]> {
@@ -433,6 +460,35 @@ describe('sidecar', () => {
         approved: true,
         scope: 'session',
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('memory.* 管理面透传引擎：list/search/forget/clear', async () => {
+    const harness = await startHarness();
+    try {
+      const listed = await harness.rpc('memory.list');
+      expect(listed).toMatchObject({
+        ok: true,
+        result: { records: [{ id: 'm1', type: 'fact' }] },
+      });
+
+      const found = await harness.rpc('memory.search', { query: '等宽' });
+      if (!found.ok) throw new Error('search failed');
+      expect((found.result as { records: MemoryRecord[] }).records[0]).toMatchObject({
+        id: 'm1',
+        score: 0.9,
+      });
+
+      const forgotten = await harness.rpc('memory.forget', { memoryId: 'm1' });
+      expect(forgotten).toMatchObject({ ok: true, result: { forgotten: true } });
+      expect(harness.engine.forgotten).toEqual(['m1']);
+
+      const cleared = await harness.rpc('memory.clear');
+      expect(cleared).toMatchObject({ ok: true, result: { deleted: 1 } });
+      const after = await harness.rpc('memory.list');
+      expect(after).toMatchObject({ ok: true, result: { records: [] } });
     } finally {
       await harness.stop();
     }

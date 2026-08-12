@@ -8,6 +8,7 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent';
 import type { InlineExtension, SessionInfo } from '@earendil-works/pi-coding-agent';
+import type { GoodMemory, MemoryScope } from 'goodmemory';
 import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { mkdir, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
@@ -15,8 +16,8 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { ChatSession } from './chat-session';
 import type { ChatMemoryBinding } from './chat-session';
-import { createChatMemoryRuntime } from './memory';
-import type { ChatMemoryRuntime } from './memory';
+import { createChatMemoryRuntime, projectMemoryBuckets } from './memory';
+import type { ChatMemoryRecord, ChatMemoryRuntime } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
 import {
   APPROVAL_REQUIRED_TOOLS,
@@ -536,11 +537,10 @@ export class ChatEngine {
     return session;
   }
 
-  private async createMemoryBinding(sessionId: string): Promise<ChatMemoryBinding> {
+  private ensureMemoryRuntime(): ChatMemoryRuntime | undefined {
     if (!this.memoryEnabled || !this.memoryDatabasePath) {
-      return { enabled: false };
+      return undefined;
     }
-
     if (!this.memoryRuntime && !this.memoryInitializationError) {
       try {
         if (this.injectedMemoryKit) {
@@ -564,6 +564,66 @@ export class ChatEngine {
         this.memoryInitializationError = safeErrorMessage(error);
       }
     }
+    return this.memoryRuntime;
+  }
+
+  /** 记忆管理面共用入口：跨会话 scope（不带 sessionId），库不可用时抛错 */
+  private managementMemory(): { memory: GoodMemory; scope: MemoryScope } {
+    const runtime = this.ensureMemoryRuntime();
+    if (!runtime?.memory) {
+      throw new Error(
+        this.memoryInitializationError ?? 'Durable memory is disabled for this engine.'
+      );
+    }
+    return {
+      memory: runtime.memory,
+      scope: { userId: this.memoryUserId, workspaceId: 'tachikoma', agentId: 'tachikoma' },
+    };
+  }
+
+  /** 全量列出持久记忆（GoodMemory exportMemory 的扁平投影） */
+  async memoryList(): Promise<ChatMemoryRecord[]> {
+    const { memory, scope } = this.managementMemory();
+    const result = await memory.exportMemory({ scope });
+    return projectMemoryBuckets(result.durable);
+  }
+
+  /**
+   * 搜索持久记忆：对 export 全量做本地过滤（管理面要可预测的穷举结果；
+   * GoodMemory 的 recall 面向提示词上下文，durable 桶不保证回填，不适合做管理搜索）。
+   */
+  async memorySearch(query: string): Promise<ChatMemoryRecord[]> {
+    const needle = query.trim().toLowerCase();
+    const records = await this.memoryList();
+    if (!needle) return records;
+    return records.filter((record) =>
+      `${record.content} ${(record.tags ?? []).join(' ')} ${record.type}`
+        .toLowerCase()
+        .includes(needle)
+    );
+  }
+
+  async memoryForget(memoryId: string): Promise<boolean> {
+    const { memory, scope } = this.managementMemory();
+    const result = await memory.forget({ scope, memoryId });
+    return result.forgotten;
+  }
+
+  /** 清空该用户在 tachikoma 工作区的全部持久记忆；返回删除条数 */
+  async memoryClear(): Promise<number> {
+    const { memory, scope } = this.managementMemory();
+    const result = await memory.deleteAllMemory({ scope });
+    return Object.values(result.deleted).reduce(
+      (sum: number, count) => (typeof count === 'number' ? sum + count : sum),
+      0
+    );
+  }
+
+  private async createMemoryBinding(sessionId: string): Promise<ChatMemoryBinding> {
+    if (!this.memoryEnabled || !this.memoryDatabasePath) {
+      return { enabled: false };
+    }
+    this.ensureMemoryRuntime();
 
     const scope = {
       userId: this.memoryUserId,

@@ -1,6 +1,7 @@
 export { ChatEngine } from './chat-engine';
 export type { ChatSession } from './chat-session';
 export { buildChatSystemPrompt } from './system-prompt';
+export type { ChatMemoryRecord } from './memory';
 export type { ChatSystemPromptOptions } from './system-prompt';
 export type {
   ChatCompactionEvent,
@@ -11,6 +12,7 @@ export type {
   ChatMemorySnapshot,
   ChatMemoryStatus,
   ChatMemoryStatusEvent,
+  ChatRecalledMemory,
   ChatMessageCompleteEvent,
   ChatMessageDeltaEvent,
   ChatMessageStartEvent,

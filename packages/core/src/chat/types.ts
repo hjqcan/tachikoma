@@ -149,12 +149,22 @@ export interface ChatCompactionEvent extends BaseChatEvent {
   error?: string;
 }
 
+/** 本回合召回命中的单条记忆（明细供 UI 展开；preview 为截断内容） */
+export interface ChatRecalledMemory {
+  id: string;
+  type: string;
+  preview: string;
+  score?: number;
+}
+
 export interface ChatMemoryStatusEvent extends BaseChatEvent {
   type: 'memory_status';
   phase: 'session_start' | 'recall' | 'writeback';
   status: ChatMemoryStatus;
   hasContext?: boolean;
   estimatedTokens?: number;
+  /** phase 'recall' 且有命中时携带（增量字段） */
+  recalled?: ChatRecalledMemory[];
   error?: string;
 }
 

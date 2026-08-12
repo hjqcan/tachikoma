@@ -110,6 +110,62 @@ describe('GoodMemory lifecycle', () => {
     }
   });
 
+  it('管理面：list/search/forget/clear 走真实 SQLite；召回事件携带 recalled 明细', async () => {
+    const harness = await createFauxHarness();
+    try {
+      harness.faux.setResponses([fauxAssistantMessage('记住了。'), fauxAssistantMessage('Lin。')]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: { userId: 'mgmt-user' },
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const seed = await engine.createSession();
+      await collect(seed.send('我的名字是 Lin，请记住。'));
+      await seed.close();
+
+      const records = await engine.memoryList();
+      expect(records.length).toBeGreaterThan(0);
+      // 注意：bun 的 toMatchObject 会把 expect.any 匹配器写进被测对象——先取值再断言
+      const target = records[0]!.id;
+      const needle = records[0]!.content.slice(0, 4);
+      expect(typeof records[0]!.id).toBe('string');
+      expect(typeof records[0]!.type).toBe('string');
+      expect(typeof records[0]!.content).toBe('string');
+      const found = await engine.memorySearch(needle);
+      expect(found.length).toBeGreaterThan(0);
+      expect(await engine.memorySearch('绝不存在的针九九九')).toEqual([]);
+
+      // 第二回合的 recall 事件必须带命中明细（id/type/preview）
+      const second = await engine.createSession();
+      const events = await collect(second.send('我叫什么名字？'));
+      const recallEvent = events.find(
+        (event) => event.type === 'memory_status' && event.phase === 'recall'
+      );
+      expect(recallEvent).toMatchObject({ status: 'recalled' });
+      if (recallEvent?.type === 'memory_status') {
+        expect(recallEvent.recalled?.length).toBeGreaterThan(0);
+        expect(recallEvent.recalled?.[0]).toMatchObject({
+          id: expect.any(String),
+          type: expect.any(String),
+          preview: expect.any(String),
+        });
+      }
+      await second.close();
+
+      expect(await engine.memoryForget(target)).toBeTrue();
+      expect((await engine.memoryList()).some((record) => record.id === target)).toBeFalse();
+
+      const deleted = await engine.memoryClear();
+      expect(deleted).toBeGreaterThanOrEqual(0);
+      expect(await engine.memoryList()).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it('continues chatting and exposes degraded recall instead of hiding a memory failure', async () => {
     const harness = await createFauxHarness();
     let recallCount = 0;

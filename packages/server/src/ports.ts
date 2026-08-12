@@ -6,6 +6,7 @@
 import type {
   ChatEventWire,
   CompactionResult,
+  MemoryRecord,
   MemorySnapshot,
   ModelListing,
   ModelRef,
@@ -48,4 +49,9 @@ export interface ServerEnginePort {
   listModels(): Promise<ModelListing[]>;
   /** 从转录导出文本回合历史；账本缺失/缺"人"侧时 server 用它重建重放缓存 */
   history(sessionId: string): Promise<ChatEventWire[]>;
+  /** 记忆管理面（capability 'memory-management'）；库禁用时抛错 */
+  memoryList(): Promise<MemoryRecord[]>;
+  memorySearch(query: string): Promise<MemoryRecord[]>;
+  memoryForget(memoryId: string): Promise<boolean>;
+  memoryClear(): Promise<number>;
 }

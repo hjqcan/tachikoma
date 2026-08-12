@@ -15,6 +15,8 @@ export const CAPABILITIES = [
   'session-replay',
   // session.create 接受 workDir/toolset（会话级工具授予）；summary 携带 workspace
   'session-workspace',
+  // memory.list/search/forget/clear 管理面 + memory_status 的 recalled 明细
+  'memory-management',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

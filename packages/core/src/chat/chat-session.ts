@@ -8,7 +8,7 @@ import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { randomUUID } from 'node:crypto';
 
 import { EventQueue } from './event-queue';
-import { recallHasHits } from './memory';
+import { projectRecalledMemories, recallHasHits } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
 import type { ToolApprovalBridge } from './workspace-guard';
 import type {
@@ -618,6 +618,7 @@ export class ChatSession {
         result.context.content.trim().length > 0;
       this.promptMemoryContext.value = hasContext ? result.context.content : '';
       const status: ChatMemoryStatus = hasContext ? 'recalled' : 'empty';
+      const recalled = hasContext ? projectRecalledMemories(result.recall) : [];
       this.setMemoryState(status);
       emit({
         ...base,
@@ -626,6 +627,7 @@ export class ChatSession {
         status,
         hasContext,
         estimatedTokens: result.context.estimatedTokens,
+        ...(recalled.length > 0 ? { recalled } : {}),
       });
     } catch (error) {
       const message = safeErrorMessage(error);

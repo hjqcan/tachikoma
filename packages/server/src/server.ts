@@ -259,6 +259,20 @@ export async function startTachikomaServer(
       const session = await requireSession(parsed.sessionId);
       return session.compact(parsed.instructions);
     },
+    'memory.list': async () => {
+      return { records: await engine.memoryList() };
+    },
+    'memory.search': async (params) => {
+      const parsed = RPC_METHODS['memory.search'].params.parse(params);
+      return { records: await engine.memorySearch(parsed.query) };
+    },
+    'memory.forget': async (params) => {
+      const parsed = RPC_METHODS['memory.forget'].params.parse(params);
+      return { forgotten: await engine.memoryForget(parsed.memoryId) };
+    },
+    'memory.clear': async () => {
+      return { deleted: await engine.memoryClear() };
+    },
   };
 
   async function handleRpc(request: Request): Promise<Response> {
