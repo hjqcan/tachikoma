@@ -2,9 +2,10 @@
 
 Tachikoma is a conversation-first chatbot runtime for Bun and TypeScript.
 
-Version `0.2.x` is the first clean turn of a spiral: make chat excellent before introducing tools,
-and make tools excellent before introducing coordination. It intentionally contains no tool calls,
-coordination runtime, HTTP service, or desktop application.
+Version `0.2.x` follows a spiral: make chat excellent, then tools, then coordination. Turn 1 (chat)
+and turn 2 (opt-in workspace tools behind per-call approvals) are implemented, along with a local
+sidecar for remote consumers. There is intentionally no coordination runtime and no desktop shell
+yet.
 
 ## What owns what
 
@@ -47,8 +48,8 @@ bun run packages/cli/src/cli.ts run "Explain why append-only sessions help recov
 bun run packages/cli/src/cli.ts chat --no-memory
 ```
 
-The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/thinking`, `/compact`, `/memory`,
-`/help`, and `/exit`. API keys are never accepted as command-line arguments.
+The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/models`, `/thinking`, `/tools`,
+`/compact`, `/memory`, `/help`, and `/exit`. API keys are never accepted as command-line arguments.
 
 ## Custom models and endpoints
 
@@ -85,12 +86,15 @@ Select it with `tachikoma --provider my-gateway --model my-model`, or `/model my
 inside the REPL. Set `"reasoning": true` on models that support thinking so `--thinking` and
 `/thinking` levels take effect.
 
-## Read-only workspace tools (turn 2)
+## Workspace tools and approvals (turn 2)
 
-Passing `workDir` to `ChatEngine` enables pi's read-only tool set (`read`, `grep`, `find`, `ls`)
-scoped to that directory. A guard extension blocks any path that resolves — or symlinks — outside
-the canonical workspace root. Without `workDir` the product stays tool-free: the turn-1 default is
-unchanged. Write/execute tools and approvals are later turn-2 increments.
+Passing `workDir` to `ChatEngine` (CLI: `--workdir <dir>`) enables pi's read-only tool set (`read`,
+`grep`, `find`, `ls`) scoped to that directory. A guard extension blocks any path that resolves — or
+symlinks — outside the canonical workspace root. `toolset: 'coding'` (CLI:
+`--allow write,edit,bash`) adds write/execute tools: each call emits `tool_approval_request` and
+waits for `respondToApproval`; timeouts deny by default, and the guard runs before approval is ever
+asked. Without `workDir` the product stays tool-free — tool enablement is a per-invocation grant,
+never an environment default.
 
 ## Local sidecar
 
@@ -119,8 +123,9 @@ for await (const event of session.send('Hello. Remember that I prefer concise an
 await session.close();
 ```
 
-All first-circle sessions start pi with `noTools: 'all'`. Public configuration does not expose a
-working directory, custom tools, or credentials, and `ChatEvent` has no tool event variants.
+Sessions start with zero tools unless `workDir` is configured; credentials never appear in public
+configuration or events. The `ChatEvent` union covers streaming, reasoning, retry, compaction,
+memory status, tool calls, approvals, and exactly one terminal `message_complete` per turn.
 
 ## Development
 
