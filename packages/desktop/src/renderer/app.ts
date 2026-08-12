@@ -44,8 +44,10 @@ const sessionsToggle = document.getElementById('sessions-toggle') as HTMLButtonE
 const sessionsPanel = document.getElementById('sessions') as HTMLElement;
 const sessionList = document.getElementById('session-list') as HTMLElement;
 const newSessionButton = document.getElementById('new-session') as HTMLButtonElement;
-const modelInput = document.getElementById('model-input') as HTMLInputElement;
-const modelsDatalist = document.getElementById('models-list') as HTMLDataListElement;
+const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
+const modelPicker = document.getElementById('model-picker') as HTMLElement;
+const modelFilter = document.getElementById('model-filter') as HTMLInputElement;
+const modelOptions = document.getElementById('model-options') as HTMLElement;
 const thinkingSelect = document.getElementById('thinking') as HTMLSelectElement;
 
 function statusLine(text: string): void {
@@ -362,7 +364,7 @@ async function boot(): Promise<void> {
     grantedWorkspace = summary.workspace ?? null;
     if (summary.workspace) selectedToolset = summary.workspace.toolset;
     currentModel = summary.model ? `${summary.model.provider}/${summary.model.model}` : '';
-    modelInput.value = currentModel;
+    modelChip.textContent = currentModel || 'model…';
     if (summary.thinkingLevel) thinkingSelect.value = summary.thinkingLevel;
   }
 
@@ -479,9 +481,13 @@ async function boot(): Promise<void> {
     if (!toolset || toolset === selectedToolset) return;
     selectedToolset = toolset;
     refreshInstrumentCluster();
-    // 已有工作区时，切换工具集是一次显式的重新授予：立即开新会话生效。
     if (grantedWorkspace) {
+      // 已有工作区：切换工具集 = 显式重新授予，立即开新会话生效。
       await startSession({ workDir: grantedWorkspace.root, toolset });
+    } else {
+      // 无工作区时点工具集只是亮个灯没有任何效果——直接引导去选目录完成授予。
+      const picked = await window.tachikoma.pickWorkspace();
+      if (picked) await startSession({ workDir: picked, toolset });
     }
   });
 
@@ -516,43 +522,108 @@ async function boot(): Promise<void> {
   };
 
   // ── 生成参数：模型与 thinking（RPC 均为既有方法） ──────────────
-  let modelsLoaded = false;
-  modelInput.addEventListener('focus', () => {
-    if (modelsLoaded) return;
-    modelsLoaded = true;
-    void rpc('engine.listModels').then((listed) => {
-      if (!listed.ok) return;
-      const models = (
-        listed.result as { models: { provider: string; model: string; reasoning: boolean }[] }
-      ).models;
-      for (const entry of models) {
-        const option = document.createElement('option');
-        option.value = `${entry.provider}/${entry.model}`;
-        if (entry.reasoning) option.label = `${entry.provider}/${entry.model} · reasoning`;
-        modelsDatalist.appendChild(option);
-      }
-    });
-  });
-  modelInput.addEventListener('change', async () => {
-    const value = modelInput.value.trim();
-    const separator = value.indexOf('/');
+  // 模型选择走主题内自绘面板：原生 datalist 会被预填值过滤成单条，且弹层是白底原生样式。
+  interface ModelEntry {
+    provider: string;
+    model: string;
+    reasoning: boolean;
+  }
+  let allModels: ModelEntry[] | undefined;
+  const PICKER_ROW_CAP = 200;
+
+  async function chooseModel(value: string): Promise<void> {
+    closeModelPicker();
     if (!value || value === currentModel) return;
-    if (separator <= 0 || separator === value.length - 1) {
-      block('status-line error').textContent = '[error] 模型格式：provider/model';
-      modelInput.value = currentModel;
-      return;
-    }
+    const separator = value.indexOf('/');
     const changed = await rpc('session.setModel', {
       sessionId,
       model: { provider: value.slice(0, separator), model: value.slice(separator + 1) },
     });
     if (changed.ok) {
       currentModel = value;
+      modelChip.textContent = value;
       refreshInstrumentCluster();
     } else {
       block('status-line error').textContent = `[error] ${changed.error.message}`;
-      modelInput.value = currentModel;
     }
+  }
+
+  function renderModelOptions(query: string): void {
+    const needle = query.trim().toLowerCase();
+    const matches = (allModels ?? []).filter((entry) =>
+      `${entry.provider}/${entry.model}`.toLowerCase().includes(needle)
+    );
+    modelOptions.innerHTML = '';
+    for (const entry of matches.slice(0, PICKER_ROW_CAP)) {
+      const value = `${entry.provider}/${entry.model}`;
+      const row = document.createElement('div');
+      row.className = `model-row${value === currentModel ? ' active' : ''}`;
+      const name = document.createElement('span');
+      name.textContent = value;
+      row.appendChild(name);
+      if (entry.reasoning) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = 'reasoning';
+        row.appendChild(tag);
+      }
+      row.onclick = () => void chooseModel(value);
+      modelOptions.appendChild(row);
+    }
+    if (matches.length > PICKER_ROW_CAP) {
+      const hint = document.createElement('div');
+      hint.className = 'model-row hint';
+      hint.textContent = `还有 ${matches.length - PICKER_ROW_CAP} 个——继续输入过滤`;
+      modelOptions.appendChild(hint);
+    }
+    if (matches.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'model-row hint';
+      empty.textContent = '没有匹配的模型';
+      modelOptions.appendChild(empty);
+    }
+  }
+
+  function closeModelPicker(): void {
+    modelPicker.hidden = true;
+  }
+
+  async function openModelPicker(): Promise<void> {
+    if (!allModels) {
+      const listed = await rpc('engine.listModels');
+      if (!listed.ok) {
+        block('status-line error').textContent = `[error] ${listed.error.message}`;
+        return;
+      }
+      allModels = (listed.result as { models: ModelEntry[] }).models;
+    }
+    modelPicker.hidden = false;
+    modelFilter.value = '';
+    renderModelOptions('');
+    modelFilter.focus();
+  }
+
+  modelChip.onclick = () => {
+    if (modelPicker.hidden) {
+      void openModelPicker();
+    } else {
+      closeModelPicker();
+    }
+  };
+  modelFilter.addEventListener('input', () => renderModelOptions(modelFilter.value));
+  modelFilter.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeModelPicker();
+    } else if (event.key === 'Enter') {
+      const first = modelOptions.querySelector('.model-row:not(.hint)');
+      const value = first?.querySelector('span')?.textContent;
+      if (value) void chooseModel(value);
+    }
+  });
+  document.addEventListener('click', (event) => {
+    if (modelPicker.hidden) return;
+    const target = event.target as Node;
+    if (!modelPicker.contains(target) && target !== modelChip) closeModelPicker();
   });
   thinkingSelect.addEventListener('change', async () => {
     const changed = await rpc('session.setThinkingLevel', {

@@ -455,24 +455,91 @@
         display: flex;
         gap: 8px;
         justify-content: flex-end;
+        position: relative;
       }
-      footer .params input,
+      footer .params button,
       footer .params select {
         font: 11px var(--mono);
         color: var(--text-dim);
         background: var(--ground);
         border: 1px solid var(--line);
         border-radius: 6px;
-        padding: 4px 8px;
+        padding: 4px 10px;
         outline: none;
+        cursor: pointer;
+        max-width: 40ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
-      footer .params input {
-        width: 34ch;
+      footer .params button:hover,
+      footer .params select:hover {
+        border-color: var(--chassis);
+        color: var(--chassis);
       }
-      footer .params input:focus,
-      footer .params select:focus {
+      footer .params button:focus-visible,
+      footer .params select:focus-visible {
         border-color: var(--chassis-strong);
         color: var(--text);
+      }
+
+      /* 模型选择面板：主题内自绘（原生 datalist 会被预填值过滤成单条 + 白底跳戏） */
+      #model-picker {
+        position: absolute;
+        bottom: calc(100% + 8px);
+        right: 0;
+        width: 46ch;
+        max-height: 320px;
+        display: flex;
+        flex-direction: column;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: 0 8px 28px #0008;
+        overflow: hidden;
+        z-index: 10;
+      }
+      #model-picker[hidden] {
+        display: none;
+      }
+      #model-filter {
+        font: 12px var(--mono);
+        color: var(--text);
+        background: var(--ground);
+        border: none;
+        border-bottom: 1px solid var(--line);
+        padding: 8px 12px;
+        outline: none;
+      }
+      #model-options {
+        overflow-y: auto;
+      }
+      .model-row {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        font: 11px var(--mono);
+        color: var(--text);
+        padding: 6px 12px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .model-row:hover,
+      .model-row.hint:hover {
+        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+      }
+      .model-row.active {
+        color: var(--chassis);
+      }
+      .model-row .tag {
+        margin-left: auto;
+        color: var(--chassis);
+        font-size: 10px;
+      }
+      .model-row.hint {
+        color: var(--text-dim);
+        cursor: default;
       }
       #input {
         flex: 1;
@@ -546,14 +613,11 @@
           <button id="send">发送</button>
         </span>
         <span class="params">
-          <input
-            id="model-input"
-            list="models-list"
-            spellcheck="false"
-            placeholder="model…"
-            title="切换模型（provider/model，可输入过滤）"
-          />
-          <datalist id="models-list"></datalist>
+          <button id="model-chip" title="切换模型">model…</button>
+          <div id="model-picker" hidden>
+            <input id="model-filter" spellcheck="false" placeholder="过滤模型…（provider/model）" />
+            <div id="model-options"></div>
+          </div>
           <select id="thinking" title="thinking 深度">
             <option value="off">thinking: off</option>
             <option value="minimal">thinking: minimal</option>

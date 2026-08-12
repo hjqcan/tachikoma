@@ -71,16 +71,25 @@ function createWindow(): void {
   window.once('ready-to-show', () => window.show());
   void window.loadFile(join(here, '..', 'renderer', 'index.html'));
 
-  // 开发诊断：TACHIKOMA_CAPTURE=<png 路径> 时加载完成后截渲染结果落盘（无窗口环境下验证 UI）。
+  // 开发诊断：TACHIKOMA_CAPTURE=<png 路径> 时加载完成后截渲染结果落盘（无窗口环境下验证 UI）；
+  // TACHIKOMA_CAPTURE_CLICK=<selector> 可在截屏前先点击一个元素（验证弹层等交互态）。
   const capturePath = process.env.TACHIKOMA_CAPTURE;
   if (capturePath) {
+    const clickSelector = process.env.TACHIKOMA_CAPTURE_CLICK;
     window.webContents.once('did-finish-load', () => {
       setTimeout(() => {
-        void window.webContents.capturePage().then(async (image) => {
+        void (async () => {
+          if (clickSelector) {
+            await window.webContents.executeJavaScript(
+              `document.querySelector(${JSON.stringify(clickSelector)})?.click()`
+            );
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 800));
+          }
+          const image = await window.webContents.capturePage();
           const { writeFile } = await import('node:fs/promises');
           await writeFile(capturePath, image.toPNG());
           console.log(`[desktop] capture written: ${capturePath}`);
-        });
+        })();
       }, 1_500);
     });
   }
