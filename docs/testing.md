@@ -10,13 +10,16 @@ bun run test
 
 It uses pi's faux provider, temporary JSONL session directories, and temporary GoodMemory SQLite
 files. Tests under `tests/live/` are excluded by path, not merely skipped after credentials are
-loaded. Network guards and poison credentials verify that a local `.env` cannot make the normal
-suite send a request.
+loaded. The preload guard poisons credentials and blocks external egress; loopback
+(`127.0.0.1`/`localhost`) stays reachable because the sidecar under test in `packages/server/tests`
+is itself a local server.
 
 The offline matrix covers stream and reasoning deltas, one terminal event per turn, complete usage,
 retry, overflow compaction, restore, interruption, per-session model isolation, JSONL corruption
-reporting, GoodMemory recall/writeback/degradation, zero active tools, CLI commands, signals, exit
-codes, and built package imports.
+reporting, GoodMemory recall/writeback/degradation, zero tools by default plus exact allowlist
+activation, workspace escape and symlink blocking, approval grant/deny/timeout/abort, protocol
+round-trips with snapshot and core type-compat guards, sidecar auth/frames/WAL replay/crash
+synthesis, CLI commands, signals, exit codes, and built package imports.
 
 ## Live gate
 

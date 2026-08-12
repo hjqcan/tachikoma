@@ -7,11 +7,16 @@ one.
 ## Current product boundary
 
 - Bun `1.3.14` is the canonical runtime and package manager.
-- The only workspaces are `@tachikoma/core` and `@tachikoma/cli`.
-- pi-mono owns models, credentials, streaming, retry, compaction, transcript persistence, and the
-  session lifecycle.
+- Workspaces: `@tachikoma/core`, `@tachikoma/protocol`, `@tachikoma/server`, `@tachikoma/cli`.
+- pi-mono owns models, credentials, streaming, retry, compaction, transcript persistence, the
+  session lifecycle, and tool execution.
 - GoodMemory owns durable user memory and is enabled by default.
-- The current `0.2.x` product has no tools, orchestration, HTTP server, or desktop application.
+- Tools are opt-in per invocation (turn 2): `workDir` enables the read-only set; the coding toolset
+  adds write/edit/bash behind per-call approval with timeout-deny. The default product has zero
+  tools.
+- `tachikoma-engined` is the local sidecar for remote consumers (HTTP RPC + WS frames over a WAL),
+  speaking only `@tachikoma/protocol`. No desktop shell exists yet; coordination (turn 3) has not
+  started.
 - There is no compatibility promise for pre-`0.2.0` APIs, commands, or session files.
 
 ## Commands
@@ -34,9 +39,10 @@ credentials.
 
 - Prefer deletion and one source of truth over compatibility shims or duplicated runtimes.
 - Keep `ChatEngine` and `ChatSession` as product boundaries, not alternate implementations of pi.
-- Never expose API keys through public configuration, events, logs, or CLI flags.
-- The first-circle event contract contains no tool events. Do not add tools before the next spiral
-  explicitly starts.
+- Never expose API keys through public configuration, events, logs, CLI flags, or the wire.
+- The event contract evolves additively only; consumers must tolerate unknown event types. Tool
+  enablement stays an explicit per-invocation grant — never an ambient environment default. The
+  workspace guard runs before approval; write/edit/bash always require approval.
 - Add focused diagnostics for genuinely complex runtime chains, but do not add speculative defensive
   layers or verbose commentary for impossible states.
 - Do not commit runtime data under `.tachikoma/`, generated `dist/`, coverage, or local reference

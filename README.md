@@ -11,10 +11,13 @@ coordination runtime, HTTP service, or desktop application.
 - `@tachikoma/core` exposes the stable `ChatEngine`, `ChatSession`, and `ChatEvent` product
   boundary.
 - `@earendil-works/pi-coding-agent` owns model discovery and credentials, streaming, retries,
-  compaction, interruption, and append-only JSONL v3 sessions.
+  compaction, interruption, tool execution, and append-only JSONL v3 sessions.
 - `goodmemory` owns durable recall and writeback. It is enabled by default and stores local data at
   `~/.tachikoma/memory/goodmemory.sqlite`.
-- `@tachikoma/cli` is the only executable product surface.
+- `@tachikoma/protocol` is the renderer-safe wire contract (zod-only) for remote consumers.
+- `@tachikoma/server` ships `tachikoma-engined`, the local sidecar: HTTP RPC plus WS event frames
+  replayed from a per-session WAL.
+- `@tachikoma/cli` is the interactive product surface.
 
 Tachikoma does not carry a second provider catalog, retry loop, transcript format, or legacy session
 reader.
@@ -88,6 +91,16 @@ Passing `workDir` to `ChatEngine` enables pi's read-only tool set (`read`, `grep
 scoped to that directory. A guard extension blocks any path that resolves — or symlinks — outside
 the canonical workspace root. Without `workDir` the product stays tool-free: the turn-1 default is
 unchanged. Write/execute tools and approvals are later turn-2 increments.
+
+## Local sidecar
+
+`tachikoma-engined` hosts one engine on `127.0.0.1` for remote consumers (the future desktop shell).
+The supervising shell injects a Bearer token as the first stdin line — never via argv or env — and
+reads one `listening` JSON line from stdout. Engine configuration comes from shell-controlled env
+(`TACHIKOMA_DATA_DIR`, `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORKDIR`,
+`TACHIKOMA_TOOLSET`, `TACHIKOMA_NO_MEMORY=1`). Clients speak `@tachikoma/protocol`: HTTP
+`POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
+`subscribe {sessionId, fromSeq}` for lossless replay over the per-session WAL.
 
 ## Library
 

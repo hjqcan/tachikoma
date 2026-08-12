@@ -1,7 +1,9 @@
 # @tachikoma/protocol 设计稿（桌面轨 E1）
 
-> 状态：设计定稿待实现（2026-08-12）。上游文档：`docs/tachikoma-desktop-plan.md`（总设计，§2.3 传输与握手、§4.1 协议包、§4.5
-> Server RPC）、`docs/tachikoma-spiral-roadmap.md` （ChatEvent 契约与演进规则的语义源头）。
+> 状态：**已实现**（2026-08-12，提交 c84fb68：`packages/protocol` + 首个真实消费者
+> `packages/server`/`tachikoma-engined` 同批落地；真网端到端冒烟通过）。上游文档：
+> `docs/tachikoma-desktop-plan.md`（总设计，§2.3 传输与握手、§4.1 协议包、§4.5 Server
+> RPC）、`docs/tachikoma-spiral-roadmap.md` （ChatEvent 契约与演进规则的语义源头）。
 >
 > **落地时机**：与第一个真实消费者（`@tachikoma/server`
 > 本机 sidecar 或桌面行走骨架 D-A）同一批提交落地。路线图规定 "Placeholder packages and speculative

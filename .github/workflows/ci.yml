@@ -50,7 +50,7 @@ jobs:
       - run: bun run test:package
       - name: Smoke built exports and CLI
         run: |
-          bun -e "await import('./packages/core/dist/index.js'); await import('./packages/cli/dist/index.js')"
+          bun -e "await import('./packages/core/dist/index.js'); await import('./packages/protocol/dist/index.js'); await import('./packages/server/dist/index.js'); await import('./packages/cli/dist/index.js')"
           bun packages/cli/dist/cli.js --help
           bun packages/cli/dist/cli.js --version
       - name: Verify packed packages in a clean consumer
