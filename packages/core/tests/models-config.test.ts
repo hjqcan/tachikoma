@@ -47,11 +47,15 @@ describe('custom models.json resolution', () => {
       await session.close();
 
       const models = await engine.listModels();
-      expect(models).toContainEqual({
-        provider: 'custom-gateway',
-        model: 'custom-model',
-        reasoning: true,
-      });
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          provider: 'custom-gateway',
+          model: 'custom-model',
+          reasoning: true,
+          contextWindow: expect.any(Number),
+          maxTokens: expect.any(Number),
+        })
+      );
       const sorted = [...models].sort(
         (left, right) =>
           left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model)

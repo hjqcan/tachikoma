@@ -11,6 +11,9 @@ export interface ChatModelListing {
   provider: string;
   model: string;
   reasoning: boolean;
+  /** 模型上下文窗口与单次输出上限（tokens）；上下文用量仪表的分母 */
+  contextWindow: number;
+  maxTokens: number;
 }
 
 export type ChatThinkingLevel = ThinkingLevel;

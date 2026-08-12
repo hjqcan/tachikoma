@@ -843,6 +843,12 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
         "items": {
           "additionalProperties": false,
           "properties": {
+            "contextWindow": {
+              "type": "number",
+            },
+            "maxTokens": {
+              "type": "number",
+            },
             "model": {
               "type": "string",
             },
@@ -857,6 +863,8 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             "provider",
             "model",
             "reasoning",
+            "contextWindow",
+            "maxTokens",
           ],
           "type": "object",
         },

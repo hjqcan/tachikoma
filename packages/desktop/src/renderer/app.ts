@@ -50,6 +50,8 @@ const memoryPanel = document.getElementById('memory') as HTMLElement;
 const memorySearch = document.getElementById('memory-search') as HTMLInputElement;
 const memoryListPane = document.getElementById('memory-list') as HTMLElement;
 const memoryClearButton = document.getElementById('memory-clear') as HTMLButtonElement;
+const ctxGauge = document.getElementById('ctx-gauge') as HTMLElement;
+const compactNowButton = document.getElementById('compact-now') as HTMLButtonElement;
 const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
 const modelPicker = document.getElementById('model-picker') as HTMLElement;
 const modelFilter = document.getElementById('model-filter') as HTMLInputElement;
@@ -528,6 +530,10 @@ async function boot(): Promise<void> {
           appendToLog(details);
         }
         break;
+      case 'compaction':
+        block('status-line').textContent =
+          `[compaction] ${event.phase}${'reason' in event && event.reason ? ` · ${event.reason}` : ''}`;
+        break;
       case 'retry':
         block('status-line').textContent = `[retry] ${event.attempt}/${event.maxAttempts}`;
         break;
@@ -563,6 +569,10 @@ async function boot(): Promise<void> {
           appendToLog(card);
         }
         assistantBlock = null;
+        if (event.usage.totalTokens > 0) {
+          lastTurnTokens = event.usage.totalTokens;
+          void updateCtxGauge();
+        }
         scheduleSessionListRefresh();
         break;
       }
@@ -583,6 +593,7 @@ async function boot(): Promise<void> {
     turnFileChanges = [];
     reasoningOpen = false;
     setGenerating(false);
+    resetCtxGauge();
   }
 
   /** 空状态：机器就绪，等第一句话（仅新会话；第一条 user_message 到来即退场）。
@@ -1129,9 +1140,28 @@ async function boot(): Promise<void> {
     provider: string;
     model: string;
     reasoning: boolean;
+    contextWindow?: number;
+    maxTokens?: number;
   }
   let allModels: ModelEntry[] | undefined;
   const PICKER_ROW_CAP = 200;
+
+  async function ensureModels(): Promise<ModelEntry[]> {
+    if (!allModels) {
+      const listed = await rpc('engine.listModels');
+      if (!listed.ok) {
+        block('status-line error').textContent = `[error] ${listed.error.message}`;
+        return [];
+      }
+      allModels = (listed.result as { models: ModelEntry[] }).models;
+    }
+    return allModels;
+  }
+
+  function formatCtx(tokens: number): string {
+    if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}m`;
+    return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+  }
 
   async function chooseModel(value: string): Promise<void> {
     closeModelPicker();
@@ -1145,6 +1175,7 @@ async function boot(): Promise<void> {
       currentModel = value;
       modelChip.textContent = value;
       refreshInstrumentCluster();
+      void updateCtxGauge();
     } else {
       block('status-line error').textContent = `[error] ${changed.error.message}`;
     }
@@ -1169,6 +1200,13 @@ async function boot(): Promise<void> {
         tag.textContent = 'reasoning';
         row.appendChild(tag);
       }
+      if (entry.contextWindow) {
+        const ctx = document.createElement('span');
+        ctx.className = 'ctx';
+        ctx.textContent = formatCtx(entry.contextWindow);
+        if (!entry.reasoning) ctx.style.marginLeft = 'auto';
+        row.appendChild(ctx);
+      }
       row.onclick = () => void chooseModel(value);
       modelOptions.appendChild(row);
     }
@@ -1191,19 +1229,60 @@ async function boot(): Promise<void> {
   }
 
   async function openModelPicker(): Promise<void> {
-    if (!allModels) {
-      const listed = await rpc('engine.listModels');
-      if (!listed.ok) {
-        block('status-line error').textContent = `[error] ${listed.error.message}`;
-        return;
-      }
-      allModels = (listed.result as { models: ModelEntry[] }).models;
-    }
+    if ((await ensureModels()).length === 0) return;
     modelPicker.hidden = false;
     modelFilter.value = '';
     renderModelOptions('');
     modelFilter.focus();
   }
+
+  // ── 上下文用量仪表：上回合 tokens / 当前模型窗口；>70% 转琥珀并给出压缩入口 ──
+
+  let lastTurnTokens = 0;
+
+  async function updateCtxGauge(): Promise<void> {
+    if (!lastTurnTokens || !currentModel) {
+      ctxGauge.hidden = true;
+      return;
+    }
+    const entry = (await ensureModels()).find(
+      (model) => `${model.provider}/${model.model}` === currentModel
+    );
+    const window = entry?.contextWindow;
+    if (!window) {
+      ctxGauge.hidden = true;
+      return;
+    }
+    const percent = Math.min(100, Math.round((lastTurnTokens / window) * 100));
+    ctxGauge.hidden = false;
+    (ctxGauge.querySelector('.fill') as HTMLElement).style.width = `${Math.max(percent, 2)}%`;
+    (ctxGauge.querySelector('.pct') as HTMLElement).textContent =
+      `${percent}% / ${formatCtx(window)}`;
+    const warn = percent >= 70;
+    ctxGauge.classList.toggle('warn', warn);
+    compactNowButton.hidden = !warn;
+  }
+
+  function resetCtxGauge(): void {
+    lastTurnTokens = 0;
+    ctxGauge.hidden = true;
+    ctxGauge.classList.remove('warn');
+    compactNowButton.hidden = true;
+  }
+
+  compactNowButton.onclick = async () => {
+    compactNowButton.disabled = true;
+    const compacted = await rpc('session.compact', { sessionId });
+    compactNowButton.disabled = false;
+    if (compacted.ok) {
+      const result = compacted.result as { tokensBefore?: number; estimatedTokensAfter?: number };
+      block('status-line').textContent =
+        `[compaction] 完成${result.tokensBefore ? ` · ${formatCtx(result.tokensBefore)} → ${result.estimatedTokensAfter ? formatCtx(result.estimatedTokensAfter) : '…'}` : ''}`;
+      resetCtxGauge();
+    } else {
+      block('status-line error').textContent = `[error] ${compacted.error.message}`;
+    }
+  };
 
   modelChip.onclick = () => {
     if (modelPicker.hidden) {

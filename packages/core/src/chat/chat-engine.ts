@@ -310,7 +310,13 @@ export class ChatEngine {
     const runtime = await this.modelRuntimePromise;
     return runtime
       .getModels()
-      .map((model) => ({ provider: model.provider, model: model.id, reasoning: model.reasoning }))
+      .map((model) => ({
+        provider: model.provider,
+        model: model.id,
+        reasoning: model.reasoning,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+      }))
       .sort(
         (left, right) =>
           left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model)

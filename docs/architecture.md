@@ -129,7 +129,17 @@ workspace picker over a context-isolated preload, and the renderer is vanilla TS
 session-level workspace grants from the header. The machine voice renders a minimal safe Markdown
 subset (DOM construction only, never innerHTML with model output); links open in the system browser
 and the window itself never navigates. On macOS the title bar is `hiddenInset` with the header as
-the drag region. React and packaging/signing belong to later desktop iterations.
+the drag region.
+
+Sessions are threads: a persistent sidebar (filter, inline rename via `session.rename`, relative
+timestamps), and switching away from a generating session does not abort it — the renderer keeps one
+WebSocket per session, background events only drive the sidebar state dot, and switching back
+replays the WAL from seq 0. The memory drawer (amber, `memory.*` RPC) lists, searches, and prunes
+the GoodMemory store; recall turns show an expandable "召回 N 条记忆" line built from the
+`memory_status.recalled` detail. Coding turns end with a wrap-up card aggregating the turn's
+write/edit calls, and the footer carries a context-usage gauge (last turn's tokens over the model's
+`contextWindow`) that turns amber past 70% and offers `session.compact`. React and packaging/signing
+belong to later desktop iterations.
 
 ## Explicitly absent
 

@@ -15,6 +15,9 @@ export const modelListingSchema = z.strictObject({
   provider: z.string(),
   model: z.string(),
   reasoning: z.boolean(),
+  /** 上下文窗口与单次输出上限（tokens）；上下文用量仪表的分母 */
+  contextWindow: z.number(),
+  maxTokens: z.number(),
 });
 export type ModelListing = z.infer<typeof modelListingSchema>;
 

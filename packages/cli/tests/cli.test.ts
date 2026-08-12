@@ -176,8 +176,8 @@ class FakeEngine implements ChatEnginePort {
   }
 
   models: ChatModelListing[] = [
-    { provider: 'faux', model: 'test', reasoning: true },
-    { provider: 'faux', model: 'plain', reasoning: false },
+    { provider: 'faux', model: 'test', reasoning: true, contextWindow: 200_000, maxTokens: 8192 },
+    { provider: 'faux', model: 'plain', reasoning: false, contextWindow: 128_000, maxTokens: 4096 },
   ];
 
   async listModels(): Promise<ChatModelListing[]> {

@@ -207,7 +207,9 @@ class FakeEngine implements ServerEnginePort {
   }
 
   async listModels(): Promise<ModelListing[]> {
-    return [{ provider: 'faux', model: 'chat', reasoning: true }];
+    return [
+      { provider: 'faux', model: 'chat', reasoning: true, contextWindow: 200_000, maxTokens: 8192 },
+    ];
   }
 }
 

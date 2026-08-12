@@ -1103,6 +1103,56 @@
         color: var(--text);
       }
 
+      /* 上下文用量仪表：>70% 转琥珀并给出压缩入口 */
+      #ctx-gauge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font: 10px var(--mono);
+        color: var(--text-faint);
+      }
+      #ctx-gauge[hidden] {
+        display: none;
+      }
+      #ctx-gauge .bar {
+        width: 56px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--line-soft);
+        overflow: hidden;
+      }
+      #ctx-gauge .fill {
+        display: block;
+        height: 100%;
+        width: 0;
+        border-radius: 2px;
+        background: var(--chassis-strong);
+        transition: width 0.3s ease;
+      }
+      #ctx-gauge.warn .fill {
+        background: var(--oil);
+      }
+      #ctx-gauge.warn .pct {
+        color: var(--oil);
+      }
+      #compact-now {
+        font: 10px var(--mono);
+        color: var(--oil);
+        background: none;
+        border: 1px solid color-mix(in srgb, var(--oil) 55%, transparent);
+        border-radius: 5px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #compact-now:hover {
+        background: color-mix(in srgb, var(--oil) 12%, transparent);
+      }
+      .model-row .ctx {
+        color: var(--text-faint);
+        font-size: 10px;
+        flex: none;
+      }
+
       /* 模型选择面板：主题内自绘（原生 datalist 会被预填值过滤成单条 + 白底跳戏） */
       #model-picker {
         position: absolute;
@@ -1239,6 +1289,11 @@
           <button id="send">发送</button>
         </span>
         <span class="params">
+          <span id="ctx-gauge" hidden title="上下文用量（上回合 tokens / 模型窗口）">
+            <span class="bar"><span class="fill"></span></span>
+            <span class="pct"></span>
+            <button id="compact-now" hidden title="压缩会话历史，腾出上下文">压缩</button>
+          </span>
           <button id="model-chip" title="切换模型">model…</button>
           <div id="model-picker" hidden>
             <input id="model-filter" spellcheck="false" placeholder="过滤模型…（provider/model）" />
