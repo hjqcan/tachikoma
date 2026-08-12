@@ -90,9 +90,10 @@ assertion enforces the empty set. Tool enablement is a per-invocation grant, nev
   Session grants are live-session state: they never persist, and a reopened session returns to the
   engine default until re-granted.
 - The CLI exposes this as `--workdir`, `--toolset read-only|coding`, and `--allow write,edit,bash`
-  (which implies the coding toolset). The interactive REPL prompts `approve <tool>? [y/N]` for
-  ungranted requests; `run` mode and non-TTY deny them immediately. The desktop grants through a
-  native folder picker (workspace chip → new session with the grant).
+  (which implies the coding toolset), plus `/workspace <dir> [toolset]` in the REPL for runtime
+  grants (a new session with the grant; `/workspace off` revokes). The interactive REPL prompts
+  `approve <tool>? [y/N/a]` for ungranted requests; `run` mode and non-TTY deny them immediately.
+  The desktop grants through a native folder picker (workspace chip → new session with the grant).
 
 pi remains the sole model-to-tool loop. Tachikoma adds policy through pi extension hooks and never
 reimplements executors.

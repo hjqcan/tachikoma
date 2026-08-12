@@ -49,6 +49,7 @@ bun run packages/cli/src/cli.ts chat --no-memory
 ```
 
 The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/models`, `/thinking`, `/tools`,
+`/workspace` (grant or revoke a workspace at runtime — opens a new session with the grant),
 `/compact`, `/memory`, `/help`, and `/exit`. API keys are never accepted as command-line arguments.
 
 ## Custom models and endpoints
@@ -112,6 +113,11 @@ reads one `listening` JSON line from stdout. Engine configuration comes from she
 `TACHIKOMA_TOOLSET`, `TACHIKOMA_NO_MEMORY=1`). Clients speak `@tachikoma/protocol`: HTTP
 `POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
 `subscribe {sessionId, fromSeq}` for lossless replay over the per-session WAL.
+
+The sidecar also compiles to a single binary: `bun run --cwd packages/server build:bin` produces
+`packages/server/dist/tachikoma-engined` (bun runtime embedded; real model turns and the GoodMemory
+sqlite path verified in compiled form). The desktop shell uses it when `TACHIKOMA_ENGINED_BIN`
+points at the binary — an explicit opt-in so a stale binary can never silently shadow the dev build.
 
 ## Library
 

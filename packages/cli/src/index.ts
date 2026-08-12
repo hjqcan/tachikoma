@@ -28,6 +28,11 @@ export interface ChatSessionPort {
   readonly thinkingLevel: ChatThinkingLevel;
   readonly memoryStatus: ChatMemorySnapshot;
   readonly activeTools: readonly string[];
+  readonly workspace: {
+    root: string;
+    toolset: 'read-only' | 'coding';
+    tools: string[];
+  } | null;
   abort(): Promise<boolean>;
   respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   close(): Promise<void>;
@@ -43,6 +48,8 @@ export interface ChatEnginePort {
     model?: ChatModelRef;
     thinkingLevel?: ChatThinkingLevel;
     title?: string;
+    workDir?: string;
+    toolset?: 'read-only' | 'coding';
   }): Promise<ChatSessionPort>;
   listModels(): Promise<ChatModelListing[]>;
   listSessions(): Promise<ChatSessionSummary[]>;
@@ -199,7 +206,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session)\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -623,6 +630,42 @@ async function handleSlashCommand(
         `[tools] ${session.activeTools.length > 0 ? session.activeTools.join(', ') : 'none'}\n`
       );
       return { exit: false, session };
+    case 'workspace': {
+      if (!value) {
+        const workspace = session.workspace;
+        dependencies.write(
+          workspace
+            ? `[workspace] ${workspace.root} (${workspace.toolset}: ${workspace.tools.join(', ')})\n`
+            : '[workspace] none — /workspace <dir> [read-only|coding] to grant\n'
+        );
+        return { exit: false, session };
+      }
+      const [dir, toolsetArg, extra] = value.split(/\s+/);
+      if (extra || (toolsetArg && toolsetArg !== 'read-only' && toolsetArg !== 'coding')) {
+        throw new CliUsageError('Use /workspace <dir> [read-only|coding], or /workspace off');
+      }
+      // 授予是会话级的：换工作区 = 显式开一个带授予的新会话（模型/thinking 延续）
+      const next = await engine.createSession({
+        model: session.model,
+        thinkingLevel: session.thinkingLevel,
+        ...(dir !== 'off'
+          ? {
+              workDir: dir,
+              ...(toolsetArg ? { toolset: toolsetArg as 'read-only' | 'coding' } : {}),
+            }
+          : {}),
+      });
+      await session.close();
+      const workspace = next.workspace;
+      dependencies.write(
+        `[session] ${next.id}\n[workspace] ${
+          workspace
+            ? `${workspace.root} (${workspace.toolset}: ${workspace.tools.join(', ')})`
+            : 'none'
+        }\n`
+      );
+      return { exit: false, session: next };
+    }
     case 'help':
       dependencies.write(helpText());
       return { exit: false, session };

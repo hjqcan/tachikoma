@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "build": "bun run clean && tsc -p tsconfig.build.json",
+    "build:bin": "bun build --compile --minify src/engined.ts --outfile dist/tachikoma-engined",
     "clean": "rm -rf dist *.tsbuildinfo",
     "dev": "bun src/engined.ts",
     "test": "bun test tests",

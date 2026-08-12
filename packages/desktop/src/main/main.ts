@@ -22,9 +22,14 @@ let token = '';
 
 async function bootSidecar(): Promise<SidecarHandle> {
   token = randomBytes(32).toString('hex');
+  // 缺省 dev 形态：bun 跑 workspace dist。TACHIKOMA_ENGINED_BIN 显式指向
+  // compiled 二进制（bun run --cwd packages/server build:bin 产出）——
+  // 刻意不做自动探测：dev 里陈旧二进制悄悄接管比多设一个 env 更糟。
+  const compiledBin = process.env.TACHIKOMA_ENGINED_BIN;
   return startSidecar({
-    // dev 形态：bun 跑 workspace 里构建好的 engined；打包形态换 compiled 二进制（D-C）。
-    command: ['bun', join(repoRoot, 'packages', 'server', 'dist', 'engined.js')],
+    command: compiledBin
+      ? [compiledBin]
+      : ['bun', join(repoRoot, 'packages', 'server', 'dist', 'engined.js')],
     cwd: repoRoot,
     token,
     env: {

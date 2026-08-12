@@ -52,6 +52,7 @@ class FakeSession implements ChatSessionPort {
   thinkingLevel: ChatThinkingLevel = 'medium';
   memoryStatus = { enabled: true, status: 'ready' } as const;
   activeTools: readonly string[] = [];
+  workspace: { root: string; toolset: 'read-only' | 'coding'; tools: string[] } | null = null;
   abortCount = 0;
   closeCount = 0;
   compactCount = 0;
@@ -112,20 +113,34 @@ class FakeEngine implements ChatEnginePort {
     }
   }
 
+  createInputs: unknown[] = [];
+
   async createSession(input?: {
     model?: ChatModelRef;
     thinkingLevel?: ChatThinkingLevel;
     title?: string;
+    workDir?: string;
+    toolset?: 'read-only' | 'coding';
   }): Promise<FakeSession> {
     if (this.createFailure) {
       const error = this.createFailure;
       this.createFailure = undefined;
       throw error;
     }
+    this.createInputs.push(input);
     const session = this.nextCreated ?? new FakeSession(`session-${this.created.length + 1}`);
     this.nextCreated = undefined;
     if (input?.model) session.model = input.model;
     if (input?.thinkingLevel) session.thinkingLevel = input.thinkingLevel;
+    if (input?.workDir) {
+      const toolset = input.toolset ?? 'read-only';
+      const tools =
+        toolset === 'coding'
+          ? ['read', 'grep', 'find', 'ls', 'write', 'edit', 'bash']
+          : ['read', 'grep', 'find', 'ls'];
+      session.workspace = { root: input.workDir, toolset, tools };
+      session.activeTools = tools;
+    }
     this.created.push(session);
     this.sessions.set(session.id, session);
     return session;
@@ -594,6 +609,35 @@ describe('runCli', () => {
       await runCli(['run', 'x', '--workdir', '/w', '--toolset', 'sudo'], invalid.dependencies)
     ).toBe(2);
     expect(invalid.stderr.join('')).toContain('--toolset accepts read-only|coding');
+  });
+
+  test('/workspace grants at runtime via a new session, shows state, and revokes with off', async () => {
+    const engine = new FakeEngine();
+    const harness = createHarness({
+      engine,
+      lines: ['/workspace', '/workspace /tmp/ws coding', '/workspace', '/workspace off', '/exit'],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('[workspace] none');
+    expect(output).toContain(
+      '[workspace] /tmp/ws (coding: read, grep, find, ls, write, edit, bash)'
+    );
+    expect(engine.createInputs.at(1)).toMatchObject({ workDir: '/tmp/ws', toolset: 'coding' });
+    // /workspace off 开的新会话不带授予
+    const last = engine.createInputs.at(-1) as { workDir?: string };
+    expect(last.workDir).toBeUndefined();
+    // 旧会话随切换关闭：初始 + 两次切换 = 3 个会话，前两个已 close
+    expect(engine.created).toHaveLength(3);
+    expect(engine.created[0]?.closeCount).toBe(1);
+    expect(engine.created[1]?.closeCount).toBe(1);
+
+    const invalid = createHarness({ lines: ['/workspace /tmp/x sudo', '/exit'] });
+    await runCli([], invalid.dependencies);
+    expect(invalid.stderr.join('')).toContain('/workspace <dir> [read-only|coding]');
   });
 
   test('runs one-shot chat through the same session surface and reports memory degradation', async () => {
