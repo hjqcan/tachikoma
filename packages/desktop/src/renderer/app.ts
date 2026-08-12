@@ -26,6 +26,10 @@ interface SessionWorkspace {
 
 interface SessionSummaryLite {
   sessionId: string;
+  title?: string;
+  updatedAt?: number;
+  messageCount?: number;
+  model?: { provider: string; model: string } | null;
   workspace?: SessionWorkspace;
 }
 
@@ -35,6 +39,10 @@ const input = document.getElementById('input') as HTMLInputElement;
 const sendButton = document.getElementById('send') as HTMLButtonElement;
 const workspaceChip = document.getElementById('workspace-chip') as HTMLButtonElement;
 const toolsetGroup = document.getElementById('toolset') as HTMLElement;
+const sessionsToggle = document.getElementById('sessions-toggle') as HTMLButtonElement;
+const sessionsPanel = document.getElementById('sessions') as HTMLElement;
+const sessionList = document.getElementById('session-list') as HTMLElement;
+const newSessionButton = document.getElementById('new-session') as HTMLButtonElement;
 
 function statusLine(text: string): void {
   statusBar.textContent = text;
@@ -112,7 +120,15 @@ async function boot(): Promise<void> {
   let socket: WebSocket | undefined;
   let selectedToolset: 'read-only' | 'coding' = 'read-only';
   let grantedWorkspace: SessionWorkspace | null = null;
+  let currentModel = '';
   let memoryNote = '';
+  let generating = false;
+
+  function setGenerating(next: boolean): void {
+    generating = next;
+    sendButton.textContent = next ? '停止' : '发送';
+    sendButton.classList.toggle('generating', next);
+  }
 
   function refreshInstrumentCluster(): void {
     if (grantedWorkspace) {
@@ -130,9 +146,9 @@ async function boot(): Promise<void> {
       button.classList.toggle('active', button.dataset.toolset === selectedToolset);
     }
     statusLine(
-      `engine ${engineVersion} · session ${sessionId ? sessionId.slice(0, 8) : '—'}${
-        memoryNote ? ` · memory: ${memoryNote}` : ''
-      }`
+      `engine ${engineVersion}${currentModel ? ` · ${currentModel}` : ''} · session ${
+        sessionId ? sessionId.slice(0, 8) : '—'
+      }${memoryNote ? ` · memory: ${memoryNote}` : ''}`
     );
   }
 
@@ -179,7 +195,18 @@ async function boot(): Promise<void> {
 
   function handleEvent(event: ChatEventWire): void {
     switch (event.type) {
+      case 'user_message': {
+        // 用户回合也来自事件流：live 与 WAL 重放共用同一渲染路径
+        const userBlock = block('turn you');
+        userBlock.innerHTML = '<div class="role">you</div>';
+        const body = document.createElement('div');
+        body.className = 'body';
+        body.textContent = event.text;
+        userBlock.appendChild(body);
+        break;
+      }
       case 'message_start':
+        setGenerating(true);
         assistantBlock = block('turn machine');
         assistantBlock.innerHTML = '<div class="role">tachikoma</div>';
         reasoningOpen = false;
@@ -304,6 +331,7 @@ async function boot(): Promise<void> {
         block('status-line').textContent = `[retry] ${event.attempt}/${event.maxAttempts}`;
         break;
       case 'message_complete':
+        setGenerating(false);
         if (event.status !== 'success') {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
         }
@@ -315,6 +343,22 @@ async function boot(): Promise<void> {
   }
 
   // ── 会话与订阅 ──────────────────────────────────────────────
+
+  function clearTimeline(): void {
+    log.innerHTML = '';
+    toolNodes.clear();
+    approvalCards.clear();
+    assistantBlock = null;
+    reasoningOpen = false;
+    setGenerating(false);
+  }
+
+  function adoptSummary(summary: SessionSummaryLite): void {
+    sessionId = summary.sessionId;
+    grantedWorkspace = summary.workspace ?? null;
+    if (summary.workspace) selectedToolset = summary.workspace.toolset;
+    currentModel = summary.model ? `${summary.model.provider}/${summary.model.model}` : '';
+  }
 
   async function connect(targetSessionId: string): Promise<void> {
     socket?.close();
@@ -335,19 +379,24 @@ async function boot(): Promise<void> {
     socket = next;
   }
 
+  async function stopIfGenerating(): Promise<void> {
+    if (generating && sessionId) {
+      await rpc('session.abort', { sessionId });
+    }
+  }
+
   async function startSession(params: {
     workDir?: string;
     toolset?: 'read-only' | 'coding';
   }): Promise<void> {
+    await stopIfGenerating();
     const created = await rpc('session.create', params);
     if (!created.ok) {
       block('status-line error').textContent = `[error] ${created.error.message}`;
       return;
     }
-    const summary = created.result as SessionSummaryLite;
-    sessionId = summary.sessionId;
-    grantedWorkspace = summary.workspace ?? null;
-    if (summary.workspace) selectedToolset = summary.workspace.toolset;
+    clearTimeline();
+    adoptSummary(created.result as SessionSummaryLite);
     await connect(sessionId);
     const divider = block('session-divider');
     divider.textContent = grantedWorkspace
@@ -355,6 +404,59 @@ async function boot(): Promise<void> {
       : '新会话 · 零工具';
     refreshInstrumentCluster();
     input.focus();
+  }
+
+  /** 恢复历史会话：WS 从 seq 0 重放 WAL，双方对话与工具轨迹全量重建 */
+  async function openExisting(targetSessionId: string): Promise<void> {
+    if (targetSessionId === sessionId) return;
+    await stopIfGenerating();
+    const opened = await rpc('session.open', { sessionId: targetSessionId });
+    if (!opened.ok) {
+      block('status-line error').textContent = `[error] ${opened.error.message}`;
+      return;
+    }
+    clearTimeline();
+    adoptSummary(opened.result as SessionSummaryLite);
+    await connect(sessionId);
+    const divider = block('session-divider');
+    divider.textContent = grantedWorkspace
+      ? `恢复会话 · 工作区 ${grantedWorkspace.root}`
+      : '恢复会话 · 零工具（授予不随恢复携带，可重新选择工作区）';
+    refreshInstrumentCluster();
+    void refreshSessionList();
+    input.focus();
+  }
+
+  function sessionRow(summary: SessionSummaryLite): HTMLElement {
+    const row = document.createElement('div');
+    row.className = `session-row${summary.sessionId === sessionId ? ' current' : ''}`;
+    const title = document.createElement('div');
+    title.className = 'session-title';
+    title.textContent = summary.title?.trim() || summary.sessionId.slice(0, 8);
+    const meta = document.createElement('div');
+    meta.className = 'session-meta';
+    const when = summary.updatedAt
+      ? new Date(summary.updatedAt).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '';
+    meta.textContent = [when, `${summary.messageCount ?? 0} 条`].filter(Boolean).join(' · ');
+    row.append(title, meta);
+    row.onclick = () => void openExisting(summary.sessionId);
+    return row;
+  }
+
+  async function refreshSessionList(): Promise<void> {
+    const listed = await rpc('session.list');
+    if (!listed.ok) return;
+    const sessions = (listed.result as { sessions: SessionSummaryLite[] }).sessions;
+    sessionList.innerHTML = '';
+    for (const summary of sessions) {
+      sessionList.appendChild(sessionRow(summary));
+    }
   }
 
   // ── 控件 ────────────────────────────────────────────────────
@@ -379,27 +481,38 @@ async function boot(): Promise<void> {
 
   async function submit(): Promise<void> {
     const text = input.value.trim();
-    if (!text || !sessionId) return;
+    if (!text || !sessionId || generating) return;
     input.value = '';
-    const userBlock = block('turn you');
-    userBlock.innerHTML = '<div class="role">you</div>';
-    const body = document.createElement('div');
-    body.className = 'body';
-    body.textContent = text;
-    userBlock.appendChild(body);
+    // 用户回合不本地回显：user_message 事件是唯一渲染来源（live 与重放一致）
     const sent = await rpc('session.send', { sessionId, text });
     if (!sent.ok) {
       block('status-line error').textContent = `[error] ${sent.error.message}`;
     }
   }
 
-  sendButton.onclick = () => void submit();
+  sendButton.onclick = () => {
+    if (generating) {
+      void rpc('session.abort', { sessionId });
+    } else {
+      void submit();
+    }
+  };
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void submit();
     }
   });
+
+  sessionsToggle.onclick = () => {
+    sessionsPanel.hidden = !sessionsPanel.hidden;
+    if (!sessionsPanel.hidden) void refreshSessionList();
+  };
+  newSessionButton.onclick = () => {
+    void startSession(
+      grantedWorkspace ? { workDir: grantedWorkspace.root, toolset: selectedToolset } : {}
+    ).then(() => refreshSessionList());
+  };
 
   await startSession({});
 }

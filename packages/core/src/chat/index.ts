@@ -29,5 +29,6 @@ export type {
   ChatToolset,
   ChatToolUpdateEvent,
   ChatUsage,
+  ChatUserMessageEvent,
   ChatWorkspaceState,
 } from './types';

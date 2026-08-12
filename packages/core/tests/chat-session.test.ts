@@ -41,6 +41,9 @@ describe('ChatSession', () => {
       const events = await collect(session.send('hello'));
       const complete = terminal(events);
 
+      // 回合首事件是用户输入原文：WAL 重放靠它重建对话的"人"这一侧
+      expect(events[0]).toMatchObject({ type: 'user_message', text: 'hello' });
+      expect(events[0]?.turnId).toBe(complete.turnId);
       expect(events.some((event) => event.type === 'reasoning_delta')).toBeTrue();
       expect(
         events

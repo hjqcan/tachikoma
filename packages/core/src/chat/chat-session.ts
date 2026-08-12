@@ -231,6 +231,13 @@ export class ChatSession {
     this.activeTurnId = turnId;
     this.promptMemoryContext.abortRequested = false;
     events.push({
+      type: 'user_message',
+      sessionId: this.id,
+      turnId,
+      timestamp: Date.now(),
+      text,
+    });
+    events.push({
       type: 'message_start',
       sessionId: this.id,
       turnId,

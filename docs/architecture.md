@@ -50,6 +50,8 @@ interpolation) and never appear in events, DTOs, or the public model reference
 
 The frozen stream union (turns 1 and 2):
 
+- `user_message` (the turn's first event: the user's prompt text, so WAL replay reconstructs both
+  sides of the conversation)
 - `message_start`, `message_delta`, `reasoning_delta`
 - `retry`, `compaction`, `memory_status`
 - `tool_call`, `tool_update`, `tool_result`

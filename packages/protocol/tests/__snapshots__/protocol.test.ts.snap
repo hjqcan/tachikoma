@@ -8,6 +8,35 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       {
         "additionalProperties": false,
         "properties": {
+          "sessionId": {
+            "type": "string",
+          },
+          "text": {
+            "type": "string",
+          },
+          "timestamp": {
+            "type": "number",
+          },
+          "turnId": {
+            "type": "string",
+          },
+          "type": {
+            "const": "user_message",
+            "type": "string",
+          },
+        },
+        "required": [
+          "sessionId",
+          "turnId",
+          "timestamp",
+          "type",
+          "text",
+        ],
+        "type": "object",
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
           "messageId": {
             "type": "string",
           },
@@ -1898,6 +1927,35 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
     "properties": {
       "event": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "sessionId": {
+                "type": "string",
+              },
+              "text": {
+                "type": "string",
+              },
+              "timestamp": {
+                "type": "number",
+              },
+              "turnId": {
+                "type": "string",
+              },
+              "type": {
+                "const": "user_message",
+                "type": "string",
+              },
+            },
+            "required": [
+              "sessionId",
+              "turnId",
+              "timestamp",
+              "type",
+              "text",
+            ],
+            "type": "object",
+          },
           {
             "additionalProperties": false,
             "properties": {

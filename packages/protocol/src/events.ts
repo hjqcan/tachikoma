@@ -15,6 +15,13 @@ const base = {
   timestamp: z.number(),
 };
 
+/** 回合首事件：用户输入原文——WAL 重放靠它重建对话的"人"这一侧 */
+export const userMessageEventSchema = z.strictObject({
+  ...base,
+  type: z.literal('user_message'),
+  text: z.string(),
+});
+
 export const messageStartEventSchema = z.strictObject({
   ...base,
   type: z.literal('message_start'),
@@ -121,6 +128,7 @@ export const messageCompleteEventSchema = z.strictObject({
 });
 
 export const chatEventWireSchema = z.discriminatedUnion('type', [
+  userMessageEventSchema,
   messageStartEventSchema,
   messageDeltaEventSchema,
   reasoningDeltaEventSchema,

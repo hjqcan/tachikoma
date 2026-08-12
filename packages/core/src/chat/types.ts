@@ -109,6 +109,12 @@ interface BaseChatEvent {
   timestamp: number;
 }
 
+/** 回合首事件：用户输入原文。WAL 重放靠它重建对话的"人"这一侧 */
+export interface ChatUserMessageEvent extends BaseChatEvent {
+  type: 'user_message';
+  text: string;
+}
+
 export interface ChatMessageStartEvent extends BaseChatEvent {
   type: 'message_start';
   messageId: string;
@@ -209,6 +215,7 @@ export interface ChatToolApprovalResolvedEvent extends BaseChatEvent {
  * 消费者必须容忍未知事件类型（跳过而非报错），否则圈层推进即破坏性变更。
  */
 export type ChatEvent =
+  | ChatUserMessageEvent
   | ChatMessageStartEvent
   | ChatMessageDeltaEvent
   | ChatReasoningDeltaEvent

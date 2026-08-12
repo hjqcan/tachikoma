@@ -131,8 +131,9 @@ await session.close();
 ```
 
 Sessions start with zero tools unless `workDir` is configured; credentials never appear in public
-configuration or events. The `ChatEvent` union covers streaming, reasoning, retry, compaction,
-memory status, tool calls, approvals, and exactly one terminal `message_complete` per turn.
+configuration or events. The `ChatEvent` union covers the user prompt (`user_message`, first event
+of each turn), streaming, reasoning, retry, compaction, memory status, tool calls, approvals, and
+exactly one terminal `message_complete` per turn.
 
 ## Development
 

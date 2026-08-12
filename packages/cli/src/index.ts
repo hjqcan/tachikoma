@@ -496,6 +496,7 @@ async function consumeTurn(
         if (!wroteText && event.content) dependencies.write(event.content);
         if (event.error) dependencies.writeError(`[error] ${event.error}\n`);
         break;
+      case 'user_message': // 终端自带输入回显，无需重复渲染
       case 'message_start':
       case 'reasoning_delta':
         break;

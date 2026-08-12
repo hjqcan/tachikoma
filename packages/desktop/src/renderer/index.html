@@ -116,6 +116,82 @@
         text-align: right;
       }
 
+      /* ── 主体：会话栏 + 对话日志 ─────────────────────── */
+      #shell {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      #sessions-toggle {
+        font: 12px var(--mono);
+        color: var(--text-dim);
+        background: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 14px;
+        cursor: pointer;
+      }
+      #sessions-toggle:hover {
+        border-color: var(--chassis);
+        color: var(--chassis);
+      }
+      #sessions {
+        width: 270px;
+        flex: none;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+      }
+      #sessions[hidden] {
+        display: none;
+      }
+      .aside-head {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      #new-session {
+        width: 100%;
+        font: 600 12px var(--human);
+        background: none;
+        color: var(--chassis);
+        border: 1px dashed var(--chassis-strong);
+        border-radius: 6px;
+        padding: 7px 0;
+        cursor: pointer;
+      }
+      #new-session:hover {
+        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+      }
+      #session-list {
+        flex: 1;
+        overflow-y: auto;
+      }
+      .session-row {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        cursor: pointer;
+      }
+      .session-row:hover {
+        background: color-mix(in srgb, var(--chassis) 7%, transparent);
+      }
+      .session-row.current {
+        border-left: 2px solid var(--chassis-strong);
+        background: color-mix(in srgb, var(--chassis) 5%, transparent);
+      }
+      .session-title {
+        font: 13px var(--human);
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .session-meta {
+        font: 10px var(--mono);
+        color: var(--text-dim);
+        margin-top: 3px;
+      }
+
       /* ── 对话日志 ───────────────────────────────────── */
       #log {
         flex: 1;
@@ -396,6 +472,14 @@
         background: var(--chassis);
         color: var(--ground);
       }
+      /* 生成中送出键变为"停止"：传感红——人对机器行动的即时控制权 */
+      #send.generating {
+        background: var(--sensor-deep);
+      }
+      #send.generating:hover {
+        background: var(--sensor);
+        color: #fff;
+      }
       button:focus-visible,
       #workspace-chip:focus-visible,
       #input:focus-visible {
@@ -407,6 +491,7 @@
   <body>
     <header>
       <span class="wordmark">TACHIKOMA</span>
+      <button id="sessions-toggle" title="会话列表">会话</button>
       <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
       <span id="toolset">
         <button data-toolset="read-only" class="active" title="read / grep / find / ls">
@@ -417,7 +502,15 @@
       <span class="spacer"></span>
       <span id="status">connecting…</span>
     </header>
-    <main id="log"></main>
+    <div id="shell">
+      <aside id="sessions" hidden>
+        <div class="aside-head">
+          <button id="new-session">＋ 新会话</button>
+        </div>
+        <div id="session-list"></div>
+      </aside>
+      <main id="log"></main>
+    </div>
     <footer>
       <span class="inner">
         <input id="input" placeholder="发消息…（Enter 发送）" autofocus />
