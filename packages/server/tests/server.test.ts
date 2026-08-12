@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -321,7 +321,7 @@ describe('sidecar', () => {
       live.close();
 
       const walContent = await readFile(
-        join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`),
+        join(harness.dataDir, 'events', `${sessionId}.jsonl`),
         'utf8'
       );
       const walSeqs = walContent
@@ -425,6 +425,48 @@ describe('sidecar', () => {
     }
   });
 
+  it('旧布局 WAL（sessions/<id>.events.jsonl）在订阅时自动迁移到 events/ 并可重放', async () => {
+    const harness = await startHarness();
+    try {
+      const created = await harness.rpc('session.create');
+      if (!created.ok) throw new Error('create failed');
+      const sessionId = (created.result as SessionSummary).sessionId;
+
+      // 手工铺一个旧布局账本（模拟迁移前版本写下的历史）
+      const legacyFrame = {
+        v: 1,
+        sessionId,
+        seq: 1,
+        event: {
+          type: 'user_message',
+          sessionId,
+          turnId: 'legacy-t1',
+          timestamp: 1,
+          text: '迁移前的历史',
+        },
+      };
+      await mkdir(join(harness.dataDir, 'sessions'), { recursive: true });
+      await writeFile(
+        join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`),
+        `${JSON.stringify(legacyFrame)}\n`
+      );
+
+      const replay = await harness.ws(sessionId, 0);
+      await replay.waitFor(1);
+      expect(replay.frames[0]?.event).toMatchObject({
+        type: 'user_message',
+        text: '迁移前的历史',
+      });
+      replay.close();
+      expect(existsSync(join(harness.dataDir, 'events', `${sessionId}.jsonl`))).toBeTrue();
+      expect(
+        existsSync(join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`))
+      ).toBeFalse();
+    } finally {
+      await harness.stop();
+    }
+  });
+
   it('session.delete 连带销毁 WAL 文件并断开订阅者；重开报 not_found', async () => {
     const harness = await startHarness();
     try {
@@ -435,7 +477,7 @@ describe('sidecar', () => {
       const live = await harness.ws(sessionId, 0);
       await harness.rpc('session.send', { sessionId, text: '留点事件' });
       await live.waitFor(3);
-      const walPath = join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`);
+      const walPath = join(harness.dataDir, 'events', `${sessionId}.jsonl`);
       expect(existsSync(walPath)).toBeTrue();
 
       const deleted = await harness.rpc('session.delete', { sessionId });

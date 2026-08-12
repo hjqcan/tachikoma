@@ -1,12 +1,15 @@
 /**
- * 会话事件 WAL：<dataDir>/sessions/<sessionId>.events.jsonl
- * （与 pi 的 *_<sessionId>.jsonl 会话文件同目录不同名）。
+ * 会话事件 WAL：<dataDir>/events/<sessionId>.jsonl
+ *
+ * 必须与 pi 的 sessions/ 目录分离：曾与转录同目录（*.events.jsonl），被 core 的
+ * 损坏会话扫描当成幻影会话列出，删除幻影时按文件名回退匹配还会连带 unlink 真会话
+ * 的 WAL（真实事故）。load 时自动把旧路径迁移过来。
  *
  * 不变量：先写 WAL 再扇出；seq 会话内单调；崩溃后未终结的回合在下次加载时
  * 补发合成 message_complete{failed}——合成帧同样入 WAL，保证重放游标一致。
  */
 
-import { appendFile, mkdir, readFile, unlink } from 'node:fs/promises';
+import { access, appendFile, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ChatEventWire, SessionEventFrame } from '@tachikoma/protocol';
 import { FRAME_VERSION, parseSessionEventFrame } from '@tachikoma/protocol';
@@ -21,9 +24,25 @@ export class SessionWal {
     private readonly sessionId: string
   ) {}
 
+  private static walPath(dataDir: string, sessionId: string): string {
+    return join(dataDir, 'events', `${sessionId}.jsonl`);
+  }
+
+  /** 迁移前的旧路径（与 pi 转录同目录的时代） */
+  private static legacyPath(dataDir: string, sessionId: string): string {
+    return join(dataDir, 'sessions', `${sessionId}.events.jsonl`);
+  }
+
   static async load(dataDir: string, sessionId: string): Promise<SessionWal> {
-    const wal = new SessionWal(join(dataDir, 'sessions', `${sessionId}.events.jsonl`), sessionId);
+    const wal = new SessionWal(SessionWal.walPath(dataDir, sessionId), sessionId);
     await mkdir(dirname(wal.path), { recursive: true });
+    // 旧布局迁移：sessions/<id>.events.jsonl → events/<id>.jsonl。
+    // 只在新路径不存在时迁移——POSIX rename 会覆盖目标，绝不能拿旧账本盖掉新账本。
+    try {
+      await access(wal.path);
+    } catch {
+      await rename(SessionWal.legacyPath(dataDir, sessionId), wal.path).catch(() => undefined);
+    }
     let content = '';
     try {
       content = await readFile(wal.path, 'utf8');
@@ -114,8 +133,9 @@ export class SessionWal {
     await unlink(this.path).catch(() => undefined);
   }
 
-  /** 未加载过的会话直接按路径删账本文件（幂等） */
+  /** 未加载过的会话直接按路径删账本文件（幂等；新旧布局都清） */
   static async delete(dataDir: string, sessionId: string): Promise<void> {
-    await unlink(join(dataDir, 'sessions', `${sessionId}.events.jsonl`)).catch(() => undefined);
+    await unlink(SessionWal.walPath(dataDir, sessionId)).catch(() => undefined);
+    await unlink(SessionWal.legacyPath(dataDir, sessionId)).catch(() => undefined);
   }
 }

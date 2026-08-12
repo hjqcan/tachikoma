@@ -226,8 +226,10 @@ export class ChatEngine {
       }
     }
 
-    const filenames = (await readdir(this.sessionsDir)).filter((name) =>
-      name.endsWith(SESSION_EXTENSION)
+    // 只把 pi 形状的 *.jsonl 当候选：.events.jsonl 是 server 的事件账本（旧布局遗留），
+    // 绝不能被列为幻影"损坏会话"——曾导致删除幻影时连带 unlink 真会话的账本。
+    const filenames = (await readdir(this.sessionsDir)).filter(
+      (name) => name.endsWith(SESSION_EXTENSION) && !name.endsWith('.events.jsonl')
     );
     for (const filename of filenames) {
       const path = resolve(this.sessionsDir, filename);
@@ -262,7 +264,10 @@ export class ChatEngine {
       return true;
     }
     const filename = (await readdir(this.sessionsDir)).find(
-      (name) => name.endsWith(SESSION_EXTENSION) && sessionIdFromFilename(name) === sessionId
+      (name) =>
+        name.endsWith(SESSION_EXTENSION) &&
+        !name.endsWith('.events.jsonl') &&
+        sessionIdFromFilename(name) === sessionId
     );
     if (filename) {
       await unlink(join(this.sessionsDir, filename));

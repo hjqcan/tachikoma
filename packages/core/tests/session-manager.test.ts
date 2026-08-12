@@ -1,5 +1,6 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -124,6 +125,36 @@ describe('pi JSONL session ownership', () => {
         (await engine.listSessions()).some((session) => session.sessionId === 'corrupt-session')
       ).toBeFalse();
       expect(await engine.deleteSession('corrupt-session')).toBeFalse();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('server 的事件账本（*.events.jsonl）绝不被列为幻影会话，也不可经幻影 id 删除', async () => {
+    const harness = await createFauxHarness();
+    try {
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const created = await engine.createSession();
+      const sessionId = created.id;
+      await created.close();
+      // 旧布局遗留：server WAL 与转录同目录（事故根源；见 wal.ts 头注释）
+      const walPath = join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`);
+      await writeFile(walPath, '{"v":1}\n', 'utf8');
+
+      const sessions = await engine.listSessions();
+      expect(sessions.some((session) => session.sessionId.endsWith('.events'))).toBeFalse();
+      expect(sessions.some((session) => session.status === 'corrupt')).toBeFalse();
+
+      // 幻影 id 的删除请求不得 unlink 账本文件
+      expect(await engine.deleteSession(`${sessionId}.events`)).toBeFalse();
+      expect(existsSync(walPath)).toBeTrue();
     } finally {
       await harness.cleanup();
     }
