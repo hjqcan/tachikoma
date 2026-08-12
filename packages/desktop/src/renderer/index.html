@@ -539,6 +539,44 @@
       .turn {
         margin-bottom: 28px;
         animation: rise 0.18s ease-out;
+        position: relative;
+      }
+      /* 机器回合 hover 复制原文；代码块右上角复制 */
+      .copy-turn,
+      .code-copy {
+        font: 10px var(--mono);
+        color: var(--text-faint);
+        background: var(--surface);
+        border: 1px solid var(--line-soft);
+        border-radius: 5px;
+        padding: 2px 8px;
+        cursor: pointer;
+        opacity: 0;
+      }
+      .copy-turn {
+        position: absolute;
+        top: -2px;
+        right: 28px;
+      }
+      .turn.machine:hover .copy-turn,
+      .copy-turn:focus-visible {
+        opacity: 1;
+      }
+      .copy-turn:hover,
+      .code-copy:hover {
+        color: var(--chassis);
+        border-color: var(--chassis);
+      }
+      .body pre.code {
+        position: relative;
+      }
+      .body pre.code:hover .code-copy {
+        opacity: 1;
+      }
+      .code-copy {
+        position: absolute;
+        top: 6px;
+        right: 6px;
       }
       @keyframes rise {
         from {
@@ -757,6 +795,73 @@
         color: var(--text);
         white-space: pre-wrap;
         word-break: break-all;
+        cursor: pointer;
+      }
+      .tool pre.expanded {
+        max-height: none;
+      }
+
+      /* 回合收口卡：这一回合机器改了哪些文件（底盘蓝，工具动作的总账） */
+      details.changes {
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--chassis-strong);
+        border-radius: 8px;
+        background: var(--surface);
+        padding: 10px 14px;
+        margin: 12px auto;
+      }
+      details.changes summary {
+        font: 600 12px var(--human);
+        color: var(--chassis);
+        cursor: pointer;
+        list-style: none;
+      }
+      details.changes .change {
+        margin-top: 10px;
+      }
+      details.changes .change-head {
+        font: 11px var(--mono);
+        color: var(--text-dim);
+        margin-bottom: 4px;
+      }
+      details.changes pre {
+        font: 11px/1.55 var(--mono);
+        background: var(--well);
+        border-radius: 6px;
+        padding: 8px 10px;
+        max-height: 180px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 6px 0;
+      }
+      details.changes pre.diff-old {
+        border-left: 2px solid var(--line);
+        color: var(--text-dim);
+        margin-bottom: 4px;
+      }
+      details.changes pre.diff-old::before,
+      details.changes pre.diff-new::before {
+        display: block;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        margin-bottom: 4px;
+      }
+      details.changes pre.diff-old::before {
+        content: '− 旧';
+        color: var(--text-dim);
+      }
+      details.changes pre.diff-new {
+        border-left: 2px solid var(--chassis-strong);
+        margin-top: 0;
+      }
+      details.changes pre.diff-new::before {
+        content: '+ 新';
+        color: var(--chassis);
+      }
+      details.changes .path {
+        font: 11px var(--mono);
+        color: var(--text-dim);
       }
 
       /* ── 审批卡：传感红，机器在等你 ─────────────────── */

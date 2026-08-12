@@ -103,6 +103,21 @@ function renderInline(text: string): DocumentFragment {
   return fragment;
 }
 
+/** 复制按钮通用行为：写剪贴板 + 短暂 ✓ 反馈 */
+function copyButton(className: string, text: () => string): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.className = className;
+  button.textContent = '复制';
+  button.title = '复制到剪贴板';
+  button.onclick = () => {
+    void navigator.clipboard.writeText(text()).then(() => {
+      button.textContent = '✓';
+      setTimeout(() => (button.textContent = '复制'), 1200);
+    });
+  };
+  return button;
+}
+
 function renderMarkdown(source: string, into: HTMLElement): void {
   into.textContent = '';
   const lines = source.split('\n');
@@ -122,7 +137,10 @@ function renderMarkdown(source: string, into: HTMLElement): void {
       pre.className = 'code';
       const code = document.createElement('code');
       code.textContent = buffer.join('\n');
-      pre.append(code);
+      pre.append(
+        code,
+        copyButton('code-copy', () => code.textContent ?? '')
+      );
       into.append(pre);
       list = null;
       continue;
@@ -298,6 +316,9 @@ async function boot(): Promise<void> {
   let assistantBlock: HTMLElement | null = null;
   let assistantRaw = ''; // 当前助手回合累积的 Markdown 原文（渲染的唯一来源）
   let reasoningOpen = false;
+  /** 本回合的 write/edit 调用——回合收口时聚合成"修改了 N 个文件"卡 */
+  let turnFileChanges: { tool: string; input: unknown }[] = [];
+
   const toolNodes = new Map<
     string,
     { head: HTMLElement; verdict: HTMLElement; pre?: HTMLPreElement }
@@ -335,6 +356,8 @@ async function boot(): Promise<void> {
       const container = node.head.parentElement;
       if (!container) return undefined;
       node.pre = document.createElement('pre');
+      node.pre.title = '点击展开 / 收起';
+      node.pre.onclick = () => node.pre?.classList.toggle('expanded');
       container.appendChild(node.pre);
     }
     return node.pre;
@@ -353,13 +376,18 @@ async function boot(): Promise<void> {
         userBlock.appendChild(body);
         break;
       }
-      case 'message_start':
+      case 'message_start': {
         setGenerating(true);
         assistantBlock = block('turn machine');
         assistantBlock.innerHTML = '<div class="role">tachikoma</div>';
+        assistantBlock.appendChild(
+          copyButton('copy-turn', () => assistantBlock?.dataset.raw ?? '')
+        );
         assistantRaw = '';
+        turnFileChanges = [];
         reasoningOpen = false;
         break;
+      }
       case 'reasoning_delta': {
         if (!assistantBlock) break;
         if (!reasoningOpen) {
@@ -385,12 +413,16 @@ async function boot(): Promise<void> {
           assistantBlock.appendChild(body);
         }
         assistantRaw += event.text;
+        assistantBlock.dataset.raw = assistantRaw;
         renderMarkdown(assistantRaw, body);
         appendToLog(assistantBlock);
         break;
       }
       case 'tool_call':
         toolNode(event.callId, event.tool, inputPreview(event.input));
+        if (event.tool === 'write' || event.tool === 'edit') {
+          turnFileChanges.push({ tool: event.tool, input: event.input });
+        }
         break;
       case 'tool_update': {
         // partial 输出是累积快照：整块替换，滚动跟随
@@ -503,9 +535,32 @@ async function boot(): Promise<void> {
         setGenerating(false);
         // 以权威全文重渲染一次：流式期间未闭合的结构（围栏等）在此收口
         const body = assistantBlock?.querySelector('.body') as HTMLElement | null;
-        if (body && event.content) renderMarkdown(event.content, body);
+        if (body && event.content) {
+          renderMarkdown(event.content, body);
+          if (assistantBlock) assistantBlock.dataset.raw = event.content;
+        }
         if (event.status !== 'success') {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
+        }
+        // 回合收口卡：这一回合机器改了哪些文件（复用审批卡的 diff 预览）
+        if (turnFileChanges.length > 0) {
+          const changes = turnFileChanges;
+          turnFileChanges = [];
+          const card = document.createElement('details');
+          card.className = 'changes';
+          const summary = document.createElement('summary');
+          summary.textContent = `✎ 本回合修改 ${changes.length} 处文件`;
+          card.appendChild(summary);
+          for (const change of changes) {
+            const entry = document.createElement('div');
+            entry.className = 'change';
+            const label = document.createElement('div');
+            label.className = 'change-head';
+            label.textContent = change.tool; // 文件路径由 approvalDetail 的 .path 行呈现
+            entry.append(label, approvalDetail(change.tool, change.input));
+            card.appendChild(entry);
+          }
+          appendToLog(card);
         }
         assistantBlock = null;
         scheduleSessionListRefresh();
@@ -525,6 +580,7 @@ async function boot(): Promise<void> {
     document.body.classList.remove('awaiting-approval');
     assistantBlock = null;
     assistantRaw = '';
+    turnFileChanges = [];
     reasoningOpen = false;
     setGenerating(false);
   }
