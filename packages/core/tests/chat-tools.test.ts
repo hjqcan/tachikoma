@@ -210,3 +210,90 @@ describe('findWorkspaceViolation 单元语义', () => {
     }
   });
 });
+
+describe('第二圈：会话级工作区授予', () => {
+  it('引擎无默认工作区时，createSession({workDir}) 只对该会话授予只读工具', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const granted = await engine.createSession({ workDir });
+      const bare = await engine.createSession();
+      expect([...granted.activeTools].sort()).toEqual([...WORKSPACE_TOOLS].sort());
+      expect(granted.workspace).toMatchObject({
+        root: await realpath(workDir),
+        toolset: 'read-only',
+      });
+      expect(granted.workspace?.tools.sort()).toEqual([...WORKSPACE_TOOLS].sort());
+      expect(bare.activeTools).toHaveLength(0);
+      expect(bare.workspace).toBeNull();
+      await granted.close();
+      await bare.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+
+  it('会话级 toolset: coding 启用写/执行工具，且授予不外溢到其他会话', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const coding = await engine.createSession({ workDir, toolset: 'coding' });
+      expect(coding.workspace?.toolset).toBe('coding');
+      expect(coding.activeTools).toContain('write');
+      expect(coding.activeTools).toContain('bash');
+      const bare = await engine.createSession();
+      expect(bare.activeTools).toHaveLength(0);
+      await coding.close();
+      await bare.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+
+  it('重开会话不继承工作区授予——授予是 live 会话属性，不落盘', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      harness.faux.setResponses([fauxAssistantMessage('好的')]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const granted = await engine.createSession({ workDir, toolset: 'coding' });
+      const sessionId = granted.id;
+      await collect(granted.send('随便说点什么'));
+      await granted.close();
+
+      const reopened = await engine.openSession(sessionId);
+      expect(reopened).not.toBeNull();
+      expect(reopened?.activeTools ?? []).toHaveLength(0);
+      expect(reopened?.workspace ?? null).toBeNull();
+      await reopened?.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+});

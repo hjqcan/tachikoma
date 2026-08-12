@@ -33,6 +33,7 @@ import type {
   ChatSessionInit,
   ChatSessionSummary,
   ChatThinkingLevel,
+  ChatToolset,
 } from './types';
 
 const DEFAULT_DATA_DIR = join(homedir(), '.tachikoma');
@@ -83,9 +84,8 @@ export class ChatEngine {
   private readonly configuredModel: ChatModelRef | undefined;
   private readonly configuredThinkingLevel: ChatThinkingLevel | undefined;
   private readonly workDir: string | undefined;
-  private readonly toolset: 'read-only' | 'coding';
+  private readonly toolset: ChatToolset;
   private readonly approvalTimeoutMs: number;
-  private workspaceRootPromise: Promise<string> | undefined;
   private readonly systemPrompt: string;
   private readonly injectedMemoryKit: GoodMemoryRuntimeKit | undefined;
   private readonly modelRuntimePromise: Promise<ModelRuntime>;
@@ -129,12 +129,14 @@ export class ChatEngine {
     try {
       await this.ensureDirectories();
       const sessionManager = SessionManager.create(this.dataDir, this.sessionsDir);
-      return await this.buildSession(
-        sessionManager,
-        init.model ?? this.configuredModel,
-        init.thinkingLevel,
-        init.title
-      );
+      const model = init.model ?? this.configuredModel;
+      return await this.buildSession(sessionManager, {
+        ...(model ? { model } : {}),
+        ...(init.thinkingLevel ? { thinkingLevel: init.thinkingLevel } : {}),
+        ...(init.title ? { title: init.title } : {}),
+        ...(init.workDir ? { workDir: init.workDir } : {}),
+        ...(init.toolset ? { toolset: init.toolset } : {}),
+      });
     } catch (error) {
       throw credentialSafeError(error);
     }
@@ -162,12 +164,15 @@ export class ChatEngine {
     const restoredModel = restored
       ? { provider: restored.provider, model: restored.modelId }
       : this.configuredModel;
+    const restoredThinking = normalizedThinkingLevel(
+      sessionManager.buildSessionContext().thinkingLevel
+    );
     try {
-      return await this.buildSession(
-        sessionManager,
-        restoredModel,
-        normalizedThinkingLevel(sessionManager.buildSessionContext().thinkingLevel) ?? undefined
-      );
+      // 工作区授予不持久化：重开的会话回到引擎默认，需要重新授予。
+      return await this.buildSession(sessionManager, {
+        ...(restoredModel ? { model: restoredModel } : {}),
+        ...(restoredThinking ? { thinkingLevel: restoredThinking } : {}),
+      });
     } catch (error) {
       throw credentialSafeError(error);
     }
@@ -268,10 +273,15 @@ export class ChatEngine {
 
   private async buildSession(
     sessionManager: SessionManager,
-    requestedModel?: ChatModelRef,
-    thinkingLevel?: ChatThinkingLevel,
-    title?: string
+    options: {
+      model?: ChatModelRef;
+      thinkingLevel?: ChatThinkingLevel;
+      title?: string;
+      workDir?: string;
+      toolset?: ChatToolset;
+    }
   ): Promise<ChatSession> {
+    const { model: requestedModel, thinkingLevel, title } = options;
     const modelRuntime = await this.modelRuntimePromise;
     const model = requestedModel
       ? modelRuntime.getModel(requestedModel.provider, requestedModel.model)
@@ -280,9 +290,10 @@ export class ChatEngine {
       throw new Error(`Unknown model: ${requestedModel.provider}/${requestedModel.model}`);
     }
 
-    const workspaceRoot = await this.resolveWorkspaceRoot();
+    const workspaceRoot = await this.resolveWorkspaceRoot(options.workDir);
+    const toolset = options.toolset ?? this.toolset;
     const allowedTools = workspaceRoot
-      ? this.toolset === 'coding'
+      ? toolset === 'coding'
         ? CODING_TOOLS
         : WORKSPACE_TOOLS
       : [];
@@ -321,7 +332,7 @@ export class ChatEngine {
       },
     };
     const effectiveSystemPrompt = workspaceRoot
-      ? this.toolset === 'coding'
+      ? toolset === 'coding'
         ? `${this.systemPrompt}\n\nYou have coding tools (read/grep/find/ls/write/edit/bash) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected. write/edit/bash calls require user approval and may be denied; adapt when they are.`
         : `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.`
       : this.systemPrompt;
@@ -340,7 +351,7 @@ export class ChatEngine {
         ...(workspaceRoot
           ? [
               createWorkspaceGuardExtension(workspaceRoot, {
-                approvalRequired: new Set(this.toolset === 'coding' ? APPROVAL_REQUIRED_TOOLS : []),
+                approvalRequired: new Set(toolset === 'coding' ? APPROVAL_REQUIRED_TOOLS : []),
                 approvalBridge,
               }),
             ]
@@ -385,6 +396,7 @@ export class ChatEngine {
       memory,
       promptMemoryContext,
       allowedTools,
+      ...(workspaceRoot ? { workspace: { root: workspaceRoot, toolset } } : {}),
       approvalBridge,
       approvalTimeoutMs: this.approvalTimeoutMs,
       onClose: (sessionId) => this.openSessions.delete(sessionId),
@@ -444,15 +456,19 @@ export class ChatEngine {
     };
   }
 
-  private async resolveWorkspaceRoot(): Promise<string | undefined> {
-    if (!this.workDir) {
+  /** 会话级授予优先于引擎默认；canonical（realpath）根是守卫边界的前提 */
+  private async resolveWorkspaceRoot(requested?: string): Promise<string | undefined> {
+    const workDir = requested ? resolve(requested) : this.workDir;
+    if (!workDir) {
       return undefined;
     }
-    this.workspaceRootPromise ??= realpath(this.workDir).catch((error: unknown) => {
-      this.workspaceRootPromise = undefined;
-      throw new Error(`workDir is not usable: ${this.workDir} (${safeErrorMessage(error)})`);
-    });
-    return this.workspaceRootPromise;
+    try {
+      return await realpath(workDir);
+    } catch (error) {
+      throw new Error(`workDir is not usable: ${workDir} (${safeErrorMessage(error)})`, {
+        cause: error,
+      });
+    }
   }
 
   private async findSessionInfo(sessionId: string): Promise<SessionInfo | undefined> {

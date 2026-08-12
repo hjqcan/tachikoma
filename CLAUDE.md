@@ -17,3 +17,5 @@ bun run verify
 
 Default tests must never access the network. Live tests require the explicit opt-in documented in
 [`docs/testing.md`](docs/testing.md).
+
+架构和代码始终秉持极简主义，不要过度设计。

@@ -22,8 +22,12 @@ export type {
   ChatSessionInit,
   ChatSessionSummary,
   ChatThinkingLevel,
+  ChatToolApprovalRequestEvent,
+  ChatToolApprovalResolvedEvent,
   ChatToolCallEvent,
   ChatToolResultEvent,
+  ChatToolset,
   ChatToolUpdateEvent,
   ChatUsage,
+  ChatWorkspaceState,
 } from './types';

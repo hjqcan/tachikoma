@@ -20,7 +20,9 @@ import type {
   ChatModelRef,
   ChatSendOptions,
   ChatThinkingLevel,
+  ChatToolset,
   ChatUsage,
+  ChatWorkspaceState,
 } from './types';
 
 const TITLE_MAX_LENGTH = 60;
@@ -58,6 +60,8 @@ export interface ChatSessionDependencies {
   promptMemoryContext: PromptMemoryContext;
   /** 本会话允许的工具名集合；空集 = 零工具（第一圈默认） */
   allowedTools: readonly string[];
+  /** 本会话的工作区授予（canonical 根 + 工具集）；缺省 = 零工具 */
+  workspace?: { root: string; toolset: ChatToolset };
   /** 策略扩展的审批桥；ChatSession 在回合内挂 request，回合外审批一律拒绝 */
   approvalBridge: ToolApprovalBridge;
   approvalTimeoutMs: number;
@@ -134,6 +138,7 @@ export class ChatSession {
   private readonly modelRuntime: ModelRuntime;
   private readonly memory: ChatMemoryBinding;
   private readonly promptMemoryContext: PromptMemoryContext;
+  private readonly workspaceGrant: { root: string; toolset: ChatToolset } | undefined;
   private readonly approvalBridge: ToolApprovalBridge;
   private readonly approvalTimeoutMs: number;
   private readonly pendingApprovals = new Map<
@@ -160,6 +165,7 @@ export class ChatSession {
     this.modelRuntime = dependencies.modelRuntime;
     this.memory = dependencies.memory;
     this.promptMemoryContext = dependencies.promptMemoryContext;
+    this.workspaceGrant = dependencies.workspace;
     this.approvalBridge = dependencies.approvalBridge;
     this.approvalTimeoutMs = dependencies.approvalTimeoutMs;
     this.onClose = dependencies.onClose;
@@ -195,6 +201,13 @@ export class ChatSession {
 
   get activeTools(): readonly string[] {
     return this.agentSession.getActiveToolNames();
+  }
+
+  /** 本会话的工作区授予状态；null = 零工具会话 */
+  get workspace(): ChatWorkspaceState | null {
+    return this.workspaceGrant
+      ? { ...this.workspaceGrant, tools: [...this.agentSession.getActiveToolNames()] }
+      : null;
   }
 
   async *send(text: string, options: ChatSendOptions = {}): AsyncGenerator<ChatEvent> {

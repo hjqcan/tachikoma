@@ -1,6 +1,9 @@
 /**
- * D-A 行走骨架 renderer：原生 TS + DOM，仅依赖 @tachikoma/protocol。
- * 流式聊天 + 工具/审批卡；React 与完整 UI 属于后续桌面迭代。
+ * Tachikoma 桌面 renderer：原生 TS + DOM，仅依赖 @tachikoma/protocol。
+ *
+ * 工具授予流：header 的工作区 chip → 原生目录选择器（main 进程）→
+ * session.create({workDir, toolset}) 开新会话 —— 授予是会话级、显式、不持久化的。
+ * 事件渲染语义：底盘蓝 = 工具遥测；传感红 = 审批（机器请求对世界动手）；琥珀 = 记忆。
  */
 
 import { parseSessionEventFrame } from '@tachikoma/protocol';
@@ -10,25 +13,54 @@ declare global {
   interface Window {
     tachikoma: {
       getServerInfo(): Promise<{ port: number; token: string; engineVersion: string }>;
+      pickWorkspace(): Promise<string | null>;
     };
   }
+}
+
+interface SessionWorkspace {
+  root: string;
+  toolset: 'read-only' | 'coding';
+  tools: string[];
+}
+
+interface SessionSummaryLite {
+  sessionId: string;
+  workspace?: SessionWorkspace;
 }
 
 const statusBar = document.getElementById('status') as HTMLElement;
 const log = document.getElementById('log') as HTMLElement;
 const input = document.getElementById('input') as HTMLInputElement;
 const sendButton = document.getElementById('send') as HTMLButtonElement;
+const workspaceChip = document.getElementById('workspace-chip') as HTMLButtonElement;
+const toolsetGroup = document.getElementById('toolset') as HTMLElement;
 
 function statusLine(text: string): void {
   statusBar.textContent = text;
 }
 
+function appendToLog(element: HTMLElement): void {
+  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  log.appendChild(element);
+  if (nearBottom) log.scrollTop = log.scrollHeight;
+}
+
 function block(className: string): HTMLDivElement {
   const element = document.createElement('div');
   element.className = className;
-  log.appendChild(element);
-  log.scrollTop = log.scrollHeight;
+  appendToLog(element);
   return element;
+}
+
+function basename(path: string): string {
+  const parts = path.split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function inputPreview(value: unknown): string {
+  const text = JSON.stringify(value) ?? '';
+  return text.length > 96 ? `${text.slice(0, 95)}…` : text;
 }
 
 async function boot(): Promise<void> {
@@ -45,25 +77,79 @@ async function boot(): Promise<void> {
     return (await response.json()) as RpcResponse;
   }
 
-  const created = await rpc('session.create');
-  if (!created.ok) throw new Error(created.error.message);
-  const sessionId = (created.result as { sessionId: string }).sessionId;
+  let sessionId = '';
+  let socket: WebSocket | undefined;
+  let selectedToolset: 'read-only' | 'coding' = 'read-only';
+  let grantedWorkspace: SessionWorkspace | null = null;
+  let memoryNote = '';
 
-  const ticketResponse = await fetch(`${base}/v1/auth/ws-ticket`, { method: 'POST', headers });
-  const { ticket } = (await ticketResponse.json()) as { ticket: string };
-  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${ticket}`);
-  socket.addEventListener('open', () => {
-    socket.send(JSON.stringify({ sessionId, fromSeq: 0 }));
-    statusLine(`engine ${engineVersion} · session ${sessionId.slice(0, 8)} · ready`);
-  });
+  function refreshInstrumentCluster(): void {
+    if (grantedWorkspace) {
+      workspaceChip.textContent = `⌂ ${basename(grantedWorkspace.root)} · ${
+        grantedWorkspace.toolset === 'coding' ? '编码' : '只读'
+      } · ${grantedWorkspace.tools.length} 工具`;
+      workspaceChip.title = `${grantedWorkspace.root}\n${grantedWorkspace.tools.join(', ')}\n点击更换工作区`;
+      workspaceChip.classList.add('granted');
+    } else {
+      workspaceChip.textContent = '无工作区 · 零工具';
+      workspaceChip.title = '选择工作区，授予工具权限';
+      workspaceChip.classList.remove('granted');
+    }
+    for (const button of toolsetGroup.querySelectorAll('button')) {
+      button.classList.toggle('active', button.dataset.toolset === selectedToolset);
+    }
+    statusLine(
+      `engine ${engineVersion} · session ${sessionId ? sessionId.slice(0, 8) : '—'}${
+        memoryNote ? ` · memory: ${memoryNote}` : ''
+      }`
+    );
+  }
+
+  // ── 事件渲染 ────────────────────────────────────────────────
 
   let assistantBlock: HTMLElement | null = null;
   let reasoningOpen = false;
+  const toolNodes = new Map<
+    string,
+    { head: HTMLElement; verdict: HTMLElement; pre?: HTMLPreElement }
+  >();
+  const approvalCards = new Map<string, HTMLElement>();
+
+  function toolNode(callId: string, tool: string, preview: string) {
+    const container = block('tool');
+    const head = document.createElement('div');
+    head.className = 'head';
+    head.textContent = `${tool} · ${preview} `;
+    const verdict = document.createElement('span');
+    verdict.className = 'verdict';
+    head.appendChild(verdict);
+    container.appendChild(head);
+    const node = { head, verdict, container } as {
+      head: HTMLElement;
+      verdict: HTMLElement;
+      pre?: HTMLPreElement;
+      container: HTMLElement;
+    };
+    toolNodes.set(callId, node);
+    return node;
+  }
+
+  function toolPre(callId: string): HTMLPreElement | undefined {
+    const node = toolNodes.get(callId);
+    if (!node) return undefined;
+    if (!node.pre) {
+      const container = node.head.parentElement;
+      if (!container) return undefined;
+      node.pre = document.createElement('pre');
+      container.appendChild(node.pre);
+    }
+    return node.pre;
+  }
 
   function handleEvent(event: ChatEventWire): void {
     switch (event.type) {
       case 'message_start':
-        assistantBlock = block('turn');
+        assistantBlock = block('turn machine');
         assistantBlock.innerHTML = '<div class="role">tachikoma</div>';
         reasoningOpen = false;
         break;
@@ -71,13 +157,16 @@ async function boot(): Promise<void> {
         if (!assistantBlock) break;
         if (!reasoningOpen) {
           const details = document.createElement('details');
-          details.innerHTML =
-            '<summary class="status">thinking…</summary><div class="status"></div>';
+          details.className = 'thinking';
+          details.innerHTML = '<summary>thinking…</summary><div></div>';
           assistantBlock.appendChild(details);
           reasoningOpen = true;
         }
-        const target = assistantBlock.querySelector('details > div');
-        if (target) target.textContent = `${target.textContent ?? ''}${event.text}`;
+        const target = assistantBlock.querySelector('details.thinking > div');
+        if (target) {
+          target.textContent = `${target.textContent ?? ''}${event.text}`;
+          target.scrollTop = target.scrollHeight;
+        }
         break;
       }
       case 'message_delta': {
@@ -89,48 +178,92 @@ async function boot(): Promise<void> {
           assistantBlock.appendChild(body);
         }
         body.textContent = `${body.textContent ?? ''}${event.text}`;
-        log.scrollTop = log.scrollHeight;
+        appendToLog(assistantBlock);
         break;
       }
       case 'tool_call':
-        block('status').textContent =
-          `[tool:${event.tool}] ${JSON.stringify(event.input).slice(0, 120)}`;
+        toolNode(event.callId, event.tool, inputPreview(event.input));
         break;
-      case 'tool_result':
-        block('status').textContent =
-          `[tool:${event.tool}] ${event.isError ? `error: ${event.output.split('\n')[0]}` : `ok (${event.output.length} chars)`}`;
+      case 'tool_update': {
+        // partial 输出是累积快照：整块替换，滚动跟随
+        if (!toolNodes.has(event.callId)) toolNode(event.callId, event.tool, '');
+        const pre = toolPre(event.callId);
+        if (pre) {
+          pre.textContent = event.output;
+          pre.scrollTop = pre.scrollHeight;
+        }
         break;
+      }
+      case 'tool_result': {
+        const node = toolNodes.get(event.callId) ?? toolNode(event.callId, event.tool, '');
+        if (event.isError) {
+          node.verdict.textContent = `✕ ${event.output.split('\n')[0]?.slice(0, 120) ?? 'error'}`;
+          node.verdict.className = 'verdict err';
+        } else {
+          node.verdict.textContent = `✓ ${event.output.length} chars`;
+          if (node.pre) node.pre.textContent = event.output;
+        }
+        break;
+      }
       case 'tool_approval_request': {
         const card = block('approval');
-        card.innerHTML = `<div><strong>批准工具调用？</strong> <code>${event.tool}</code></div><pre>${JSON.stringify(event.input, null, 2)}</pre>`;
+        approvalCards.set(event.callId, card);
+        const ask = document.createElement('div');
+        ask.className = 'ask';
+        ask.innerHTML = `<span class="eye"></span><span>请求执行 <code>${event.tool}</code></span>`;
+        const detail = document.createElement('pre');
+        detail.textContent = JSON.stringify(event.input, null, 2) ?? '';
+        const actions = document.createElement('div');
+        actions.className = 'actions';
         const approve = document.createElement('button');
+        approve.className = 'approve';
         approve.textContent = '批准';
         const deny = document.createElement('button');
+        deny.className = 'deny';
         deny.textContent = '拒绝';
         const respond = (approved: boolean): void => {
           void rpc('session.respondToApproval', { sessionId, callId: event.callId, approved });
-          card.querySelectorAll('button').forEach((button) => button.remove());
-          card.append(approved ? '已批准' : '已拒绝');
+          actions.innerHTML = '';
         };
         approve.onclick = () => respond(true);
         deny.onclick = () => respond(false);
-        card.append(approve, deny);
+        actions.append(approve, deny);
+        card.append(ask, detail, actions);
         break;
       }
-      case 'tool_approval_resolved':
-        if (event.reason !== 'reply') {
-          block('status').textContent = `[approval] ${event.reason}`;
+      case 'tool_approval_resolved': {
+        const card = approvalCards.get(event.callId);
+        approvalCards.delete(event.callId);
+        if (!card) break;
+        card.classList.add('resolved');
+        card.querySelector('.actions')?.remove();
+        const verdict = document.createElement('div');
+        verdict.className = 'verdict-line';
+        verdict.textContent =
+          event.reason === 'timeout'
+            ? '超时未应答 — 已拒绝'
+            : event.reason === 'aborted'
+              ? '回合中止 — 已取消'
+              : event.approved
+                ? '已批准'
+                : '已拒绝';
+        card.appendChild(verdict);
+        break;
+      }
+      case 'memory_status':
+        memoryNote = event.status;
+        refreshInstrumentCluster();
+        if (event.status === 'degraded' || event.status === 'write-failed') {
+          block('status-line memory').textContent =
+            `[memory:${event.phase}] ${event.status}${event.error ? `: ${event.error}` : ''}`;
         }
         break;
-      case 'memory_status':
-        statusLine(`memory: ${event.status}`);
-        break;
       case 'retry':
-        block('status').textContent = `[retry] ${event.attempt}/${event.maxAttempts}`;
+        block('status-line').textContent = `[retry] ${event.attempt}/${event.maxAttempts}`;
         break;
       case 'message_complete':
         if (event.status !== 'success') {
-          block('status').textContent = `[${event.status}] ${event.error ?? ''}`;
+          block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
         }
         assistantBlock = null;
         break;
@@ -139,27 +272,82 @@ async function boot(): Promise<void> {
     }
   }
 
-  socket.addEventListener('message', (message) => {
-    const parsed = parseSessionEventFrame(JSON.parse(String(message.data)));
-    if (parsed.ok && parsed.known) {
-      handleEvent(parsed.frame.event);
-    } else if (parsed.ok) {
-      block('status').textContent = `[未识别事件 ${parsed.frame.type}]`;
+  // ── 会话与订阅 ──────────────────────────────────────────────
+
+  async function connect(targetSessionId: string): Promise<void> {
+    socket?.close();
+    const ticketResponse = await fetch(`${base}/v1/auth/ws-ticket`, { method: 'POST', headers });
+    const { ticket } = (await ticketResponse.json()) as { ticket: string };
+    const next = new WebSocket(`ws://127.0.0.1:${port}/ws?ticket=${ticket}`);
+    next.addEventListener('open', () => {
+      next.send(JSON.stringify({ sessionId: targetSessionId, fromSeq: 0 }));
+    });
+    next.addEventListener('message', (message) => {
+      const parsed = parseSessionEventFrame(JSON.parse(String(message.data)));
+      if (parsed.ok && parsed.known) {
+        handleEvent(parsed.frame.event);
+      } else if (parsed.ok) {
+        block('status-line').textContent = `[未识别事件 ${parsed.frame.type}]`;
+      }
+    });
+    socket = next;
+  }
+
+  async function startSession(params: {
+    workDir?: string;
+    toolset?: 'read-only' | 'coding';
+  }): Promise<void> {
+    const created = await rpc('session.create', params);
+    if (!created.ok) {
+      block('status-line error').textContent = `[error] ${created.error.message}`;
+      return;
+    }
+    const summary = created.result as SessionSummaryLite;
+    sessionId = summary.sessionId;
+    grantedWorkspace = summary.workspace ?? null;
+    if (summary.workspace) selectedToolset = summary.workspace.toolset;
+    await connect(sessionId);
+    const divider = block('session-divider');
+    divider.textContent = grantedWorkspace
+      ? `新会话 · 工作区 ${grantedWorkspace.root} · ${grantedWorkspace.tools.join(' / ')}`
+      : '新会话 · 零工具';
+    refreshInstrumentCluster();
+    input.focus();
+  }
+
+  // ── 控件 ────────────────────────────────────────────────────
+
+  workspaceChip.onclick = async () => {
+    const picked = await window.tachikoma.pickWorkspace();
+    if (!picked) return;
+    await startSession({ workDir: picked, toolset: selectedToolset });
+  };
+
+  toolsetGroup.addEventListener('click', async (mouse) => {
+    const target = mouse.target as HTMLElement;
+    const toolset = target.dataset.toolset as 'read-only' | 'coding' | undefined;
+    if (!toolset || toolset === selectedToolset) return;
+    selectedToolset = toolset;
+    refreshInstrumentCluster();
+    // 已有工作区时，切换工具集是一次显式的重新授予：立即开新会话生效。
+    if (grantedWorkspace) {
+      await startSession({ workDir: grantedWorkspace.root, toolset });
     }
   });
 
   async function submit(): Promise<void> {
     const text = input.value.trim();
-    if (!text) return;
+    if (!text || !sessionId) return;
     input.value = '';
-    const userBlock = block('turn');
+    const userBlock = block('turn you');
     userBlock.innerHTML = '<div class="role">you</div>';
     const body = document.createElement('div');
+    body.className = 'body';
     body.textContent = text;
     userBlock.appendChild(body);
     const sent = await rpc('session.send', { sessionId, text });
     if (!sent.ok) {
-      block('status').textContent = `[error] ${sent.error.message}`;
+      block('status-line error').textContent = `[error] ${sent.error.message}`;
     }
   }
 
@@ -170,6 +358,8 @@ async function boot(): Promise<void> {
       void submit();
     }
   });
+
+  await startSession({});
 }
 
 boot().catch((error: unknown) => {

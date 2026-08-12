@@ -45,10 +45,24 @@ export interface ChatEngineConfig {
 
 export type ChatToolset = 'read-only' | 'coding';
 
+/** live 会话的工作区授予状态（不持久化；重开会话需重新授予） */
+export interface ChatWorkspaceState {
+  root: string;
+  toolset: ChatToolset;
+  tools: string[];
+}
+
 export interface ChatSessionInit {
   title?: string;
   model?: ChatModelRef;
   thinkingLevel?: ChatThinkingLevel;
+  /**
+   * 本会话的工作区授予，覆盖引擎默认。授予只对这个 live 会话有效，
+   * 不写入会话文件——重开（openSession）回到引擎默认，需要重新授予。
+   */
+  workDir?: string;
+  /** 本会话工具集；缺省用引擎配置。仅在（本会话或引擎）设置了 workDir 时生效 */
+  toolset?: ChatToolset;
 }
 
 export interface ChatSendOptions {
@@ -75,6 +89,8 @@ export interface ChatSessionSummary {
   thinkingLevel: ChatThinkingLevel | null;
   status: 'ready' | 'corrupt';
   error?: string;
+  /** 仅 live 会话携带（server 侧补充）；listSessions 的磁盘摘要没有它 */
+  workspace?: ChatWorkspaceState;
 }
 
 export interface ChatCompactionResult {

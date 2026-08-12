@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { startSidecar } from './supervisor';
 import type { SidecarHandle } from './supervisor';
 
@@ -65,6 +65,16 @@ function createWindow(): void {
 ipcMain.handle('tachikoma:server-info', () => {
   if (!handle) throw new Error('Sidecar is not running.');
   return { port: handle.info.port, token, engineVersion: handle.info.engineVersion };
+});
+
+// 工作区授予走原生目录选择器：renderer 不自由输入路径，授予的是用户亲手选中的目录。
+ipcMain.handle('tachikoma:pick-workspace', async () => {
+  const result = await dialog.showOpenDialog({
+    title: '选择工作区',
+    message: '授予 Tachikoma 在这个目录里的工具权限',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
 });
 
 app.whenReady().then(async () => {

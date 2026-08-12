@@ -55,6 +55,24 @@ export interface CliTerminal {
   close(): void;
   onInterrupt(handler: () => void): () => void;
   prompt(): void;
+  /**
+   * 交互式提问（仅 TTY 提供）。abort 信号触发后必须释放输入流：
+   * 之后用户输入回到 lines 迭代器，不被吞掉。
+   */
+  question?(prompt: string, options: { signal: AbortSignal }): Promise<string>;
+}
+
+/** 交互式审批回调：resolve(true)=放行；signal 中止（超时/用户打断）时应 reject */
+type AskApproval = (
+  request: { callId: string; tool: string; input: unknown },
+  signal: AbortSignal
+) => Promise<boolean>;
+
+interface ApprovalPolicy {
+  /** --allow 预授予集合：命中即放行，不提问 */
+  granted: ReadonlySet<string>;
+  /** 未预授予时的交互提问；缺省（run 模式 / 非 TTY）即时拒绝 */
+  ask?: AskApproval;
 }
 
 /** @internal */
@@ -76,6 +94,8 @@ interface ParsedArguments {
   thinkingLevel?: ChatThinkingLevel;
   /** 工具是能力授予：只走显式 --workdir，不设环境变量回退 */
   workDir?: string;
+  /** 显式工具集；缺省 read-only（或由 --allow 隐含 coding） */
+  toolset?: 'read-only' | 'coding';
   /** --allow 按次授予的审批工具（write/edit/bash 子集）；隐含 toolset: 'coding' */
   allowTools?: readonly string[];
 }
@@ -91,10 +111,11 @@ function asSessionPort(session: ChatSession): ChatSessionPort {
 }
 
 function createProcessTerminal(): CliTerminal {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const input = createInterface({
     input: process.stdin,
     output: process.stdout,
-    terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    terminal: interactive,
   });
   const handlers = new Set<() => void>();
   const handleInterrupt = () => {
@@ -103,6 +124,8 @@ function createProcessTerminal(): CliTerminal {
   let closed = false;
   input.on('SIGINT', handleInterrupt);
   process.on('SIGINT', handleInterrupt);
+  // 逐个提问：并发审批（理论上可能）不共享 readline 的单一 question 槽位。
+  let questionChain: Promise<unknown> = Promise.resolve();
 
   return {
     lines: input,
@@ -117,11 +140,38 @@ function createProcessTerminal(): CliTerminal {
       return () => handlers.delete(handler);
     },
     prompt: () => {
-      if (process.stdin.isTTY && process.stdout.isTTY) {
+      if (interactive) {
         input.setPrompt('tachikoma> ');
         input.prompt();
       }
     },
+    ...(interactive
+      ? {
+          question: (prompt: string, options: { signal: AbortSignal }) => {
+            const next = questionChain.then(
+              () =>
+                new Promise<string>((resolve, reject) => {
+                  const fail = () => {
+                    const error = new Error('The approval prompt was canceled.');
+                    error.name = 'AbortError';
+                    reject(error);
+                  };
+                  if (options.signal.aborted) {
+                    fail();
+                    return;
+                  }
+                  options.signal.addEventListener('abort', fail, { once: true });
+                  input.question(prompt, { signal: options.signal }, (answer) => {
+                    options.signal.removeEventListener('abort', fail);
+                    resolve(answer);
+                  });
+                })
+            );
+            questionChain = next.catch(() => undefined);
+            return next;
+          },
+        }
+      : {}),
   };
 }
 
@@ -149,7 +199,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     ungranted approval requests are denied immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /compact [instructions]      compact the active session\n  /memory                      show durable-memory status\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -176,6 +226,7 @@ function parseArguments(
   let thinkingLevel: ChatThinkingLevel | undefined;
   let resumeId: string | undefined;
   let workDir: string | undefined;
+  let toolset: 'read-only' | 'coding' | undefined;
   let allowTools: readonly string[] | undefined;
   let noMemory = false;
   let forceHelp = false;
@@ -205,6 +256,15 @@ function parseArguments(
         workDir = takeValue(args, index, argument);
         index += 1;
         break;
+      case '--toolset': {
+        const requested = takeValue(args, index, argument);
+        if (requested !== 'read-only' && requested !== 'coding') {
+          throw new CliUsageError(`--toolset accepts read-only|coding; got: ${requested}`);
+        }
+        toolset = requested;
+        index += 1;
+        break;
+      }
       case '--allow': {
         const requested = takeValue(args, index, argument)
           .split(',')
@@ -247,6 +307,9 @@ function parseArguments(
   if (allowTools && !workDir) {
     throw new CliUsageError('--allow requires --workdir');
   }
+  if (toolset && !workDir) {
+    throw new CliUsageError('--toolset requires --workdir');
+  }
 
   const first = positional[0];
   const command = first === undefined ? 'chat' : first;
@@ -268,6 +331,7 @@ function parseArguments(
     ...(resumeId ? { resumeId } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(workDir ? { workDir } : {}),
+    ...(toolset ? { toolset } : {}),
     ...(allowTools ? { allowTools } : {}),
   };
 }
@@ -281,7 +345,11 @@ function engineConfig(
     ...(parsed.model ? { model: parsed.model } : {}),
     ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
     ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
-    ...(parsed.allowTools?.length ? { toolset: 'coding' as const } : {}),
+    ...(parsed.toolset
+      ? { toolset: parsed.toolset }
+      : parsed.allowTools?.length
+        ? { toolset: 'coding' as const }
+        : {}),
     memory: parsed.noMemory
       ? false
       : {
@@ -298,6 +366,12 @@ function formatMemoryEvent(event: Extract<ChatEvent, { type: 'memory_status' }>)
 function formatToolInput(input: unknown): string {
   const text = JSON.stringify(input) ?? '';
   return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+}
+
+/** 审批提示需要看清参数（此时 tool_call 尚未发生）：多行 JSON，封顶 800 字符 */
+function formatApprovalInput(input: unknown): string {
+  const text = JSON.stringify(input, null, 2) ?? '';
+  return text.length > 800 ? `${text.slice(0, 799)}…` : text;
 }
 
 function formatToolResult(event: Extract<ChatEvent, { type: 'tool_result' }>): string {
@@ -317,28 +391,51 @@ async function consumeTurn(
   session: ChatSessionPort,
   text: string,
   dependencies: Pick<CliDependencies, 'write' | 'writeError'>,
-  approvedTools: ReadonlySet<string> = new Set()
+  approvals: ApprovalPolicy = { granted: new Set() }
 ): Promise<TurnResult> {
   let wroteText = false;
   let terminal: TurnResult['status'] | undefined;
+  /** 在途的交互审批提问；resolved 事件（超时/中止）到达即取消对应提问 */
+  const pendingAsks = new Map<string, AbortController>();
+  /** tool_update 的 partial 输出是累积快照：记录已写长度，只写后缀 */
+  const streamedOutput = new Map<string, string>();
 
   for await (const event of session.send(text)) {
     switch (event.type) {
       case 'tool_approval_request': {
-        const granted = approvedTools.has(event.tool);
-        session.respondToApproval(event.callId, granted);
-        dependencies.writeError(
-          granted
-            ? `[approval:${event.tool}] granted (--allow)\n`
-            : `[approval:${event.tool}] denied (add --allow ${event.tool} to grant)\n`
-        );
+        if (approvals.granted.has(event.tool)) {
+          session.respondToApproval(event.callId, true);
+          dependencies.writeError(`[approval:${event.tool}] granted (--allow)\n`);
+        } else if (approvals.ask) {
+          const controller = new AbortController();
+          pendingAsks.set(event.callId, controller);
+          void approvals
+            .ask(event, controller.signal)
+            .then((approved) => {
+              if (pendingAsks.delete(event.callId)) {
+                session.respondToApproval(event.callId, approved);
+              }
+            })
+            .catch(() => void pendingAsks.delete(event.callId));
+        } else {
+          session.respondToApproval(event.callId, false);
+          dependencies.writeError(
+            `[approval:${event.tool}] denied (add --allow ${event.tool} to grant)\n`
+          );
+        }
         break;
       }
-      case 'tool_approval_resolved':
+      case 'tool_approval_resolved': {
+        const pendingAsk = pendingAsks.get(event.callId);
+        if (pendingAsk && event.reason !== 'reply') {
+          pendingAsks.delete(event.callId);
+          pendingAsk.abort();
+        }
         if (event.reason === 'timeout') {
           dependencies.writeError('[approval] timed out — denied\n');
         }
         break;
+      }
       case 'message_delta':
         dependencies.write(event.text);
         wroteText = true;
@@ -359,11 +456,22 @@ async function consumeTurn(
       case 'tool_call':
         dependencies.writeError(`[tool:${event.tool}] ${formatToolInput(event.input)}\n`);
         break;
-      case 'tool_result':
+      case 'tool_result': {
+        const streamed = streamedOutput.get(event.callId);
+        if (streamed && !streamed.endsWith('\n')) dependencies.writeError('\n');
+        streamedOutput.delete(event.callId);
         dependencies.writeError(formatToolResult(event));
         break;
-      case 'tool_update':
+      }
+      case 'tool_update': {
+        const previous = streamedOutput.get(event.callId) ?? '';
+        const chunk = event.output.startsWith(previous)
+          ? event.output.slice(previous.length)
+          : event.output;
+        if (chunk) dependencies.writeError(chunk);
+        streamedOutput.set(event.callId, event.output);
         break;
+      }
       case 'message_complete':
         terminal = event.status;
         if (!wroteText && event.content) dependencies.write(event.content);
@@ -374,6 +482,10 @@ async function consumeTurn(
         break;
     }
   }
+
+  // 事件流已终结：core 保证在途审批都已 resolved，这里兜底取消尚挂着的提问。
+  for (const controller of pendingAsks.values()) controller.abort();
+  pendingAsks.clear();
 
   if (wroteText || terminal === 'success') dependencies.write('\n');
   if (!terminal) {
@@ -514,12 +626,10 @@ async function runOneShot(
   });
 
   try {
-    const result = await consumeTurn(
-      session,
-      parsed.prompt ?? '',
-      dependencies,
-      new Set(parsed.allowTools ?? [])
-    );
+    // run 模式无交互提问：授予只走显式 --allow，未授予即时拒绝（可脚本化、不挂起）。
+    const result = await consumeTurn(session, parsed.prompt ?? '', dependencies, {
+      granted: new Set(parsed.allowTools ?? []),
+    });
     if (interrupted || result.status === 'interrupted') return 130;
     return result.status === 'success' ? 0 : 1;
   } finally {
@@ -546,6 +656,21 @@ async function runRepl(
     terminal.close();
   });
 
+  // 交互终端上，未经 --allow 预授予的审批走 y/N 提问；核心超时/中止会取消提问并释放输入流。
+  const ask: AskApproval | undefined = terminal.question
+    ? async (request, signal) => {
+        dependencies.writeError(
+          `[approval:${request.tool}]\n${formatApprovalInput(request.input)}\n`
+        );
+        const answer = await terminal.question!(`approve ${request.tool}? [y/N] `, { signal });
+        return /^y(es)?$/iu.test(answer.trim());
+      }
+    : undefined;
+  const approvals: ApprovalPolicy = {
+    granted: new Set(parsed.allowTools ?? []),
+    ...(ask ? { ask } : {}),
+  };
+
   dependencies.write(
     `Tachikoma ${VERSION}\n[session] ${session.id}\n[memory] ${formatMemorySnapshot(session.memoryStatus)}\n${
       session.activeTools.length > 0 ? `[tools] ${session.activeTools.join(', ')}\n` : ''
@@ -568,7 +693,7 @@ async function runRepl(
           if (result.exit) break;
         } else {
           processing = true;
-          await consumeTurn(session, line, dependencies, new Set(parsed.allowTools ?? []));
+          await consumeTurn(session, line, dependencies, approvals);
           processing = false;
         }
       } catch (error) {

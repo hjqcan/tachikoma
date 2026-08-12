@@ -13,6 +13,8 @@ export const CAPABILITIES = [
   'memory',
   'compaction',
   'session-replay',
+  // session.create 接受 workDir/toolset（会话级工具授予）；summary 携带 workspace
+  'session-workspace',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

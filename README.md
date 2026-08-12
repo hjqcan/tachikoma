@@ -4,8 +4,8 @@ Tachikoma is a conversation-first chatbot runtime for Bun and TypeScript.
 
 Version `0.2.x` follows a spiral: make chat excellent, then tools, then coordination. Turn 1 (chat)
 and turn 2 (opt-in workspace tools behind per-call approvals) are implemented, along with a local
-sidecar for remote consumers. There is intentionally no coordination runtime and no desktop shell
-yet.
+sidecar and an Electron desktop shell (walking skeleton: streaming chat, tool telemetry, approval
+cards, workspace grants). There is intentionally no coordination runtime yet.
 
 ## What owns what
 
@@ -90,11 +90,18 @@ inside the REPL. Set `"reasoning": true` on models that support thinking so `--t
 
 Passing `workDir` to `ChatEngine` (CLI: `--workdir <dir>`) enables pi's read-only tool set (`read`,
 `grep`, `find`, `ls`) scoped to that directory. A guard extension blocks any path that resolves — or
-symlinks — outside the canonical workspace root. `toolset: 'coding'` (CLI:
-`--allow write,edit,bash`) adds write/execute tools: each call emits `tool_approval_request` and
-waits for `respondToApproval`; timeouts deny by default, and the guard runs before approval is ever
-asked. Without `workDir` the product stays tool-free — tool enablement is a per-invocation grant,
-never an environment default.
+symlinks — outside the canonical workspace root. `toolset: 'coding'` (CLI: `--toolset coding`, or
+implied by `--allow`) adds write/execute tools: each call emits `tool_approval_request` and waits
+for `respondToApproval`; timeouts deny by default, and the guard runs before approval is ever asked.
+In the interactive REPL, ungranted requests prompt `approve <tool>? [y/N]`;
+`--allow write,edit,bash` pre-grants for the invocation, and `run` mode / non-TTY denies ungranted
+requests immediately. Tool output streams as it happens (`tool_update`).
+
+Grants are also per-session: `createSession({ workDir, toolset })` (RPC `session.create`, desktop:
+the workspace chip in the header) scopes tools to one live session, overriding the engine default.
+Grants never persist — reopening a session returns to the engine default until re-granted. Without
+any grant the product stays tool-free — tool enablement is an explicit grant, never an environment
+default.
 
 ## Local sidecar
 

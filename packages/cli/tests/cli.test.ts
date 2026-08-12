@@ -171,6 +171,7 @@ function createHarness(
     interruptOnPrompt?: boolean;
     lines?: readonly string[];
     onConfig?: (config: ChatEngineConfig) => void;
+    question?: (prompt: string, options: { signal: AbortSignal }) => Promise<string>;
   } = {}
 ): {
   dependencies: Partial<CliDependencies>;
@@ -198,6 +199,7 @@ function createHarness(
         interruptHandler?.();
       }
     },
+    ...(input.question ? { question: input.question } : {}),
   };
 
   return {
@@ -405,6 +407,161 @@ describe('runCli', () => {
     });
     await runCli(['run', 'x', '--workdir', '/w'], readOnly.dependencies);
     expect(readOnlyConfig?.toolset).toBeUndefined();
+  });
+
+  test('REPL asks y/N for ungranted approvals; y approves, other answers deny', async () => {
+    function approvalEvents(): ChatEvent[] {
+      return [
+        {
+          ...baseEvent,
+          type: 'tool_approval_request',
+          callId: 'call-1',
+          tool: 'write',
+          input: { path: 'a.txt', content: 'hi' },
+          timeoutMs: 120_000,
+        } as ChatEvent,
+        {
+          ...baseEvent,
+          type: 'tool_approval_request',
+          callId: 'call-2',
+          tool: 'bash',
+          input: { command: 'rm -rf /' },
+          timeoutMs: 120_000,
+        } as ChatEvent,
+        ...successEvents('done'),
+      ];
+    }
+    const session = new FakeSession();
+    session.events = approvalEvents();
+    const answers = ['y', 'no way'];
+    const prompts: string[] = [];
+    const harness = createHarness({
+      engine: new FakeEngine(session),
+      lines: ['please write', '/exit'],
+      question: (prompt) => {
+        prompts.push(prompt);
+        return Promise.resolve(answers[prompts.length - 1] ?? '');
+      },
+    });
+
+    const code = await runCli(['--workdir', '/w', '--toolset', 'coding'], harness.dependencies);
+
+    expect(code).toBe(0);
+    expect(session.approvals).toEqual([
+      { callId: 'call-1', approved: true },
+      { callId: 'call-2', approved: false },
+    ]);
+    expect(prompts).toEqual(['approve write? [y/N] ', 'approve bash? [y/N] ']);
+    const stderr = harness.stderr.join('');
+    expect(stderr).toContain('[approval:write]');
+    expect(stderr).toContain('"path": "a.txt"');
+  });
+
+  test('core-resolved approvals (timeout) cancel the pending question and free the input', async () => {
+    const session = new FakeSession();
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_approval_request',
+        callId: 'call-t',
+        tool: 'bash',
+        input: { command: 'sleep 999' },
+        timeoutMs: 50,
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_approval_resolved',
+        callId: 'call-t',
+        approved: false,
+        reason: 'timeout',
+      } as ChatEvent,
+      ...successEvents('gave up'),
+    ];
+    let questionAborted = false;
+    const harness = createHarness({
+      engine: new FakeEngine(session),
+      lines: ['try it', '/exit'],
+      question: (_prompt, options) =>
+        new Promise<string>((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => {
+            questionAborted = true;
+            reject(Object.assign(new Error('canceled'), { name: 'AbortError' }));
+          });
+        }),
+    });
+
+    const code = await runCli(['--workdir', '/w', '--toolset', 'coding'], harness.dependencies);
+
+    expect(code).toBe(0);
+    expect(questionAborted).toBeTrue();
+    expect(session.approvals).toEqual([]);
+    expect(harness.stderr.join('')).toContain('[approval] timed out — denied');
+  });
+
+  test('tool_update partials stream once as suffix chunks, then the result summary', async () => {
+    const session = new FakeSession();
+    session.events = [
+      {
+        ...baseEvent,
+        type: 'tool_call',
+        callId: 'call-s',
+        tool: 'bash',
+        input: { command: 'make' },
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_update',
+        callId: 'call-s',
+        tool: 'bash',
+        output: 'compiling…\n',
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_update',
+        callId: 'call-s',
+        tool: 'bash',
+        output: 'compiling…\nlinking…',
+      } as ChatEvent,
+      {
+        ...baseEvent,
+        type: 'tool_result',
+        callId: 'call-s',
+        tool: 'bash',
+        output: 'compiling…\nlinking…',
+        isError: false,
+      } as ChatEvent,
+      ...successEvents('built'),
+    ];
+    const harness = createHarness({ engine: new FakeEngine(session) });
+
+    const code = await runCli(['run', 'build it', '--workdir', '/w'], harness.dependencies);
+
+    expect(code).toBe(0);
+    const stderr = harness.stderr.join('');
+    expect(stderr).toContain('compiling…\nlinking…\n[tool:bash] ok');
+    expect(stderr.split('compiling…').length).toBe(2);
+    expect(stderr.split('linking…').length).toBe(2);
+  });
+
+  test('--toolset coding enables approvals without pre-granting; requires --workdir', async () => {
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+    await runCli(['run', 'x', '--workdir', '/w', '--toolset', 'coding'], harness.dependencies);
+    expect(config?.toolset).toBe('coding');
+
+    const missing = createHarness();
+    expect(await runCli(['run', 'x', '--toolset', 'coding'], missing.dependencies)).toBe(2);
+    expect(missing.stderr.join('')).toContain('--toolset requires --workdir');
+
+    const invalid = createHarness();
+    expect(
+      await runCli(['run', 'x', '--workdir', '/w', '--toolset', 'sudo'], invalid.dependencies)
+    ).toBe(2);
+    expect(invalid.stderr.join('')).toContain('--toolset accepts read-only|coding');
   });
 
   test('runs one-shot chat through the same session surface and reports memory degradation', async () => {

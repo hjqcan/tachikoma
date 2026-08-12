@@ -9,8 +9,8 @@ Tachikoma `0.2.x` has four packages and one runtime path:
       |                        |          \
       |                        |           +-> @tachikoma/protocol (wire schemas)
       v                        v                    ^
-@tachikoma/core: ChatEngine -> ChatSession          |  (future desktop renderer
-      |                         |                   |   depends on protocol only)
+@tachikoma/core: ChatEngine -> ChatSession          |  (desktop renderer depends
+      |                         |                   |   on protocol only)
       |                         +-> GoodMemory runtime-kit
       v
 pi AgentSession -> ModelRuntime + SessionManager JSONL v3
@@ -80,8 +80,14 @@ assertion enforces the empty set. Tool enablement is a per-invocation grant, nev
 - The workspace guard runs before approval: paths that resolve — or symlink — outside the canonical
   workspace root are blocked without ever asking. bash has no path analysis; approval itself is its
   control surface, so the request carries the full command for the user to judge.
-- The CLI exposes this as `--workdir` and `--allow write,edit,bash` (which implies the coding
-  toolset); ungranted requests are denied immediately.
+- Grants are engine-level (`ChatEngineConfig.workDir`/`toolset`) or session-level
+  (`createSession({ workDir, toolset })`, RPC `session.create`, capability `session-workspace`).
+  Session grants are live-session state: they never persist, and a reopened session returns to the
+  engine default until re-granted.
+- The CLI exposes this as `--workdir`, `--toolset read-only|coding`, and `--allow write,edit,bash`
+  (which implies the coding toolset). The interactive REPL prompts `approve <tool>? [y/N]` for
+  ungranted requests; `run` mode and non-TTY deny them immediately. The desktop grants through a
+  native folder picker (workspace chip → new session with the grant).
 
 pi remains the sole model-to-tool loop. Tachikoma adds policy through pi extension hooks and never
 reimplements executors.
@@ -96,9 +102,17 @@ event stream: it assigns the monotonic `seq`, appends to the WAL first, then fan
 crash, an unterminated turn is completed with a synthetic `failed` frame written into the WAL so
 replay cursors stay consistent.
 
+## Desktop shell (walking skeleton)
+
+`@tachikoma/desktop` is the Electron shell: the main process supervises `tachikoma-engined` (token
+via stdin, three-stage stop: shutdown RPC → SIGTERM → SIGKILL), exposes `serverInfo` and a native
+workspace picker over a context-isolated preload, and the renderer is vanilla TS that speaks only
+`@tachikoma/protocol` — streaming, collapsible reasoning, live tool telemetry, approval cards, and
+session-level workspace grants from the header. React, packaging/signing, and a compiled sidecar
+binary belong to later desktop iterations.
+
 ## Explicitly absent
 
-Images, branch editing, queue/steer UX, an interactive per-call approval prompt in the CLI, MCP and
-network tools, the desktop shell itself, and coordination (turn 3) belong to later work. Pre-`0.2.0`
-APIs, commands, and flat JSON chat sessions are not read or migrated. Old data outside the
-repository is left untouched.
+Images, branch editing, queue/steer UX, MCP and network tools, desktop packaging/signing, and
+coordination (turn 3) belong to later work. Pre-`0.2.0` APIs, commands, and flat JSON chat sessions
+are not read or migrated. Old data outside the repository is left untouched.

@@ -9,7 +9,9 @@ export {
   modelRefSchema,
   sessionSummarySchema,
   thinkingLevelSchema,
+  toolsetSchema,
   usageSchema,
+  workspaceStateSchema,
 } from './dto';
 export type {
   CompactionResult,
@@ -19,7 +21,9 @@ export type {
   ModelRef,
   SessionSummary,
   ThinkingLevel,
+  Toolset,
   Usage,
+  WorkspaceState,
 } from './dto';
 
 export {

@@ -47,6 +47,17 @@ export const usageSchema = z.strictObject({
 });
 export type Usage = z.infer<typeof usageSchema>;
 
+export const toolsetSchema = z.enum(['read-only', 'coding']);
+export type Toolset = z.infer<typeof toolsetSchema>;
+
+/** live 会话的工作区授予状态；授予不持久化（重开会话需重新授予），列表摘要不携带 */
+export const workspaceStateSchema = z.strictObject({
+  root: z.string(),
+  toolset: toolsetSchema,
+  tools: z.array(z.string()),
+});
+export type WorkspaceState = z.infer<typeof workspaceStateSchema>;
+
 export const memoryStatusSchema = z.enum([
   'disabled',
   'ready',
@@ -75,6 +86,8 @@ export const sessionSummarySchema = z.strictObject({
   thinkingLevel: thinkingLevelSchema.nullable(),
   status: z.enum(['ready', 'corrupt']),
   error: z.string().optional(),
+  /** 仅 live 会话携带（server 侧补充） */
+  workspace: workspaceStateSchema.optional(),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 

@@ -41,8 +41,9 @@ credentials.
 - Keep `ChatEngine` and `ChatSession` as product boundaries, not alternate implementations of pi.
 - Never expose API keys through public configuration, events, logs, CLI flags, or the wire.
 - The event contract evolves additively only; consumers must tolerate unknown event types. Tool
-  enablement stays an explicit per-invocation grant — never an ambient environment default. The
-  workspace guard runs before approval; write/edit/bash always require approval.
+  enablement stays an explicit grant — per invocation or per live session, never an ambient
+  environment default, and session grants never persist across reopen. The workspace guard runs
+  before approval; write/edit/bash always require approval.
 - Add focused diagnostics for genuinely complex runtime chains, but do not add speculative defensive
   layers or verbose commentary for impossible states.
 - Do not commit runtime data under `.tachikoma/`, generated `dist/`, coverage, or local reference
@@ -50,3 +51,5 @@ credentials.
 
 See [`docs/architecture.md`](docs/architecture.md) for ownership boundaries and
 [`docs/tachikoma-spiral-roadmap.md`](docs/tachikoma-spiral-roadmap.md) for sequencing.
+
+架构和代码始终秉持极简主义，不要过度设计。

@@ -1165,6 +1165,16 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "title": {
         "type": "string",
       },
+      "toolset": {
+        "enum": [
+          "read-only",
+          "coding",
+        ],
+        "type": "string",
+      },
+      "workDir": {
+        "type": "string",
+      },
     },
     "type": "object",
     "~standard": {
@@ -1247,6 +1257,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "updatedAt": {
         "type": "number",
+      },
+      "workspace": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "type": "string",
+          },
+          "tools": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "toolset": {
+            "enum": [
+              "read-only",
+              "coding",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "root",
+          "toolset",
+          "tools",
+        ],
+        "type": "object",
       },
     },
     "required": [
@@ -1403,6 +1440,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             "updatedAt": {
               "type": "number",
             },
+            "workspace": {
+              "additionalProperties": false,
+              "properties": {
+                "root": {
+                  "type": "string",
+                },
+                "tools": {
+                  "items": {
+                    "type": "string",
+                  },
+                  "type": "array",
+                },
+                "toolset": {
+                  "enum": [
+                    "read-only",
+                    "coding",
+                  ],
+                  "type": "string",
+                },
+              },
+              "required": [
+                "root",
+                "toolset",
+                "tools",
+              ],
+              "type": "object",
+            },
           },
           "required": [
             "sessionId",
@@ -1524,6 +1588,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "updatedAt": {
         "type": "number",
+      },
+      "workspace": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "type": "string",
+          },
+          "tools": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "toolset": {
+            "enum": [
+              "read-only",
+              "coding",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "root",
+          "toolset",
+          "tools",
+        ],
+        "type": "object",
       },
     },
     "required": [
@@ -2461,6 +2552,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "updatedAt": {
         "type": "number",
+      },
+      "workspace": {
+        "additionalProperties": false,
+        "properties": {
+          "root": {
+            "type": "string",
+          },
+          "tools": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
+          "toolset": {
+            "enum": [
+              "read-only",
+              "coding",
+            ],
+            "type": "string",
+          },
+        },
+        "required": [
+          "root",
+          "toolset",
+          "tools",
+        ],
+        "type": "object",
       },
     },
     "required": [

@@ -10,6 +10,7 @@ import {
   modelRefSchema,
   sessionSummarySchema,
   thinkingLevelSchema,
+  toolsetSchema,
 } from './dto';
 
 export const rpcErrorCodeSchema = z.enum([
@@ -58,7 +59,7 @@ export const helloResponseSchema = z.strictObject({
   capabilities: z.array(z.string()),
   session: z.strictObject({
     workDir: z.string().optional(),
-    toolset: z.enum(['read-only', 'coding']).optional(),
+    toolset: toolsetSchema.optional(),
   }),
 });
 export type HelloResponse = z.infer<typeof helloResponseSchema>;
@@ -82,6 +83,9 @@ export const RPC_METHODS = {
       model: modelRefSchema.optional(),
       thinkingLevel: thinkingLevelSchema.optional(),
       title: z.string().optional(),
+      /** 会话级工作区授予（capability 'session-workspace'）；不持久化 */
+      workDir: z.string().optional(),
+      toolset: toolsetSchema.optional(),
     }),
     result: sessionSummarySchema,
   },

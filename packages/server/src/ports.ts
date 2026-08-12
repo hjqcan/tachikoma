@@ -11,6 +11,8 @@ import type {
   ModelRef,
   SessionSummary,
   ThinkingLevel,
+  Toolset,
+  WorkspaceState,
 } from '@tachikoma/protocol';
 
 export interface ServerSessionPort {
@@ -19,6 +21,8 @@ export interface ServerSessionPort {
   readonly thinkingLevel: ThinkingLevel;
   readonly memoryStatus: MemorySnapshot;
   readonly activeTools: readonly string[];
+  /** live 会话的工作区授予；null = 零工具 */
+  readonly workspace: WorkspaceState | null;
   send(text: string, options?: { signal?: AbortSignal }): AsyncGenerator<ChatEventWire>;
   abort(): Promise<boolean>;
   respondToApproval(callId: string, approved: boolean): boolean;
@@ -33,6 +37,9 @@ export interface ServerEnginePort {
     model?: ModelRef;
     thinkingLevel?: ThinkingLevel;
     title?: string;
+    /** 会话级工作区授予（不持久化；重开回到引擎默认） */
+    workDir?: string;
+    toolset?: Toolset;
   }): Promise<ServerSessionPort>;
   openSession(sessionId: string): Promise<ServerSessionPort | null>;
   listSessions(): Promise<SessionSummary[]>;

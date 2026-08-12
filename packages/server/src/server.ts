@@ -69,7 +69,7 @@ export async function startTachikomaServer(
 ): Promise<TachikomaServer> {
   const engine = options.engine;
   const sessions = new Map<string, ServerSessionPort>();
-  const wals = new Map<string, SessionWal>();
+  const wals = new Map<string, Promise<SessionWal>>();
   const subscribers = new Map<string, Set<ServerWebSocket<WsData>>>();
   const tickets = new Map<string, number>();
   const pumps = new Set<Promise<void>>();
@@ -82,12 +82,15 @@ export async function startTachikomaServer(
     return presented.length === tokenBytes.length && timingSafeEqual(presented, tokenBytes);
   }
 
-  async function wal(sessionId: string): Promise<SessionWal> {
-    const existing = wals.get(sessionId);
-    if (existing) return existing;
-    const loaded = await SessionWal.load(options.dataDir, sessionId);
-    wals.set(sessionId, loaded);
-    return loaded;
+  // 缓存 load 的 Promise 而非结果：冷会话上 subscribe 与 send 并发时，
+  // 缓存结果会造出两个 WAL 实例（订阅端重放空实例、注册太迟，整回合丢失）。
+  function wal(sessionId: string): Promise<SessionWal> {
+    let existing = wals.get(sessionId);
+    if (!existing) {
+      existing = SessionWal.load(options.dataDir, sessionId);
+      wals.set(sessionId, existing);
+    }
+    return existing;
   }
 
   function broadcast(sessionId: string, frame: SessionEventFrame): void {
@@ -100,17 +103,17 @@ export async function startTachikomaServer(
     const listed = (await engine.listSessions()).find(
       (summary) => summary.sessionId === session.id
     );
-    return (
-      listed ?? {
-        sessionId: session.id,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messageCount: 0,
-        model: session.model,
-        thinkingLevel: session.thinkingLevel,
-        status: 'ready',
-      }
-    );
+    const summary = listed ?? {
+      sessionId: session.id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messageCount: 0,
+      model: session.model,
+      thinkingLevel: session.thinkingLevel,
+      status: 'ready' as const,
+    };
+    // 工作区授予是 live 会话属性（磁盘摘要没有它），server 侧补充。
+    return session.workspace ? { ...summary, workspace: session.workspace } : summary;
   }
 
   async function requireSession(sessionId: string): Promise<ServerSessionPort> {
@@ -173,6 +176,8 @@ export async function startTachikomaServer(
         ...(parsed.model ? { model: parsed.model } : {}),
         ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
         ...(parsed.title ? { title: parsed.title } : {}),
+        ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
+        ...(parsed.toolset ? { toolset: parsed.toolset } : {}),
       });
       sessions.set(session.id, session);
       return summaryOf(session);

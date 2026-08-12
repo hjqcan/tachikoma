@@ -19,6 +19,8 @@ import type {
   SessionEventFrame,
   SessionSummary,
   ThinkingLevel,
+  Toolset,
+  WorkspaceState,
 } from '@tachikoma/protocol';
 
 import type { ServerEnginePort, ServerSessionPort } from '../src/ports';
@@ -63,6 +65,7 @@ class FakeSession implements ServerSessionPort {
   thinkingLevel: ThinkingLevel = 'off';
   memoryStatus: MemorySnapshot = { enabled: false, status: 'disabled' };
   activeTools: readonly string[] = [];
+  workspace: WorkspaceState | null = null;
   approvals: { callId: string; approved: boolean }[] = [];
   aborted = 0;
   closed = 0;
@@ -123,9 +126,21 @@ class FakeEngine implements ServerEnginePort {
   readonly sessions = new Map<string, FakeSession>();
   private counter = 0;
 
-  async createSession(): Promise<FakeSession> {
+  async createSession(init?: { workDir?: string; toolset?: Toolset }): Promise<FakeSession> {
     this.counter += 1;
     const session = new FakeSession(`session-${this.counter}`);
+    if (init?.workDir) {
+      const toolset = init.toolset ?? 'read-only';
+      session.workspace = {
+        root: init.workDir,
+        toolset,
+        tools:
+          toolset === 'coding'
+            ? ['read', 'grep', 'find', 'ls', 'write', 'edit', 'bash']
+            : ['read', 'grep', 'find', 'ls'],
+      };
+      session.activeTools = session.workspace.tools;
+    }
     this.sessions.set(session.id, session);
     return session;
   }
@@ -343,6 +358,34 @@ describe('sidecar', () => {
       expect(first.ok).toBeTrue();
       const second = await harness.rpc('session.send', { sessionId, text: 'b' });
       expect(second).toMatchObject({ ok: false, error: { code: 'conflict' } });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('session.create 携带 workDir/toolset 时，摘要带回 live workspace；零工具会话不带', async () => {
+    const harness = await startHarness();
+    try {
+      const granted = await harness.rpc('session.create', {
+        workDir: '/workspaces/demo',
+        toolset: 'coding',
+      });
+      expect(granted.ok).toBeTrue();
+      if (granted.ok) {
+        expect(granted.result).toMatchObject({
+          workspace: { root: '/workspaces/demo', toolset: 'coding' },
+        });
+        expect((granted.result as SessionSummary).workspace?.tools).toContain('bash');
+      }
+
+      const bare = await harness.rpc('session.create');
+      expect(bare.ok).toBeTrue();
+      if (bare.ok) {
+        expect((bare.result as SessionSummary).workspace).toBeUndefined();
+      }
+
+      const invalid = await harness.rpc('session.create', { toolset: 'sudo' });
+      expect(invalid).toMatchObject({ ok: false, error: { code: 'invalid_params' } });
     } finally {
       await harness.stop();
     }
