@@ -6,7 +6,7 @@
  * 补发合成 message_complete{failed}——合成帧同样入 WAL，保证重放游标一致。
  */
 
-import { appendFile, mkdir, readFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ChatEventWire, SessionEventFrame } from '@tachikoma/protocol';
 import { FRAME_VERSION, parseSessionEventFrame } from '@tachikoma/protocol';
@@ -105,5 +105,17 @@ export class SessionWal {
 
   read(fromSeq: number): SessionEventFrame[] {
     return this.frames.filter((frame) => frame.seq > fromSeq);
+  }
+
+  /** 会话删除时销毁账本：等在途写入落定后删文件（幂等） */
+  async destroy(): Promise<void> {
+    await this.chain;
+    this.frames = [];
+    await unlink(this.path).catch(() => undefined);
+  }
+
+  /** 未加载过的会话直接按路径删账本文件（幂等） */
+  static async delete(dataDir: string, sessionId: string): Promise<void> {
+    await unlink(join(dataDir, 'sessions', `${sessionId}.events.jsonl`)).catch(() => undefined);
   }
 }

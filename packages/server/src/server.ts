@@ -190,7 +190,20 @@ export async function startTachikomaServer(
     'session.delete': async (params) => {
       const parsed = RPC_METHODS['session.delete'].params.parse(params);
       sessions.delete(parsed.sessionId);
-      return { deleted: await engine.deleteSession(parsed.sessionId) };
+      // engine.deleteSession 会先 close 活跃会话（中止在途回合），resolve 后不再有新帧。
+      const deleted = await engine.deleteSession(parsed.sessionId);
+      // 只摘订阅、不主动 close：Bun 里从 RPC handler 服务端关 WS 会让 server.stop(true)
+      // 永久挂起（实测）；死订阅收不到任何帧，socket 生命周期归客户端。
+      subscribers.delete(parsed.sessionId);
+      // 事件账本随会话一起消亡：缓存过的等在途写入落定再删，没缓存的直接删文件。
+      const cached = wals.get(parsed.sessionId);
+      wals.delete(parsed.sessionId);
+      if (cached) {
+        await (await cached).destroy();
+      } else {
+        await SessionWal.delete(options.dataDir, parsed.sessionId);
+      }
+      return { deleted };
     },
     'session.send': async (params) => {
       const parsed = RPC_METHODS['session.send'].params.parse(params);

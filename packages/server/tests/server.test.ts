@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -419,6 +420,31 @@ describe('sidecar', () => {
         approved: true,
         scope: 'session',
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('session.delete 连带销毁 WAL 文件并断开订阅者；重开报 not_found', async () => {
+    const harness = await startHarness();
+    try {
+      const created = await harness.rpc('session.create');
+      if (!created.ok) throw new Error('create failed');
+      const sessionId = (created.result as SessionSummary).sessionId;
+
+      const live = await harness.ws(sessionId, 0);
+      await harness.rpc('session.send', { sessionId, text: '留点事件' });
+      await live.waitFor(3);
+      const walPath = join(harness.dataDir, 'sessions', `${sessionId}.events.jsonl`);
+      expect(existsSync(walPath)).toBeTrue();
+
+      const deleted = await harness.rpc('session.delete', { sessionId });
+      expect(deleted).toMatchObject({ ok: true, result: { deleted: true } });
+      expect(existsSync(walPath)).toBeFalse();
+
+      const reopened = await harness.rpc('session.open', { sessionId });
+      expect(reopened).toMatchObject({ ok: false, error: { code: 'not_found' } });
+      live.close();
     } finally {
       await harness.stop();
     }

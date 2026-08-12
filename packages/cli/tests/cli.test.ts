@@ -146,6 +146,10 @@ class FakeEngine implements ChatEnginePort {
     return session;
   }
 
+  async deleteSession(sessionId: string): Promise<boolean> {
+    return this.sessions.delete(sessionId);
+  }
+
   models: ChatModelListing[] = [
     { provider: 'faux', model: 'test', reasoning: true },
     { provider: 'faux', model: 'plain', reasoning: false },
@@ -609,6 +613,29 @@ describe('runCli', () => {
       await runCli(['run', 'x', '--workdir', '/w', '--toolset', 'sudo'], invalid.dependencies)
     ).toBe(2);
     expect(invalid.stderr.join('')).toContain('--toolset accepts read-only|coding');
+  });
+
+  test('/delete removes a session; deleting the active one swaps to a fresh session', async () => {
+    const old = new FakeSession('old');
+    const engine = new FakeEngine(old);
+    const harness = createHarness({
+      engine,
+      lines: ['/delete missing', '/delete old', '/exit'],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('[delete] not found: missing');
+    expect(output).toContain('[deleted] old');
+    // 删除的是当前会话：自动接续一个新会话
+    expect(engine.created.length).toBeGreaterThanOrEqual(2);
+    expect(engine.sessions.has('old')).toBeFalse();
+
+    const usage = createHarness({ lines: ['/delete', '/exit'] });
+    await runCli([], usage.dependencies);
+    expect(usage.stderr.join('')).toContain('Use /delete <session-id>');
   });
 
   test('/workspace grants at runtime via a new session, shows state, and revokes with off', async () => {

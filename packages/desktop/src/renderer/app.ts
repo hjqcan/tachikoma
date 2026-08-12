@@ -435,6 +435,24 @@ async function boot(): Promise<void> {
     input.focus();
   }
 
+  const TRASH_SVG =
+    '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m5 5v6m4-6v6"/></svg>';
+
+  async function deleteSessionById(target: string): Promise<void> {
+    const result = await rpc('session.delete', { sessionId: target });
+    if (!result.ok) {
+      block('status-line error').textContent = `[error] ${result.error.message}`;
+      return;
+    }
+    if (target === sessionId) {
+      // 删的是当前会话：按当前授予状态接一个新会话
+      await startSession(
+        grantedWorkspace ? { workDir: grantedWorkspace.root, toolset: selectedToolset } : {}
+      );
+    }
+    await refreshSessionList();
+  }
+
   function sessionRow(summary: SessionSummaryLite): HTMLElement {
     const row = document.createElement('div');
     row.className = `session-row${summary.sessionId === sessionId ? ' current' : ''}`;
@@ -452,8 +470,41 @@ async function boot(): Promise<void> {
         })
       : '';
     meta.textContent = [when, `${summary.messageCount ?? 0} 条`].filter(Boolean).join(' · ');
-    row.append(title, meta);
-    row.onclick = () => void openExisting(summary.sessionId);
+
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.title = '删除会话';
+    del.innerHTML = TRASH_SVG;
+    del.onclick = (mouse) => {
+      mouse.stopPropagation();
+      if (row.querySelector('.confirm-bar')) return;
+      meta.hidden = true;
+      const bar = document.createElement('div');
+      bar.className = 'confirm-bar';
+      const yes = document.createElement('button');
+      yes.className = 'yes';
+      yes.textContent = '确认删除';
+      yes.onclick = (click) => {
+        click.stopPropagation();
+        void deleteSessionById(summary.sessionId);
+      };
+      const no = document.createElement('button');
+      no.className = 'no';
+      no.textContent = '取消';
+      no.onclick = (click) => {
+        click.stopPropagation();
+        bar.remove();
+        meta.hidden = false;
+      };
+      bar.append(yes, no);
+      row.appendChild(bar);
+    };
+
+    row.append(title, meta, del);
+    row.onclick = () => {
+      if (row.querySelector('.confirm-bar')) return; // 确认中不触发打开
+      void openExisting(summary.sessionId);
+    };
     return row;
   }
 

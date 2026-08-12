@@ -168,9 +168,56 @@
         overflow-y: auto;
       }
       .session-row {
-        padding: 10px 14px;
+        position: relative;
+        padding: 10px 34px 10px 14px;
         border-bottom: 1px solid var(--line);
         cursor: pointer;
+      }
+      .session-row .del {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        background: none;
+        border: none;
+        color: var(--sensor);
+        cursor: pointer;
+        opacity: 0;
+        padding: 5px;
+        border-radius: 4px;
+      }
+      .session-row:hover .del,
+      .session-row .del:focus-visible {
+        opacity: 0.75;
+      }
+      .session-row .del:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--sensor) 14%, transparent);
+      }
+      .session-row .confirm-bar {
+        display: flex;
+        gap: 6px;
+        margin-top: 5px;
+      }
+      .confirm-bar button {
+        font: 600 11px var(--human);
+        border-radius: 4px;
+        padding: 2px 10px;
+        cursor: pointer;
+        border: 1px solid transparent;
+      }
+      .confirm-bar .yes {
+        background: var(--sensor-deep);
+        color: #fff;
+      }
+      .confirm-bar .yes:hover {
+        background: var(--sensor);
+      }
+      .confirm-bar .no {
+        background: none;
+        border-color: var(--line);
+        color: var(--text-dim);
       }
       .session-row:hover {
         background: color-mix(in srgb, var(--chassis) 7%, transparent);
