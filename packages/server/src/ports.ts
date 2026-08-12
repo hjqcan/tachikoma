@@ -28,6 +28,7 @@ export interface ServerSessionPort {
   respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   setModel(model: ModelRef): Promise<ModelRef>;
   setThinkingLevel(level: ThinkingLevel): ThinkingLevel;
+  rename(title: string): string;
   compact(instructions?: string): Promise<CompactionResult>;
   close(): Promise<void>;
 }

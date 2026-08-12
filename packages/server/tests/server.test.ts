@@ -114,6 +114,13 @@ class FakeSession implements ServerSessionPort {
     return level;
   }
 
+  title = '';
+
+  rename(title: string): string {
+    this.title = title;
+    return title;
+  }
+
   async compact(): Promise<CompactionResult> {
     return { summary: 'compacted', firstKeptEntryId: 'e1', tokensBefore: 10 };
   }
@@ -426,6 +433,23 @@ describe('sidecar', () => {
         approved: true,
         scope: 'session',
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('session.rename 透传到会话并回传规范化标题', async () => {
+    const harness = await startHarness();
+    try {
+      const created = await harness.rpc('session.create');
+      if (!created.ok) throw new Error('create failed');
+      const sessionId = (created.result as SessionSummary).sessionId;
+      const renamed = await harness.rpc('session.rename', { sessionId, title: '新标题' });
+      expect(renamed).toMatchObject({ ok: true, result: { title: '新标题' } });
+      expect(harness.engine.sessions.get(sessionId)?.title).toBe('新标题');
+
+      const empty = await harness.rpc('session.rename', { sessionId, title: '' });
+      expect(empty.ok).toBeFalse();
     } finally {
       await harness.stop();
     }

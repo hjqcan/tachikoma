@@ -249,6 +249,11 @@ export async function startTachikomaServer(
       const session = await requireSession(parsed.sessionId);
       return { level: session.setThinkingLevel(parsed.level) };
     },
+    'session.rename': async (params) => {
+      const parsed = RPC_METHODS['session.rename'].params.parse(params);
+      const session = await requireSession(parsed.sessionId);
+      return { title: session.rename(parsed.title) };
+    },
     'session.compact': async (params) => {
       const parsed = RPC_METHODS['session.compact'].params.parse(params);
       const session = await requireSession(parsed.sessionId);

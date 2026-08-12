@@ -207,8 +207,37 @@
         display: none;
       }
       .aside-head {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
         padding: 12px;
         border-bottom: 1px solid var(--line-soft);
+      }
+      #session-filter {
+        font: 11px var(--mono);
+        color: var(--text);
+        background: var(--ground);
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+        padding: 4px 10px;
+        outline: none;
+        transition: border-color 0.15s ease;
+      }
+      #session-filter:focus {
+        border-color: var(--chassis-strong);
+      }
+      #session-filter::placeholder {
+        color: var(--text-faint);
+      }
+      .session-title input {
+        font: 13px var(--human);
+        color: var(--text);
+        background: var(--ground);
+        border: 1px solid var(--chassis-strong);
+        border-radius: 4px;
+        padding: 1px 6px;
+        outline: none;
+        width: 100%;
       }
       #new-session {
         width: 100%;
@@ -878,7 +907,7 @@
   <body>
     <header>
       <span class="wordmark"><span class="lens"></span>TACHIKOMA</span>
-      <button id="sessions-toggle" aria-pressed="false" title="会话列表">会话</button>
+      <button id="sessions-toggle" aria-pressed="true" title="会话列表（⌘B）">会话</button>
       <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
       <span id="toolset">
         <button data-toolset="read-only" class="active" title="read / grep / find / ls">
@@ -890,9 +919,10 @@
       <span id="status">connecting…</span>
     </header>
     <div id="shell">
-      <aside id="sessions" hidden>
+      <aside id="sessions">
         <div class="aside-head">
-          <button id="new-session">＋ 新会话</button>
+          <button id="new-session" title="⌘N">＋ 新会话</button>
+          <input id="session-filter" spellcheck="false" placeholder="过滤会话…" />
         </div>
         <div id="session-list"></div>
       </aside>

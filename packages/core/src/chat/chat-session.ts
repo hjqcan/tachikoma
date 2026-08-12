@@ -327,6 +327,21 @@ export class ChatSession {
     return this.agentSession.thinkingLevel;
   }
 
+  /** 重命名会话：pi session_info 追加式条目（与自动命名同一持久化通道）；返回规范化标题 */
+  rename(title: string): string {
+    this.assertOpen();
+    const normalized = deriveTitle(title);
+    if (!normalized) {
+      throw new Error('Session title must not be empty.');
+    }
+    this.agentSession.setSessionName(normalized);
+    return normalized;
+  }
+
+  get title(): string | undefined {
+    return this.agentSession.sessionName;
+  }
+
   async compact(instructions?: string): Promise<ChatCompactionResult> {
     this.assertOpen();
     try {

@@ -98,6 +98,13 @@ class FakeSession implements ChatSessionPort {
     this.thinkingLevel = level;
     return level;
   }
+
+  titleValue = '';
+
+  rename(title: string): string {
+    this.titleValue = title.trim();
+    return this.titleValue;
+  }
 }
 
 class FakeEngine implements ChatEnginePort {
@@ -636,6 +643,19 @@ describe('runCli', () => {
     const usage = createHarness({ lines: ['/delete', '/exit'] });
     await runCli([], usage.dependencies);
     expect(usage.stderr.join('')).toContain('Use /delete <session-id>');
+  });
+
+  test('/rename renames the active session and rejects empty titles', async () => {
+    const session = new FakeSession('s1');
+    const engine = new FakeEngine(session);
+    const harness = createHarness({ engine, lines: ['/rename 新标题', '/rename', '/exit'] });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    expect(harness.stdout.join('')).toContain('[renamed] 新标题');
+    expect(session.titleValue).toBe('新标题');
+    expect(harness.stderr.join('')).toContain('Use /rename <title>');
   });
 
   test('/workspace grants at runtime via a new session, shows state, and revokes with off', async () => {

@@ -124,6 +124,10 @@ export const RPC_METHODS = {
     params: z.strictObject({ sessionId: z.string(), level: thinkingLevelSchema }),
     result: z.strictObject({ level: thinkingLevelSchema }),
   },
+  'session.rename': {
+    params: z.strictObject({ sessionId: z.string(), title: z.string().min(1) }),
+    result: z.strictObject({ title: z.string() }),
+  },
   'session.compact': {
     params: z.strictObject({ sessionId: z.string(), instructions: z.string().optional() }),
     result: compactionResultSchema,

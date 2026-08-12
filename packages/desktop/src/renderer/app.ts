@@ -43,6 +43,7 @@ const toolsetGroup = document.getElementById('toolset') as HTMLElement;
 const sessionsToggle = document.getElementById('sessions-toggle') as HTMLButtonElement;
 const sessionsPanel = document.getElementById('sessions') as HTMLElement;
 const sessionList = document.getElementById('session-list') as HTMLElement;
+const sessionFilter = document.getElementById('session-filter') as HTMLInputElement;
 const newSessionButton = document.getElementById('new-session') as HTMLButtonElement;
 const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
 const modelPicker = document.getElementById('model-picker') as HTMLElement;
@@ -482,6 +483,7 @@ async function boot(): Promise<void> {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
         }
         assistantBlock = null;
+        scheduleSessionListRefresh();
         break;
       }
       default:
@@ -634,12 +636,54 @@ async function boot(): Promise<void> {
     await refreshSessionList();
   }
 
+  /** 双击标题行内改名：Enter 提交（session.rename），Esc/失焦取消 */
+  function startInlineRename(summary: SessionSummaryLite, title: HTMLElement): void {
+    const current = summary.title?.trim() || '';
+    const editor = document.createElement('input');
+    editor.value = current;
+    title.textContent = '';
+    title.appendChild(editor);
+    editor.focus();
+    editor.select();
+    let done = false;
+    const finish = (commit: boolean): void => {
+      if (done) return;
+      done = true;
+      const next = editor.value.trim();
+      if (commit && next && next !== current) {
+        void rpc('session.rename', { sessionId: summary.sessionId, title: next }).then(
+          (renamed) => {
+            if (!renamed.ok) {
+              block('status-line error').textContent = `[error] ${renamed.error.message}`;
+            }
+            void refreshSessionList();
+          }
+        );
+        title.textContent = next;
+      } else {
+        title.textContent = current || summary.sessionId.slice(0, 8);
+      }
+    };
+    editor.onkeydown = (key) => {
+      key.stopPropagation();
+      if (key.key === 'Enter') finish(true);
+      else if (key.key === 'Escape') finish(false);
+    };
+    editor.onblur = () => finish(false);
+    editor.onclick = (click) => click.stopPropagation();
+  }
+
   function sessionRow(summary: SessionSummaryLite): HTMLElement {
     const row = document.createElement('div');
     row.className = `session-row${summary.sessionId === sessionId ? ' current' : ''}`;
     const title = document.createElement('div');
     title.className = 'session-title';
     title.textContent = summary.title?.trim() || summary.sessionId.slice(0, 8);
+    title.title = '双击重命名';
+    title.ondblclick = (dbl) => {
+      dbl.stopPropagation();
+      startInlineRename(summary, title);
+    };
     const meta = document.createElement('div');
     meta.className = 'session-meta';
     meta.textContent = [
@@ -686,14 +730,31 @@ async function boot(): Promise<void> {
     return row;
   }
 
+  let sessionSummaries: SessionSummaryLite[] = [];
+
+  function renderSessionList(): void {
+    const needle = sessionFilter.value.trim().toLowerCase();
+    sessionList.innerHTML = '';
+    for (const summary of sessionSummaries) {
+      const label = `${summary.title ?? ''} ${summary.sessionId}`.toLowerCase();
+      if (needle && !label.includes(needle)) continue;
+      sessionList.appendChild(sessionRow(summary));
+    }
+  }
+
   async function refreshSessionList(): Promise<void> {
     const listed = await rpc('session.list');
     if (!listed.ok) return;
-    const sessions = (listed.result as { sessions: SessionSummaryLite[] }).sessions;
-    sessionList.innerHTML = '';
-    for (const summary of sessions) {
-      sessionList.appendChild(sessionRow(summary));
-    }
+    sessionSummaries = (listed.result as { sessions: SessionSummaryLite[] }).sessions;
+    renderSessionList();
+  }
+  sessionFilter.addEventListener('input', renderSessionList);
+
+  // 回合结束后标题/条数会变（自动命名在首回合落盘）——去抖刷新侧栏
+  let sessionListRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleSessionListRefresh(): void {
+    clearTimeout(sessionListRefreshTimer);
+    sessionListRefreshTimer = setTimeout(() => void refreshSessionList(), 400);
   }
 
   // ── 控件 ────────────────────────────────────────────────────
@@ -746,11 +807,24 @@ async function boot(): Promise<void> {
     }
   });
 
-  sessionsToggle.onclick = () => {
+  function toggleSessionsPanel(): void {
     sessionsPanel.hidden = !sessionsPanel.hidden;
     sessionsToggle.setAttribute('aria-pressed', String(!sessionsPanel.hidden));
     if (!sessionsPanel.hidden) void refreshSessionList();
-  };
+  }
+  sessionsToggle.onclick = toggleSessionsPanel;
+
+  // 全局快捷键：⌘N 新会话、⌘B 会话栏（Windows/Linux 用 Ctrl）
+  document.addEventListener('keydown', (key) => {
+    if (!(key.metaKey || key.ctrlKey)) return;
+    if (key.key === 'n') {
+      key.preventDefault();
+      newSessionButton.click();
+    } else if (key.key === 'b') {
+      key.preventDefault();
+      toggleSessionsPanel();
+    }
+  });
 
   // ── 生成参数：模型与 thinking（RPC 均为既有方法） ──────────────
   // 模型选择走主题内自绘面板：原生 datalist 会被预填值过滤成单条，且弹层是白底原生样式。
@@ -872,6 +946,7 @@ async function boot(): Promise<void> {
   };
 
   await startSession({});
+  await refreshSessionList();
 }
 
 boot().catch((error: unknown) => {

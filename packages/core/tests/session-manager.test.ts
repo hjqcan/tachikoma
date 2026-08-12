@@ -336,6 +336,36 @@ describe('pi JSONL session ownership', () => {
     }
   });
 
+  it('rename 走 session_info 追加通道并在列表与重开后可见', async () => {
+    const harness = await createFauxHarness();
+    try {
+      harness.faux.setResponses([fauxAssistantMessage('好的')]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession({ title: '旧名字' });
+      const sessionId = session.id;
+      await drain(session.send('你好'));
+      expect(session.rename('  新名字\n第二行被截掉  ')).toBe('新名字');
+      expect(session.title).toBe('新名字');
+      expect(() => session.rename('   ')).toThrow();
+      await session.close();
+
+      const summaries = await engine.listSessions();
+      expect(summaries.find((summary) => summary.sessionId === sessionId)?.title).toBe('新名字');
+      const reopened = await engine.openSession(sessionId);
+      expect(reopened?.title).toBe('新名字');
+      await reopened?.close();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it('deletes a closed session without retaining a compatibility record', async () => {
     const harness = await createFauxHarness();
     try {

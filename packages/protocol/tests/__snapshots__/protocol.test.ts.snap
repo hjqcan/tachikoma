@@ -1673,6 +1673,55 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "version": 1,
     },
   },
+  "session.rename.params": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "sessionId": {
+        "type": "string",
+      },
+      "title": {
+        "minLength": 1,
+        "type": "string",
+      },
+    },
+    "required": [
+      "sessionId",
+      "title",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
+  "session.rename.result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "title",
+    ],
+    "type": "object",
+    "~standard": {
+      "jsonSchema": {
+        "input": [Function],
+        "output": [Function],
+      },
+      "validate": [Function],
+      "vendor": "zod",
+      "version": 1,
+    },
+  },
   "session.respondToApproval.params": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
