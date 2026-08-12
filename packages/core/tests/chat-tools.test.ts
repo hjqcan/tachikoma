@@ -12,8 +12,9 @@ import { mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ChatEngine, findWorkspaceViolation, WORKSPACE_TOOLS } from '../src';
+import { ChatEngine } from '../src';
 import type { ChatEvent } from '../src';
+import { findWorkspaceViolation, WORKSPACE_TOOLS } from '../src/chat/workspace-guard';
 import { createFauxHarness } from './helpers';
 
 async function collect(events: AsyncIterable<ChatEvent>): Promise<ChatEvent[]> {

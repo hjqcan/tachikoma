@@ -2,7 +2,6 @@ export { ChatEngine } from './chat-engine';
 export type { ChatSession } from './chat-session';
 export { buildChatSystemPrompt } from './system-prompt';
 export type { ChatSystemPromptOptions } from './system-prompt';
-export { findWorkspaceViolation, WORKSPACE_TOOLS } from './workspace-guard';
 export type {
   ChatCompactionEvent,
   ChatCompactionResult,
