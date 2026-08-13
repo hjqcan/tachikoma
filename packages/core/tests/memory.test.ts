@@ -171,7 +171,10 @@ describe('GoodMemory lifecycle', () => {
   it('管理面：list/search/forget/clear 走真实 SQLite；召回事件携带 recalled 明细', async () => {
     const harness = await createFauxHarness();
     try {
-      harness.faux.setResponses([fauxAssistantMessage('记住了。'), fauxAssistantMessage('Lin。')]);
+      harness.faux.setResponses([
+        fauxAssistantMessage('记住了。'),
+        fauxAssistantMessage('Tachikoma。'),
+      ]);
       const engine = new ChatEngine(
         {
           dataDir: harness.dataDir,
@@ -181,7 +184,7 @@ describe('GoodMemory lifecycle', () => {
         { modelRuntime: harness.modelRuntime }
       );
       const seed = await engine.createSession();
-      await collect(seed.send('我的名字是 Lin，请记住。'));
+      await collect(seed.send('请记住项目代号=Tachikoma。'));
       await seed.close();
 
       const records = await engine.memoryList();
@@ -198,7 +201,7 @@ describe('GoodMemory lifecycle', () => {
 
       // 第二回合的 recall 事件必须带命中明细（id/type/preview）
       const second = await engine.createSession();
-      const events = await collect(second.send('我叫什么名字？'));
+      const events = await collect(second.send('项目代号是什么？'));
       const recallEvent = events.find(
         (event) => event.type === 'memory_status' && event.phase === 'recall'
       );
@@ -254,6 +257,114 @@ describe('GoodMemory lifecycle', () => {
         (record) => record.type !== 'experience' && record.type !== 'archive'
       );
       expect(questionCandidates).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('一次性 read/write 指令不成为 feedback，明确长期规则仍会持久化', async () => {
+    const harness = await createFauxHarness();
+    const oneOffDirectives = [
+      '请用 read 工具读取 hello.txt 的内容，并把其中的标记原样告诉我。',
+      '请用 write 工具在当前工作目录创建 done.txt，内容为 APPROVAL_SMOKE_OK。',
+    ];
+    const durableGuidance = '以后汇报状态时始终使用要点。';
+    try {
+      harness.faux.setResponses([
+        fauxAssistantMessage('已读取。'),
+        fauxAssistantMessage('已写入。'),
+        fauxAssistantMessage('明白。'),
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: { userId: 'behavioral-directive-admission-user' },
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession();
+
+      for (const directive of [...oneOffDirectives, durableGuidance]) {
+        expect(complete(await collect(session.send(directive))).status).toBe('success');
+      }
+      await session.close();
+
+      const feedback = (await engine.memoryList()).filter((record) => record.type === 'feedback');
+      expect(feedback.map(({ content }) => content)).toContain(durableGuidance);
+      for (const directive of oneOffDirectives) {
+        expect(feedback.map(({ content }) => content)).not.toContain(directive);
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('历史一次性 feedback 不会污染无关 guidance 查询，并可按 exact ID 清理', async () => {
+    const harness = await createFauxHarness();
+    const databasePath = join(harness.dataDir, 'historical-one-off-feedback.sqlite');
+    const userId = 'historical-one-off-feedback-user';
+    const scope = { userId, workspaceId: 'tachikoma', agentId: 'tachikoma' } as const;
+    const badRules = [
+      '请用 read 工具读取 hello.txt 的内容，并把其中的标记原样告诉我。',
+      '请用 write 工具在当前工作目录创建 done.txt，内容为 APPROVAL_SMOKE_OK。',
+    ];
+    try {
+      const memory = createGoodMemory({
+        storage: { provider: 'sqlite', url: databasePath },
+        adapters: {
+          assistedExtractor: createDeterministicMemoryExtractor(),
+          embeddingAdapter: createLocalEmbeddingAdapter(),
+        },
+      });
+      for (const signal of badRules) {
+        expect((await memory.feedback({ scope, signal })).accepted).toBeTrue();
+      }
+
+      let modelMessages = '';
+      harness.faux.setResponses([
+        (context) => {
+          modelMessages = JSON.stringify(context.messages);
+          return fauxAssistantMessage('你可以说明目标和约束。');
+        },
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: { databasePath, userId },
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const seeded = (await engine.memoryList()).filter(
+        (record) => record.type === 'feedback' && badRules.includes(record.content)
+      );
+      expect(seeded.map(({ content }) => content).sort()).toEqual([...badRules].sort());
+
+      const session = await engine.createSession();
+      const events = await collect(session.send('你对长期职业规划有什么建议？'));
+      expect(complete(events).status).toBe('success');
+      await session.close();
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'memory_status',
+          phase: 'recall',
+          status: 'empty',
+          hasContext: false,
+        })
+      );
+      for (const rule of badRules) {
+        expect(modelMessages).not.toContain(rule);
+      }
+
+      for (const record of seeded) {
+        expect(await engine.memoryForget(record.id)).toBeTrue();
+      }
+      const remainingIds = new Set((await engine.memoryList()).map(({ id }) => id));
+      for (const record of seeded) {
+        expect(remainingIds.has(record.id)).toBeFalse();
+      }
     } finally {
       await harness.cleanup();
     }

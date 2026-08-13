@@ -59,3 +59,7 @@ const FEEDBACK_LIFECYCLE_LABELS: Record<MemoryLifecycle, string> = {
 export function feedbackLifecycleLabel(lifecycle: MemoryLifecycle | undefined): string | undefined {
   return lifecycle ? FEEDBACK_LIFECYCLE_LABELS[lifecycle] : undefined;
 }
+
+export function systemRecordsSummary(count: number): string {
+  return `系统记录 · ${count}`;
+}

@@ -9,7 +9,7 @@
 import { parseSessionEventFrame } from '@tachikoma/protocol';
 import type { ChatEventWire, RpcResponse } from '@tachikoma/protocol';
 
-import { buildMemoryView, feedbackLifecycleLabel } from './memory-view';
+import { buildMemoryView, feedbackLifecycleLabel, systemRecordsSummary } from './memory-view';
 import type { MemoryRecordView } from './memory-view';
 
 declare global {
@@ -1145,7 +1145,7 @@ async function boot(): Promise<void> {
       details.className = 'memory-experiences';
       details.open = view.expandExperiences;
       const summary = document.createElement('summary');
-      summary.textContent = `系统经验 · ${view.experiences.length}`;
+      summary.textContent = systemRecordsSummary(view.experiences.length);
       details.appendChild(summary);
       for (const record of view.experiences) {
         details.appendChild(memoryRow(record));

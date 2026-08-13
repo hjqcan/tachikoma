@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { buildMemoryView, feedbackLifecycleLabel } from '../src/renderer/memory-view';
+import {
+  buildMemoryView,
+  feedbackLifecycleLabel,
+  systemRecordsSummary,
+} from '../src/renderer/memory-view';
 
 describe('memory drawer view policy', () => {
   const feedback = {
@@ -30,6 +34,10 @@ describe('memory drawer view policy', () => {
       expandExperiences: true,
       userMemoryEmpty: false,
     });
+  });
+
+  it('labels the folded experience group as system records', () => {
+    expect(systemRecordsSummary(2)).toBe('系统记录 · 2');
   });
 
   it('maps feedback lifecycle to concise badges', () => {

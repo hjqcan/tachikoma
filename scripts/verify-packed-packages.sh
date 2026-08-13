@@ -45,7 +45,7 @@ tar -xOzf "$TACHIKOMA_CORE_TGZ" package/package.json | bun -e '
     "@earendil-works/pi-agent-core": "0.84.1",
     "@earendil-works/pi-ai": "0.84.1",
     "@earendil-works/pi-coding-agent": "0.84.1",
-    goodmemory: "0.7.3",
+    goodmemory: "0.7.4",
   };
   for (const [name, version] of Object.entries(expected)) {
     if (manifest.dependencies?.[name] !== version) {
