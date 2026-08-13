@@ -57,6 +57,15 @@ describe('enginedOptionsFromEnv', () => {
     );
   });
 
+  it('TACHIKOMA_REASONING_SUMMARY 进引擎配置；非法值启动即失败', () => {
+    const options = enginedOptionsFromEnv({ TACHIKOMA_REASONING_SUMMARY: 'detailed' });
+    expect(options.engineConfig.reasoningSummary).toBe('detailed');
+    expect(enginedOptionsFromEnv({}).engineConfig.reasoningSummary).toBeUndefined();
+    expect(() => enginedOptionsFromEnv({ TACHIKOMA_REASONING_SUMMARY: 'verbose' })).toThrow(
+      'TACHIKOMA_REASONING_SUMMARY'
+    );
+  });
+
   it('TACHIKOMA_NO_MEMORY=1 关记忆；USER_ID 透传', () => {
     expect(enginedOptionsFromEnv({ TACHIKOMA_NO_MEMORY: '1' }).engineConfig.memory).toBeFalse();
     expect(enginedOptionsFromEnv({ TACHIKOMA_USER_ID: 'alice' }).engineConfig.memory).toEqual({

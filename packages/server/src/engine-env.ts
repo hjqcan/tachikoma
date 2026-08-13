@@ -59,6 +59,19 @@ export function enginedOptionsFromEnv(
     systemPrompt = content;
   }
 
+  const reasoningSummary = env.TACHIKOMA_REASONING_SUMMARY;
+  if (
+    reasoningSummary !== undefined &&
+    reasoningSummary !== 'auto' &&
+    reasoningSummary !== 'concise' &&
+    reasoningSummary !== 'detailed'
+  ) {
+    // 同 systemPrompt 的姿势：配置错误启动即失败，不静默降级
+    throw new Error(
+      `TACHIKOMA_REASONING_SUMMARY must be auto | concise | detailed, got: ${reasoningSummary}`
+    );
+  }
+
   return {
     dataDir,
     engineConfig: {
@@ -69,6 +82,7 @@ export function enginedOptionsFromEnv(
       ...(toolset ? { toolset } : {}),
       ...(skills?.length ? { skills } : {}),
       ...(systemPrompt ? { systemPrompt } : {}),
+      ...(reasoningSummary ? { reasoningSummary } : {}),
       memory:
         env.TACHIKOMA_NO_MEMORY === '1'
           ? false

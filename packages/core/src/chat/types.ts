@@ -56,6 +56,13 @@ export interface ChatEngineConfig {
    * 解析）——规范做法是每个 skill 独占一个目录。相对路径按引擎进程 cwd 解析。
    */
   skills?: string[];
+  /**
+   * 推理摘要详略（OpenAI responses 系 API 的 `reasoning.summary`）。
+   * 缺省不传 —— provider 侧默认 `auto`（往往只给一行小标题）。
+   * 设 'detailed' 可看到更完整的思考摘要；effort 仍由 thinkingLevel 逐回合决定。
+   * 不支持该参数的 provider 会忽略此项。
+   */
+  reasoningSummary?: 'auto' | 'concise' | 'detailed';
 }
 
 export type ChatToolset = 'read-only' | 'coding';
