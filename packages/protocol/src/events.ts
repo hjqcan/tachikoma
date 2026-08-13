@@ -15,11 +15,20 @@ const base = {
   timestamp: z.number(),
 };
 
+/** 附件元数据（增量字段）：像素在 pi 转录里，事件账本只留还原芯片所需的信息 */
+export const attachmentMetaSchema = z.strictObject({
+  kind: z.literal('image'),
+  mimeType: z.string(),
+  bytes: z.number(),
+  name: z.string().optional(),
+});
+
 /** 回合首事件：用户输入原文——WAL 重放靠它重建对话的"人"这一侧 */
 export const userMessageEventSchema = z.strictObject({
   ...base,
   type: z.literal('user_message'),
   text: z.string(),
+  attachments: z.array(attachmentMetaSchema).optional(),
 });
 
 export const messageStartEventSchema = z.strictObject({

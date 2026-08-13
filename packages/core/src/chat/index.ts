@@ -4,10 +4,12 @@ export { buildChatSystemPrompt } from './system-prompt';
 export type { ChatMemoryRecord } from './memory';
 export type { ChatSystemPromptOptions } from './system-prompt';
 export type {
+  ChatAttachmentMeta,
   ChatCompactionEvent,
   ChatCompactionResult,
   ChatEngineConfig,
   ChatEvent,
+  ChatImageAttachment,
   ChatMemoryConfig,
   ChatMemorySnapshot,
   ChatMemoryStatus,

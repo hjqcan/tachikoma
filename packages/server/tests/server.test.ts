@@ -77,10 +77,16 @@ class FakeSession implements ServerSessionPort {
 
   constructor(readonly id: string) {}
 
-  async *send(text: string): AsyncGenerator<ChatEventWire> {
+  sentImages: { name?: string; mimeType: string; data: string }[][] = [];
+
+  async *send(
+    text: string,
+    options?: { signal?: AbortSignal; images?: { name?: string; mimeType: string; data: string }[] }
+  ): AsyncGenerator<ChatEventWire> {
     if (this.sending) {
       throw new Error(`会话 ${this.id} 已有生成在进行中`);
     }
+    if (options?.images) this.sentImages.push(options.images);
     this.sending = true;
     try {
       const events =
@@ -462,6 +468,26 @@ describe('sidecar', () => {
         approved: true,
         scope: 'session',
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('session.send 的 images 透传到会话（capability image-input）', async () => {
+    const harness = await startHarness();
+    try {
+      const created = await harness.rpc('session.create');
+      if (!created.ok) throw new Error('create failed');
+      const sessionId = (created.result as SessionSummary).sessionId;
+      const sent = await harness.rpc('session.send', {
+        sessionId,
+        text: '看图',
+        images: [{ name: 'lens.png', mimeType: 'image/png', data: 'aGVsbG8=' }],
+      });
+      expect(sent.ok).toBeTrue();
+      expect(harness.engine.sessions.get(sessionId)?.sentImages).toEqual([
+        [{ name: 'lens.png', mimeType: 'image/png', data: 'aGVsbG8=' }],
+      ]);
     } finally {
       await harness.stop();
     }

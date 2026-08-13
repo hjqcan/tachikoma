@@ -144,9 +144,15 @@ export async function startTachikomaServer(
   }
 
   /** server 是回合事件流的唯一消费者：先写 WAL 再扇出；返回首事件的 turnId */
-  async function startTurn(session: ServerSessionPort, text: string): Promise<string> {
+  async function startTurn(
+    session: ServerSessionPort,
+    text: string,
+    images?: { name?: string | undefined; mimeType: string; data: string }[]
+  ): Promise<string> {
     const sessionWal = await wal(session.id);
-    const iterator = session.send(text)[Symbol.asyncIterator]();
+    const iterator = session
+      .send(text, images && images.length > 0 ? { images } : undefined)
+      [Symbol.asyncIterator]();
     let first: IteratorResult<ChatEventWire>;
     try {
       first = await iterator.next();
@@ -226,7 +232,7 @@ export async function startTachikomaServer(
     'session.send': async (params) => {
       const parsed = RPC_METHODS['session.send'].params.parse(params);
       const session = await requireSession(parsed.sessionId);
-      return { turnId: await startTurn(session, parsed.text) };
+      return { turnId: await startTurn(session, parsed.text, parsed.images) };
     },
     'session.abort': async (params) => {
       const parsed = RPC_METHODS['session.abort'].params.parse(params);

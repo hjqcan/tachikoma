@@ -127,10 +127,17 @@ ipcMain.handle('tachikoma:pick-workspace', async () => {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 });
 
-// 附件：原生多选文件对话框，main 进程代读文本（renderer 无 fs）。
-// 二进制（含 \0）与超限文件如实拒绝——图片等多模态输入是引擎层的后续增量。
-// 上限 10MB（用户定）：超大文本照样内联，撑爆上下文时由模型侧错误如实反馈。
+// 附件：原生多选文件对话框，main 进程代读（renderer 无 fs）。
+// 文本内联进 prompt；图片转 base64 走 session.send images（引擎多模态入口）；
+// 其余二进制如实拒绝。上限 10MB（用户定）。
 const ATTACHMENT_MAX_BYTES = 10_000_000;
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+};
 ipcMain.handle('tachikoma:pick-files', async () => {
   const result = await dialog.showOpenDialog({
     title: '附加文件',
@@ -138,8 +145,15 @@ ipcMain.handle('tachikoma:pick-files', async () => {
   });
   if (result.canceled) return [];
   const { readFile, stat } = await import('node:fs/promises');
-  const { basename } = await import('node:path');
-  const files: { name: string; text?: string; size: number; error?: string }[] = [];
+  const { basename, extname } = await import('node:path');
+  const files: {
+    name: string;
+    size: number;
+    text?: string;
+    imageBase64?: string;
+    mimeType?: string;
+    error?: string;
+  }[] = [];
   for (const path of result.filePaths.slice(0, 8)) {
     const name = basename(path);
     try {
@@ -153,8 +167,18 @@ ipcMain.handle('tachikoma:pick-files', async () => {
         continue;
       }
       const buffer = await readFile(path);
+      const imageMime = IMAGE_MIME[extname(path).toLowerCase()];
+      if (imageMime) {
+        files.push({
+          name,
+          size: info.size,
+          imageBase64: buffer.toString('base64'),
+          mimeType: imageMime,
+        });
+        continue;
+      }
       if (buffer.includes(0)) {
-        files.push({ name, size: info.size, error: '二进制文件暂不支持' });
+        files.push({ name, size: info.size, error: '暂不支持的二进制类型（图片可以）' });
         continue;
       }
       files.push({ name, size: info.size, text: buffer.toString('utf8') });

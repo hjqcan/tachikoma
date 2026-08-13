@@ -100,7 +100,20 @@ export const RPC_METHODS = {
     result: z.strictObject({ deleted: z.boolean() }),
   },
   'session.send': {
-    params: z.strictObject({ sessionId: z.string(), text: z.string().min(1) }),
+    params: z.strictObject({
+      sessionId: z.string(),
+      text: z.string().min(1),
+      /** 图片附件（capability 'image-input'）：base64 原文进引擎，事件只留元数据 */
+      images: z
+        .array(
+          z.strictObject({
+            name: z.string().optional(),
+            mimeType: z.string(),
+            data: z.string().min(1),
+          })
+        )
+        .optional(),
+    }),
     result: z.strictObject({ turnId: z.string() }),
   },
   'session.abort': {

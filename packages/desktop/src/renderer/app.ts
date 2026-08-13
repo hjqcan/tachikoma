@@ -14,7 +14,16 @@ declare global {
     tachikoma: {
       getServerInfo(): Promise<{ port: number; token: string; engineVersion: string }>;
       pickWorkspace(): Promise<string | null>;
-      pickFiles(): Promise<{ name: string; text?: string; size: number; error?: string }[]>;
+      pickFiles(): Promise<
+        {
+          name: string;
+          size: number;
+          text?: string;
+          imageBase64?: string;
+          mimeType?: string;
+          error?: string;
+        }[]
+      >;
     };
   }
 }
@@ -90,10 +99,15 @@ function formatBytes(size: number): string {
   return `${size}B`;
 }
 
-function attachmentChip(name: string, size?: number, onRemove?: () => void): HTMLElement {
+function attachmentChip(
+  name: string,
+  size?: number,
+  onRemove?: () => void,
+  kind: 'text' | 'image' = 'text'
+): HTMLElement {
   const chip = document.createElement('span');
   chip.className = 'attachment-chip';
-  const icon = document.createTextNode('📄 ');
+  const icon = document.createTextNode(kind === 'image' ? '🖼 ' : '📄 ');
   const fname = document.createElement('span');
   fname.className = 'fname';
   fname.textContent = name;
@@ -449,16 +463,22 @@ async function boot(): Promise<void> {
         const userBlock = block('turn you');
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
-        // 附件定界块解析回芯片；剩余部分才是正文
+        // 文本附件定界块解析回芯片；图片芯片来自事件元数据（像素在转录，不进账本）
         const names: string[] = [];
         const remainder = event.text.replace(ATTACHMENT_RE, (_whole, name: string) => {
           names.push(name);
           return '';
         });
-        if (names.length > 0) {
+        const imageMetas = event.attachments ?? [];
+        if (names.length > 0 || imageMetas.length > 0) {
           const files = document.createElement('div');
           files.className = 'attached-files';
           for (const name of names) files.appendChild(attachmentChip(name));
+          for (const meta of imageMetas) {
+            files.appendChild(
+              attachmentChip(meta.name ?? meta.mimeType, meta.bytes, undefined, 'image')
+            );
+          }
           bubble.appendChild(files);
         }
         bubble.append(remainder.trim());
@@ -1192,18 +1212,26 @@ async function boot(): Promise<void> {
   };
   accessChip.onclick = () => workspaceChip.click(); // composer 权限芯片=同一授予入口
 
-  // ── 附件：+ 选文件 → 芯片行 → 发送时定界内联 ────────────────
-  let pendingAttachments: { name: string; text: string; size: number }[] = [];
+  // ── 附件：+ 选文件 → 芯片行 → 文本定界内联 / 图片走 images ────
+  type PendingAttachment =
+    | { kind: 'text'; name: string; text: string; size: number }
+    | { kind: 'image'; name: string; data: string; mimeType: string; size: number };
+  let pendingAttachments: PendingAttachment[] = [];
 
   function renderAttachments(): void {
     attachmentsRow.innerHTML = '';
     attachmentsRow.hidden = pendingAttachments.length === 0;
     pendingAttachments.forEach((file, index) => {
       attachmentsRow.appendChild(
-        attachmentChip(file.name, file.size, () => {
-          pendingAttachments.splice(index, 1);
-          renderAttachments();
-        })
+        attachmentChip(
+          file.name,
+          file.size,
+          () => {
+            pendingAttachments.splice(index, 1);
+            renderAttachments();
+          },
+          file.kind
+        )
       );
     });
   }
@@ -1211,11 +1239,24 @@ async function boot(): Promise<void> {
   attachButton.onclick = async () => {
     const picked = await window.tachikoma.pickFiles();
     for (const file of picked) {
-      if (file.error || file.text === undefined) {
+      if (file.imageBase64 && file.mimeType) {
+        pendingAttachments.push({
+          kind: 'image',
+          name: file.name,
+          data: file.imageBase64,
+          mimeType: file.mimeType,
+          size: file.size,
+        });
+      } else if (file.text !== undefined && !file.error) {
+        pendingAttachments.push({
+          kind: 'text',
+          name: file.name,
+          text: file.text,
+          size: file.size,
+        });
+      } else {
         block('status-line error').textContent = `[附件] ${file.name}: ${file.error ?? '读取失败'}`;
-        continue;
       }
-      pendingAttachments.push({ name: file.name, text: file.text, size: file.size });
     }
     renderAttachments();
     input.focus();
@@ -1240,18 +1281,31 @@ async function boot(): Promise<void> {
   async function submit(): Promise<void> {
     const text = input.value.trim();
     if ((!text && pendingAttachments.length === 0) || !sessionId || generating) return;
-    // 附件以定界块内联在正文前：转录即事实源，气泡端按同一定界还原成芯片
-    const blocks = pendingAttachments.map(
-      (file) =>
-        `${ATTACHMENT_OPEN(file.name.replace(/["\n]/g, '_'))}\n${file.text}\n</tachikoma:attachment>`
-    );
-    const payload = [...blocks, text].filter(Boolean).join('\n\n');
+    // 文本附件以定界块内联在正文前（转录即事实源）；图片走 send 的 images 通道
+    const blocks = pendingAttachments
+      .filter((file): file is Extract<PendingAttachment, { kind: 'text' }> => file.kind === 'text')
+      .map(
+        (file) =>
+          `${ATTACHMENT_OPEN(file.name.replace(/["\n]/g, '_'))}\n${file.text}\n</tachikoma:attachment>`
+      );
+    const images = pendingAttachments
+      .filter(
+        (file): file is Extract<PendingAttachment, { kind: 'image' }> => file.kind === 'image'
+      )
+      .map((file) => ({ name: file.name, mimeType: file.mimeType, data: file.data }));
+    const payload =
+      [...blocks, text].filter(Boolean).join('\n\n') ||
+      (images.length > 0 ? '（请看附件图片）' : '');
     input.value = '';
     pendingAttachments = [];
     renderAttachments();
     autosizeInput();
     // 用户回合不本地回显：user_message 事件是唯一渲染来源（live 与重放一致）
-    const sent = await rpc('session.send', { sessionId, text: payload });
+    const sent = await rpc('session.send', {
+      sessionId,
+      text: payload,
+      ...(images.length > 0 ? { images } : {}),
+    });
     if (!sent.ok) {
       block('status-line error').textContent = `[error] ${sent.error.message}`;
     }

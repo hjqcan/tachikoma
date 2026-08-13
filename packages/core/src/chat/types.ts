@@ -68,8 +68,25 @@ export interface ChatSessionInit {
   toolset?: ChatToolset;
 }
 
+/** 图片附件：base64 原文随 send 进 pi（转录是像素的事实源；事件只留元数据） */
+export interface ChatImageAttachment {
+  name?: string;
+  mimeType: string;
+  /** base64（不带 data: 前缀） */
+  data: string;
+}
+
+/** 事件里的附件元数据：重放/回填靠它还原芯片，不搬运像素 */
+export interface ChatAttachmentMeta {
+  kind: 'image';
+  mimeType: string;
+  bytes: number;
+  name?: string;
+}
+
 export interface ChatSendOptions {
   signal?: AbortSignal;
+  images?: ChatImageAttachment[];
 }
 
 export type ChatMemoryStatus =
@@ -116,6 +133,8 @@ interface BaseChatEvent {
 export interface ChatUserMessageEvent extends BaseChatEvent {
   type: 'user_message';
   text: string;
+  /** 增量字段：图片附件元数据（像素在 pi 转录里） */
+  attachments?: ChatAttachmentMeta[];
 }
 
 export interface ChatMessageStartEvent extends BaseChatEvent {

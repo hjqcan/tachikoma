@@ -14,6 +14,7 @@ import type { ToolApprovalBridge } from './workspace-guard';
 import type {
   ChatCompactionResult,
   ChatEvent,
+  ChatImageAttachment,
   ChatMemorySnapshot,
   ChatMemoryStatus,
   ChatMessageCompleteEvent,
@@ -101,6 +102,12 @@ function textContent(message: AssistantMessage): string {
 
 function toModelRef(message: AssistantMessage): ChatModelRef {
   return { provider: message.provider, model: message.model };
+}
+
+/** base64 → 精确字节数（扣除 padding） */
+export function base64Bytes(data: string): number {
+  const padding = data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0;
+  return Math.max(0, (data.length / 4) * 3 - padding);
 }
 
 function deriveTitle(text: string): string {
@@ -230,12 +237,20 @@ export class ChatSession {
     const events = new EventQueue<ChatEvent>();
     this.activeTurnId = turnId;
     this.promptMemoryContext.abortRequested = false;
+    // 事件只带图片元数据；像素随 prompt 进 pi 转录
+    const attachments = (options.images ?? []).map((image) => ({
+      kind: 'image' as const,
+      mimeType: image.mimeType,
+      bytes: base64Bytes(image.data),
+      ...(image.name ? { name: image.name } : {}),
+    }));
     events.push({
       type: 'user_message',
       sessionId: this.id,
       turnId,
       timestamp: Date.now(),
       text,
+      ...(attachments.length > 0 ? { attachments } : {}),
     });
     events.push({
       type: 'message_start',
@@ -255,7 +270,7 @@ export class ChatSession {
       onAbort();
     }
 
-    const run = this.runTurn(text, turnId, messageId, events);
+    const run = this.runTurn(text, turnId, messageId, events, options.images);
     this.activeRun = run;
     try {
       for await (const event of events) {
@@ -387,7 +402,8 @@ export class ChatSession {
     text: string,
     turnId: string,
     messageId: string,
-    events: EventQueue<ChatEvent>
+    events: EventQueue<ChatEvent>,
+    images?: ChatImageAttachment[]
   ): Promise<void> {
     let finalMessage: AssistantMessage | undefined;
     let terminalSent = false;
@@ -412,6 +428,15 @@ export class ChatSession {
       await this.agentSession.prompt(text, {
         expandPromptTemplates: false,
         source: 'extension',
+        ...(images && images.length > 0
+          ? {
+              images: images.map((image) => ({
+                type: 'image' as const,
+                data: image.data,
+                mimeType: image.mimeType,
+              })),
+            }
+          : {}),
       });
       await this.agentSession.waitForIdle();
 

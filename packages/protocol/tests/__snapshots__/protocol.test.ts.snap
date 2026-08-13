@@ -8,6 +8,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       {
         "additionalProperties": false,
         "properties": {
+          "attachments": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "bytes": {
+                  "type": "number",
+                },
+                "kind": {
+                  "const": "image",
+                  "type": "string",
+                },
+                "mimeType": {
+                  "type": "string",
+                },
+                "name": {
+                  "type": "string",
+                },
+              },
+              "required": [
+                "kind",
+                "mimeType",
+                "bytes",
+              ],
+              "type": "object",
+            },
+            "type": "array",
+          },
           "sessionId": {
             "type": "string",
           },
@@ -2070,6 +2097,29 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
     "properties": {
+      "images": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "data": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "mimeType": {
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "mimeType",
+            "data",
+          ],
+          "type": "object",
+        },
+        "type": "array",
+      },
       "sessionId": {
         "type": "string",
       },
@@ -2264,6 +2314,33 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
           {
             "additionalProperties": false,
             "properties": {
+              "attachments": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "bytes": {
+                      "type": "number",
+                    },
+                    "kind": {
+                      "const": "image",
+                      "type": "string",
+                    },
+                    "mimeType": {
+                      "type": "string",
+                    },
+                    "name": {
+                      "type": "string",
+                    },
+                  },
+                  "required": [
+                    "kind",
+                    "mimeType",
+                    "bytes",
+                  ],
+                  "type": "object",
+                },
+                "type": "array",
+              },
               "sessionId": {
                 "type": "string",
               },

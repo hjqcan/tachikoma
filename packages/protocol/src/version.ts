@@ -17,6 +17,8 @@ export const CAPABILITIES = [
   'session-workspace',
   // memory.list/search/forget/clear 管理面 + memory_status 的 recalled 明细
   'memory-management',
+  // session.send 接受 images（base64）；user_message 事件携带附件元数据
+  'image-input',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

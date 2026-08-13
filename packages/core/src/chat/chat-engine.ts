@@ -14,7 +14,7 @@ import { mkdir, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
-import { ChatSession } from './chat-session';
+import { base64Bytes, ChatSession } from './chat-session';
 import type { ChatMemoryBinding } from './chat-session';
 import { createChatMemoryRuntime, projectMemoryBuckets } from './memory';
 import type { ChatMemoryRecord, ChatMemoryRuntime } from './memory';
@@ -231,14 +231,26 @@ export class ChatEngine {
     for (const [index, message] of context.messages.entries()) {
       if ('customType' in message) continue; // 扩展注入（记忆上下文等）不属于对话双方
       if (message.role === 'user') {
+        const parts = typeof message.content === 'string' ? [] : message.content;
         const text =
           typeof message.content === 'string'
             ? message.content
-            : message.content
+            : parts
                 .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
                 .map((part) => part.text)
                 .join('');
-        if (!text.trim()) continue;
+        // 图片只回填元数据：像素留在转录（事件账本不搬运二进制）
+        const attachments = parts
+          .filter(
+            (part): part is { type: 'image'; data: string; mimeType: string } =>
+              part.type === 'image'
+          )
+          .map((part) => ({
+            kind: 'image' as const,
+            mimeType: part.mimeType,
+            bytes: base64Bytes(part.data),
+          }));
+        if (!text.trim() && attachments.length === 0) continue;
         finishTurn();
         turn += 1;
         current = { turnId: `history-${turn}`, messageId: `history-m${index}`, content: '' };
@@ -248,6 +260,7 @@ export class ChatEngine {
           turnId: current.turnId,
           timestamp: message.timestamp,
           text,
+          ...(attachments.length > 0 ? { attachments } : {}),
         });
       } else if (message.role === 'assistant') {
         // 压缩后可能以助手消息开场：给它一个没有 user_message 的回合

@@ -71,6 +71,54 @@ describe('ChatSession', () => {
     }
   });
 
+  it('send 携带图片：pi 上下文收到 image part，user_message 只带元数据', async () => {
+    const harness = await createFauxHarness();
+    try {
+      let userContent = '';
+      harness.faux.setResponses([
+        (context) => {
+          userContent = JSON.stringify(context.messages.at(-1)?.content ?? '');
+          return fauxAssistantMessage('看到了');
+        },
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession();
+      const base64 = Buffer.from('fake-png-bytes').toString('base64');
+      const events = await collect(
+        session.send('这张图里是什么？', {
+          images: [{ name: 'lens.png', mimeType: 'image/png', data: base64 }],
+        })
+      );
+      expect(events[0]).toMatchObject({
+        type: 'user_message',
+        text: '这张图里是什么？',
+        attachments: [
+          {
+            kind: 'image',
+            mimeType: 'image/png',
+            name: 'lens.png',
+            bytes: 'fake-png-bytes'.length,
+          },
+        ],
+      });
+      // 像素进了 pi 的用户消息内容（转录是事实源），事件账本不搬运 base64
+      expect(userContent).toContain('"type":"image"');
+      expect(userContent).toContain(base64);
+      expect(JSON.stringify(events)).not.toContain(base64);
+      expect(terminal(events).status).toBe('success');
+      await session.close();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   it('lets pi retry transient failures without a second public terminal event', async () => {
     const harness = await createFauxHarness();
     try {

@@ -24,7 +24,13 @@ export interface ServerSessionPort {
   readonly activeTools: readonly string[];
   /** live 会话的工作区授予；null = 零工具 */
   readonly workspace: WorkspaceState | null;
-  send(text: string, options?: { signal?: AbortSignal }): AsyncGenerator<ChatEventWire>;
+  send(
+    text: string,
+    options?: {
+      signal?: AbortSignal;
+      images?: { name?: string | undefined; mimeType: string; data: string }[];
+    }
+  ): AsyncGenerator<ChatEventWire>;
   abort(): Promise<boolean>;
   respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   setModel(model: ModelRef): Promise<ModelRef>;
