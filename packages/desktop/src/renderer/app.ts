@@ -307,7 +307,7 @@ async function boot(): Promise<void> {
   function refreshInstrumentCluster(): void {
     if (grantedWorkspace) {
       workspaceChip.textContent = `⌂ ${basename(grantedWorkspace.root)} · ${
-        grantedWorkspace.toolset === 'coding' ? '编码' : '只读'
+        grantedWorkspace.toolset === 'coding' ? 'work' : 'chat'
       } · ${grantedWorkspace.tools.length} 工具`;
       workspaceChip.title = `${grantedWorkspace.root}\n${grantedWorkspace.tools.join(', ')}\n点击更换工作区`;
       workspaceChip.classList.add('granted');
@@ -654,7 +654,7 @@ async function boot(): Promise<void> {
     hint.className = 'hero-hint';
     const grantLine = grantedWorkspace
       ? `工作区 ${grantedWorkspace.root} · ${grantedWorkspace.tools.join(' / ')}`
-      : '零工具 · 点击下方「无工作区」选择目录，授予工具权限';
+      : '零工具 · 点击上方「无工作区」选择目录，授予工具权限';
     hint.append(grantLine, document.createElement('br'), 'Enter 发送 · Shift+Enter 换行');
     hero.append(lens, title, hint);
   }

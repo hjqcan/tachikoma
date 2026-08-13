@@ -133,6 +133,68 @@
           opacity: 0.25;
         }
       }
+      /* 头部授予面：工作区 + 模式（chat=只读四件套 / work=+写改执行，逐次审批） */
+      #workspace-chip {
+        font: 12px var(--mono);
+        color: var(--text-dim);
+        background: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 14px;
+        cursor: pointer;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #workspace-chip:hover {
+        border-color: var(--chassis);
+        color: var(--chassis);
+      }
+      #workspace-chip.granted {
+        color: var(--chassis);
+        border-color: var(--chassis-strong);
+      }
+      #toolset {
+        display: flex;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        overflow: hidden;
+        -webkit-app-region: no-drag;
+      }
+      #toolset button {
+        font: 12px var(--mono);
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        padding: 4px 13px;
+        cursor: pointer;
+      }
+      #toolset button:hover {
+        color: var(--chassis);
+      }
+      #toolset button.active {
+        background: var(--chassis-strong);
+        color: #fff;
+      }
+      #memory-toggle {
+        font: 12px var(--mono);
+        color: var(--text-dim);
+        background: none;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 14px;
+        cursor: pointer;
+      }
+      #memory-toggle:hover {
+        border-color: var(--oil);
+        color: var(--oil);
+      }
+      #memory-toggle[aria-pressed='true'] {
+        color: var(--oil);
+        border-color: color-mix(in srgb, var(--oil) 65%, transparent);
+        background: color-mix(in srgb, var(--oil) 10%, transparent);
+      }
       #sessions-toggle {
         font: 12px var(--human);
         color: var(--text-dim);
@@ -1015,25 +1077,7 @@
         display: flex;
         gap: 6px;
       }
-      #memory-toggle {
-        font: 12px var(--mono);
-        color: var(--text-dim);
-        background: none;
-        border: none;
-        border-radius: 7px;
-        padding: 4px 10px;
-        cursor: pointer;
-      }
-      #memory-toggle:hover {
-        color: var(--oil);
-        background: color-mix(in srgb, var(--oil) 10%, transparent);
-      }
-      #memory-toggle[aria-pressed='true'] {
-        color: var(--oil);
-        background: color-mix(in srgb, var(--oil) 12%, transparent);
-      }
-
-      /* ── 输入卡：一张完整的卡，机器的操作面都在这 ────── */
+      /* ── 输入卡：生成参数聚拢在说话的地方 ─────────────── */
       footer {
         flex: none;
         padding: 10px 18px 14px;
@@ -1089,9 +1133,6 @@
           color 0.15s ease,
           background-color 0.15s ease;
       }
-      #workspace-chip {
-        max-width: 22ch;
-      }
       #model-chip {
         max-width: 18ch;
       }
@@ -1102,18 +1143,6 @@
       .toolbar select:hover {
         color: var(--chassis);
         background: color-mix(in srgb, var(--chassis) 9%, transparent);
-      }
-      #workspace-chip.granted {
-        color: var(--chassis);
-      }
-      #toolset {
-        display: flex;
-        gap: 2px;
-        flex: none;
-      }
-      #toolset button.active {
-        color: var(--chassis);
-        background: color-mix(in srgb, var(--chassis) 14%, transparent);
       }
       /* 上下文用量仪表：>70% 转琥珀并给出压缩入口 */
       #ctx-gauge {
@@ -1291,7 +1320,15 @@
     <header>
       <span class="wordmark"><span class="lens"></span>TACHIKOMA</span>
       <button id="sessions-toggle" aria-pressed="true" title="会话列表（⌘B）">会话</button>
+      <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
+      <span id="toolset">
+        <button data-toolset="read-only" class="active" title="read / grep / find / ls（只读）">
+          chat
+        </button>
+        <button data-toolset="coding" title="加 write / edit / bash，逐次审批">work</button>
+      </span>
       <span class="spacer"></span>
+      <button id="memory-toggle" aria-pressed="false" title="记忆（⌘M）">记忆</button>
       <span id="status">connecting…</span>
     </header>
     <div id="shell">
@@ -1323,14 +1360,6 @@
           autofocus
         ></textarea>
         <div class="toolbar">
-          <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
-          <span id="toolset">
-            <button data-toolset="read-only" class="active" title="read / grep / find / ls">
-              只读
-            </button>
-            <button data-toolset="coding" title="加 write / edit / bash，逐次审批">编码</button>
-          </span>
-          <button id="memory-toggle" aria-pressed="false" title="记忆（⌘M）">记忆</button>
           <span class="spacer"></span>
           <span id="ctx-gauge" hidden title="上下文用量（上回合 tokens / 模型窗口）">
             <span class="bar"><span class="fill"></span></span>
