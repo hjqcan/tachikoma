@@ -9,24 +9,25 @@
     <title>Tachikoma</title>
     <style>
       /*
-       * Tachikoma 视觉系统 —— 颜色即语义：
+       * Tachikoma 视觉系统 v2 —— 颜色即语义：
        *   底盘蓝 = 机器的声音与工具动作；传感红 = 机器请求对世界动手（仅审批）；
-       *   机油琥珀 = 记忆事件。红色从不用作装饰。
+       *   机油琥珀 = 记忆。红色从不用作装饰。
        * 机器说话用等宽字，人类用人文无衬线 —— 声音的边界就是审批守住的边界。
-       * 签名元素：传感镜头（wordmark 的圆点）——空闲静止、生成中底盘蓝呼吸、
-       * 待审批传感红脉动。一个母题，三个语义态。
+       * 表面语言：层级靠底色深浅与留白，不靠描边——边框只留给真正的边界。
+       * 信息架构：顶栏只留身份与线程；机器的操作面（工作区/工具/记忆/模型）
+       * 全部收进输入卡的工具条。签名元素仍是传感镜头（状态灯三态）。
        */
       :root {
         color-scheme: dark;
-        --ground: #171a21;
-        --well: #12151b;
-        --surface: #1f242e;
-        --raised: #262c39;
-        --line: #303747;
-        --line-soft: #272d3a;
-        --text: #e4e8f1;
-        --text-dim: #8b93a7;
-        --text-faint: #5c6478;
+        --ground: #15181f;
+        --well: #10131a;
+        --surface: #1d222c;
+        --raised: #252c39;
+        --line: #2d3444;
+        --line-soft: #262d3b;
+        --text: #e6e9f2;
+        --text-dim: #99a1b5;
+        --text-faint: #5e6679;
         --chassis: #8fa8e8;
         --chassis-strong: #5b79d6;
         --sensor: #e8524a;
@@ -70,6 +71,7 @@
         overflow: hidden;
       }
       button {
+        font: inherit;
         transition:
           color 0.15s ease,
           background-color 0.15s ease,
@@ -77,24 +79,23 @@
           opacity 0.15s ease;
       }
 
-      /* ── 仪表条（hiddenInset 标题栏的拖拽区） ─────────────── */
+      /* ── 仪表条：只留身份与状态（hiddenInset 拖拽区） ────── */
       header {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 14px;
         padding: 0 16px;
-        height: 46px;
+        height: 44px;
         flex: none;
-        border-bottom: 1px solid var(--line);
-        background: var(--surface);
+        background: var(--ground);
+        border-bottom: 1px solid var(--line-soft);
         user-select: none;
         -webkit-app-region: drag;
       }
       body.mac header {
         padding-left: 84px; /* macOS 红绿灯 */
       }
-      header button,
-      header select {
+      header button {
         -webkit-app-region: no-drag;
       }
       .wordmark {
@@ -102,7 +103,7 @@
         align-items: center;
         gap: 9px;
         font: 600 12px var(--human);
-        letter-spacing: 0.32em;
+        letter-spacing: 0.3em;
         color: var(--chassis);
       }
       /* 传感镜头：签名状态灯 */
@@ -127,79 +128,51 @@
           box-shadow: 0 0 0 5px color-mix(in srgb, var(--chassis) 14%, transparent);
         }
       }
-      #workspace-chip,
+      @keyframes pulse {
+        50% {
+          opacity: 0.25;
+        }
+      }
       #sessions-toggle {
-        font: 12px var(--mono);
+        font: 12px var(--human);
         color: var(--text-dim);
         background: none;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 4px 14px;
+        border: none;
+        border-radius: 7px;
+        padding: 5px 10px;
         cursor: pointer;
-        max-width: 340px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
-      #workspace-chip:hover,
       #sessions-toggle:hover {
-        border-color: var(--chassis);
         color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 9%, transparent);
       }
       #sessions-toggle[aria-pressed='true'] {
         color: var(--chassis);
-        border-color: var(--chassis-strong);
-        background: color-mix(in srgb, var(--chassis) 10%, transparent);
-      }
-      #workspace-chip.granted {
-        color: var(--chassis);
-        border-color: var(--chassis-strong);
-      }
-      #toolset {
-        display: flex;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        overflow: hidden;
-        -webkit-app-region: no-drag;
-      }
-      #toolset button {
-        font: 12px var(--mono);
-        background: none;
-        border: none;
-        color: var(--text-dim);
-        padding: 4px 12px;
-        cursor: pointer;
-      }
-      #toolset button:hover {
-        color: var(--chassis);
-      }
-      #toolset button.active {
-        background: var(--chassis-strong);
-        color: #fff;
       }
       .spacer {
         flex: 1;
       }
       #status {
-        font: 11px var(--mono);
+        font: 10px var(--mono);
         color: var(--text-faint);
         text-align: right;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        -webkit-app-region: drag;
       }
 
-      /* ── 主体：会话栏 + 对话日志 ─────────────────────── */
+      /* ── 主体：会话栏 + 时间线 + 记忆抽屉 ─────────────── */
       #shell {
         flex: 1;
         display: flex;
         overflow: hidden;
+        position: relative;
       }
       #sessions {
-        width: 272px;
+        width: 264px;
         flex: none;
-        border-right: 1px solid var(--line);
-        background: var(--surface);
+        background: var(--well);
         display: flex;
         flex-direction: column;
       }
@@ -210,59 +183,49 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
-        padding: 12px;
-        border-bottom: 1px solid var(--line-soft);
+        padding: 12px 12px 10px;
+      }
+      #new-session {
+        width: 100%;
+        font: 600 12px var(--human);
+        background: var(--raised);
+        color: var(--chassis);
+        border: none;
+        border-radius: 8px;
+        padding: 8px 0;
+        cursor: pointer;
+      }
+      #new-session:hover {
+        background: color-mix(in srgb, var(--chassis) 16%, var(--raised));
       }
       #session-filter {
         font: 11px var(--mono);
         color: var(--text);
         background: var(--ground);
-        border: 1px solid var(--line-soft);
-        border-radius: 6px;
-        padding: 4px 10px;
+        border: none;
+        border-radius: 7px;
+        padding: 6px 10px;
         outline: none;
-        transition: border-color 0.15s ease;
       }
       #session-filter:focus {
-        border-color: var(--chassis-strong);
+        box-shadow: 0 0 0 1px var(--chassis-strong) inset;
       }
       #session-filter::placeholder {
         color: var(--text-faint);
       }
-      .session-title input {
-        font: 13px var(--human);
-        color: var(--text);
-        background: var(--ground);
-        border: 1px solid var(--chassis-strong);
-        border-radius: 4px;
-        padding: 1px 6px;
-        outline: none;
-        width: 100%;
-      }
-      #new-session {
-        width: 100%;
-        font: 600 12px var(--human);
-        background: none;
-        color: var(--chassis);
-        border: 1px solid var(--chassis-strong);
-        border-radius: 7px;
-        padding: 7px 0;
-        cursor: pointer;
-      }
-      #new-session:hover {
-        background: color-mix(in srgb, var(--chassis) 12%, transparent);
-      }
       #session-list {
         flex: 1;
         overflow-y: auto;
-        padding: 4px 0;
+        padding: 2px 8px 10px;
       }
       .session-row {
         position: relative;
-        margin: 1px 6px;
-        padding: 8px 30px 8px 10px;
-        border-left: 2px solid transparent;
-        border-radius: 7px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 1px 0;
+        padding: 7px 10px;
+        border-radius: 8px;
         cursor: pointer;
         transition: background-color 0.15s ease;
       }
@@ -270,18 +233,74 @@
         background: color-mix(in srgb, var(--chassis) 8%, transparent);
       }
       .session-row.current {
-        border-left-color: var(--chassis-strong);
-        background: color-mix(in srgb, var(--chassis) 10%, transparent);
+        background: color-mix(in srgb, var(--chassis) 13%, transparent);
       }
       .session-row.current .session-title {
         color: var(--chassis);
       }
-      /* 后台会话状态点：生成中呼吸、完成未读常亮（悬停时让位给垃圾桶） */
+      .session-title {
+        flex: 1;
+        min-width: 0;
+        font: 13px var(--human);
+        color: var(--text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .session-title input {
+        font: 13px var(--human);
+        color: var(--text);
+        background: var(--ground);
+        border: 1px solid var(--chassis-strong);
+        border-radius: 5px;
+        padding: 1px 6px;
+        outline: none;
+        width: 100%;
+      }
+      .session-meta {
+        flex: none;
+        font: 10px var(--mono);
+        color: var(--text-faint);
+      }
+      .session-row:hover .session-meta {
+        visibility: hidden; /* 悬停让位给垃圾桶 */
+      }
+      .session-row .confirm-bar {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        padding: 0 8px;
+        background: var(--raised);
+        border-radius: 8px;
+      }
+      .confirm-bar button {
+        font: 600 11px var(--human);
+        border-radius: 6px;
+        padding: 3px 10px;
+        cursor: pointer;
+        border: none;
+      }
+      .confirm-bar .yes {
+        background: var(--sensor-deep);
+        color: #fff;
+      }
+      .confirm-bar .yes:hover {
+        background: var(--sensor);
+      }
+      .confirm-bar .no {
+        background: none;
+        color: var(--text-dim);
+      }
+      .confirm-bar .no:hover {
+        color: var(--text);
+      }
+      /* 后台会话状态点：生成中呼吸、完成未读常亮 */
       .session-row .state-dot {
         display: none;
-        position: absolute;
-        right: 11px;
-        top: 13px;
+        flex: none;
         width: 7px;
         height: 7px;
         border-radius: 50%;
@@ -294,13 +313,11 @@
       .session-row.unread .state-dot {
         display: block;
       }
-      .session-row:hover .state-dot {
-        display: none;
-      }
       .session-row .del {
         position: absolute;
         right: 6px;
-        top: 8px;
+        top: 50%;
+        transform: translateY(-50%);
         display: flex;
         background: none;
         border: none;
@@ -308,7 +325,7 @@
         cursor: pointer;
         opacity: 0;
         padding: 5px;
-        border-radius: 5px;
+        border-radius: 6px;
       }
       .session-row:hover .del,
       .session-row .del:focus-visible {
@@ -318,265 +335,25 @@
         opacity: 1;
         background: color-mix(in srgb, var(--sensor) 14%, transparent);
       }
-      .session-row .confirm-bar {
-        display: flex;
-        gap: 6px;
-        margin-top: 6px;
-      }
-      .confirm-bar button {
-        font: 600 11px var(--human);
-        border-radius: 5px;
-        padding: 3px 10px;
-        cursor: pointer;
-        border: 1px solid transparent;
-      }
-      .confirm-bar .yes {
-        background: var(--sensor-deep);
-        color: #fff;
-      }
-      .confirm-bar .yes:hover {
-        background: var(--sensor);
-      }
-      .confirm-bar .no {
-        background: none;
-        border-color: var(--line);
-        color: var(--text-dim);
-      }
-      .confirm-bar .no:hover {
-        border-color: var(--text-dim);
-        color: var(--text);
-      }
-      .session-title {
-        font: 13px var(--human);
-        color: var(--text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .session-meta {
-        font: 10px var(--mono);
-        color: var(--text-faint);
-        margin-top: 3px;
-      }
 
-      /* ── 记忆抽屉：机油琥珀——机器的长期记忆可见、可管理 ── */
-      #memory-toggle {
-        font: 12px var(--mono);
-        color: var(--text-dim);
-        background: none;
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 4px 14px;
-        cursor: pointer;
-      }
-      #memory-toggle:hover {
-        border-color: var(--oil);
-        color: var(--oil);
-      }
-      #memory-toggle[aria-pressed='true'] {
-        color: var(--oil);
-        border-color: color-mix(in srgb, var(--oil) 65%, transparent);
-        background: color-mix(in srgb, var(--oil) 10%, transparent);
-      }
-      #memory {
-        width: 300px;
-        flex: none;
-        border-left: 1px solid var(--line);
-        background: var(--surface);
-        display: flex;
-        flex-direction: column;
-      }
-      #memory[hidden] {
-        display: none;
-      }
-      .memory-head {
-        padding: 12px;
-        border-bottom: 1px solid var(--line-soft);
-      }
-      #memory-search {
-        width: 100%;
-        font: 11px var(--mono);
-        color: var(--text);
-        background: var(--ground);
-        border: 1px solid var(--line-soft);
-        border-radius: 6px;
-        padding: 5px 10px;
-        outline: none;
-        transition: border-color 0.15s ease;
-      }
-      #memory-search:focus {
-        border-color: var(--oil);
-      }
-      #memory-search::placeholder {
-        color: var(--text-faint);
-      }
-      #memory-list {
-        flex: 1;
-        overflow-y: auto;
-        padding: 4px 0 8px;
-      }
-      .memory-group {
-        font: 600 10px var(--human);
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: color-mix(in srgb, var(--oil) 75%, var(--text-dim));
-        padding: 12px 14px 4px;
-      }
-      .memory-row {
-        position: relative;
-        margin: 1px 6px;
-        padding: 7px 30px 7px 10px;
-        border-left: 2px solid color-mix(in srgb, var(--oil) 40%, transparent);
-        border-radius: 6px;
-        transition: background-color 0.15s ease;
-      }
-      .memory-row:hover {
-        background: color-mix(in srgb, var(--oil) 7%, transparent);
-      }
-      .memory-row .content {
-        font: 12px/1.5 var(--human);
-        color: var(--text);
-        display: -webkit-box;
-        -webkit-line-clamp: 3;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        word-break: break-word;
-      }
-      .memory-row .meta {
-        font: 10px var(--mono);
-        color: var(--text-faint);
-        margin-top: 3px;
-      }
-      .memory-row .del {
-        position: absolute;
-        right: 6px;
-        top: 7px;
-        display: flex;
-        background: none;
-        border: none;
-        color: var(--sensor);
-        cursor: pointer;
-        opacity: 0;
-        padding: 4px;
-        border-radius: 5px;
-      }
-      .memory-row:hover .del,
-      .memory-row .del:focus-visible {
-        opacity: 0.75;
-      }
-      .memory-row .del:hover {
-        opacity: 1;
-        background: color-mix(in srgb, var(--sensor) 14%, transparent);
-      }
-      .memory-empty {
-        font: 11px var(--mono);
-        color: var(--text-faint);
-        text-align: center;
-        padding: 28px 14px;
-      }
-      .memory-foot {
-        border-top: 1px solid var(--line-soft);
-        padding: 8px 12px;
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-      #memory-clear {
-        font: 11px var(--human);
-        color: var(--text-faint);
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px 4px;
-      }
-      #memory-clear:hover {
-        color: var(--sensor);
-      }
-      .memory-foot .confirm-bar {
-        display: flex;
-        gap: 6px;
-      }
-
-      /* 时间线里的召回行：琥珀，可展开命中明细 */
-      details.recall {
-        margin: 8px auto;
-      }
-      details.recall summary {
-        font: 11px var(--mono);
-        color: var(--oil);
-        cursor: pointer;
-        list-style: none;
-      }
-      details.recall summary::before {
-        content: '⟡ ';
-      }
-      details.recall .hit {
-        font: 11px/1.55 var(--mono);
-        color: var(--text-dim);
-        border-left: 1px solid color-mix(in srgb, var(--oil) 45%, transparent);
-        padding-left: 12px;
-        margin: 6px 0 0 2px;
-      }
-      details.recall .hit .kind {
-        color: var(--oil);
-        margin-right: 8px;
-      }
-
-      /* ── 对话日志 ───────────────────────────────────── */
+      /* ── 时间线 ─────────────────────────────────────── */
       #log {
         flex: 1;
         overflow-y: auto;
-        padding: 26px 0 44px;
-        scroll-padding-bottom: 44px;
+        padding: 30px 0 40px;
+        scroll-behavior: smooth;
       }
       #log > * {
-        max-width: 76ch;
+        max-width: 78ch;
         margin-left: auto;
         margin-right: auto;
-        padding-left: 28px;
-        padding-right: 28px;
+        padding-left: 32px;
+        padding-right: 32px;
       }
       .turn {
-        margin-bottom: 28px;
+        margin-bottom: 30px;
         animation: rise 0.18s ease-out;
         position: relative;
-      }
-      /* 机器回合 hover 复制原文；代码块右上角复制 */
-      .copy-turn,
-      .code-copy {
-        font: 10px var(--mono);
-        color: var(--text-faint);
-        background: var(--surface);
-        border: 1px solid var(--line-soft);
-        border-radius: 5px;
-        padding: 2px 8px;
-        cursor: pointer;
-        opacity: 0;
-      }
-      .copy-turn {
-        position: absolute;
-        top: -2px;
-        right: 28px;
-      }
-      .turn.machine:hover .copy-turn,
-      .copy-turn:focus-visible {
-        opacity: 1;
-      }
-      .copy-turn:hover,
-      .code-copy:hover {
-        color: var(--chassis);
-        border-color: var(--chassis);
-      }
-      .body pre.code {
-        position: relative;
-      }
-      .body pre.code:hover .code-copy {
-        opacity: 1;
-      }
-      .code-copy {
-        position: absolute;
-        top: 6px;
-        right: 6px;
       }
       @keyframes rise {
         from {
@@ -584,27 +361,45 @@
           transform: translateY(3px);
         }
       }
-      .role {
-        font: 600 10px var(--human);
-        letter-spacing: 0.24em;
-        text-transform: uppercase;
-        color: var(--text-faint);
-        margin-bottom: 7px;
+      /* 人的声音：右侧气泡 */
+      .turn.you {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 24px;
       }
-      .turn.machine .role {
-        color: var(--chassis);
-      }
-      .turn.you .body {
+      .turn.you .bubble {
+        max-width: 86%;
+        background: color-mix(in srgb, var(--chassis-strong) 22%, var(--surface));
+        border-radius: 14px 14px 4px 14px;
+        padding: 9px 14px;
         white-space: pre-wrap;
-        color: var(--text);
+        word-break: break-word;
+      }
+      /* 机器的声音：左侧正文，等宽 */
+      .turn.machine .role {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font: 600 9px var(--human);
+        letter-spacing: 0.26em;
+        text-transform: uppercase;
+        color: color-mix(in srgb, var(--chassis) 70%, transparent);
+        margin-bottom: 9px;
+      }
+      .turn.machine .role::before {
+        content: '';
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--chassis) 55%, transparent);
       }
       .turn.machine .body {
-        font: 13px/1.75 var(--mono);
+        font: 13px/1.8 var(--mono);
       }
 
-      /* 机器声音里的 Markdown：等宽为底，结构轻起伏 */
+      /* 机器声音里的 Markdown */
       .body .md-p {
-        margin: 0 0 10px;
+        margin: 0 0 11px;
         white-space: pre-wrap;
       }
       .body > :last-child {
@@ -613,7 +408,7 @@
       .body .md-h {
         font-weight: 700;
         color: var(--text);
-        margin: 16px 0 8px;
+        margin: 18px 0 9px;
       }
       .body .md-h1 {
         font-size: 15px;
@@ -630,11 +425,11 @@
       }
       .body ul,
       .body ol {
-        margin: 0 0 10px;
+        margin: 0 0 11px;
         padding-left: 22px;
       }
       .body li {
-        margin: 3px 0;
+        margin: 4px 0;
       }
       .body li::marker {
         color: var(--text-faint);
@@ -648,11 +443,11 @@
       }
       .body pre.code {
         margin: 0 0 12px;
-        padding: 10px 12px;
+        padding: 11px 13px;
         background: var(--well);
-        border: 1px solid var(--line-soft);
-        border-radius: 8px;
+        border-radius: 10px;
         overflow-x: auto;
+        position: relative;
       }
       .body pre.code code {
         background: none;
@@ -662,7 +457,7 @@
         white-space: pre;
       }
       .body blockquote {
-        margin: 0 0 10px;
+        margin: 0 0 11px;
         padding: 2px 0 2px 12px;
         border-left: 2px solid var(--line);
         color: var(--text-dim);
@@ -688,8 +483,42 @@
         font-weight: 700;
       }
 
+      /* 复制：机器回合 hover / 代码块右上角 */
+      .copy-turn,
+      .code-copy {
+        font: 10px var(--mono);
+        color: var(--text-faint);
+        background: var(--raised);
+        border: none;
+        border-radius: 6px;
+        padding: 3px 9px;
+        cursor: pointer;
+        opacity: 0;
+      }
+      .copy-turn {
+        position: absolute;
+        top: -4px;
+        right: 32px;
+      }
+      .turn.machine:hover .copy-turn,
+      .copy-turn:focus-visible {
+        opacity: 1;
+      }
+      .copy-turn:hover,
+      .code-copy:hover {
+        color: var(--chassis);
+      }
+      .code-copy {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+      }
+      .body pre.code:hover .code-copy {
+        opacity: 1;
+      }
+
       details.thinking {
-        margin: 4px 0 10px;
+        margin: 2px 0 10px;
       }
       details.thinking summary {
         font: 11px var(--mono);
@@ -718,9 +547,9 @@
         white-space: pre-wrap;
       }
 
-      /* ── 空状态：机器就绪，等待第一句话 ───────────────── */
+      /* ── 空状态 ─────────────────────────────────────── */
       .hero {
-        margin-top: 16vh;
+        margin-top: 17vh;
         text-align: center;
         animation: rise 0.3s ease-out;
       }
@@ -749,129 +578,90 @@
         color: var(--text-faint);
       }
 
-      /* ── 工具遥测：底盘蓝左轨 ───────────────────────── */
-      .tool {
-        border-left: 2px solid var(--chassis-strong);
-        padding: 2px 0 2px 14px;
-        margin: 10px auto;
-        font: 12px var(--mono);
-        color: var(--text-dim);
+      /* ── 工具遥测：单行状态芯片，可展开（底盘蓝左轨） ── */
+      details.tool {
+        margin: 8px auto;
       }
-      .tool .head {
+      details.tool summary {
         display: flex;
         align-items: baseline;
-        gap: 8px;
-        min-width: 0;
+        gap: 10px;
+        list-style: none;
+        cursor: pointer;
+        font: 12px var(--mono);
+        background: var(--surface);
+        border-left: 2px solid var(--chassis-strong);
+        border-radius: 9px;
+        padding: 7px 12px;
+        transition: background-color 0.15s ease;
       }
-      .tool .head .name {
+      details.tool summary:hover {
+        background: var(--raised);
+      }
+      details.tool summary .name {
         color: var(--chassis);
-        background: color-mix(in srgb, var(--chassis) 10%, transparent);
-        border-radius: 4px;
-        padding: 0 6px;
         flex: none;
       }
-      .tool .head .args {
+      details.tool summary .args {
         color: var(--text-faint);
+        flex: 1;
+        min-width: 0;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .tool .head .verdict {
+      details.tool summary .verdict {
         color: var(--text-dim);
         flex: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 40%;
       }
-      .tool .head .verdict.err {
+      details.tool summary .verdict.run {
+        color: var(--chassis);
+        animation: pulse 1.4s ease-in-out infinite;
+      }
+      details.tool summary .verdict.err {
         color: var(--sensor);
       }
-      .tool pre {
+      details.tool summary .dur {
+        color: var(--text-faint);
+        font-size: 10px;
+        flex: none;
+      }
+      details.tool summary .chev {
+        color: var(--text-faint);
+        font-size: 10px;
+        flex: none;
+        transition: transform 0.15s ease;
+      }
+      details[open].tool summary .chev {
+        transform: rotate(180deg);
+      }
+      details.tool pre {
         margin: 6px 0 2px;
-        padding: 8px 10px;
+        padding: 9px 12px;
         background: var(--well);
-        border: 1px solid var(--line-soft);
-        border-radius: 6px;
-        max-height: 200px;
+        border-radius: 9px;
+        max-height: 240px;
         overflow: auto;
         font: 11px/1.55 var(--mono);
         color: var(--text);
         white-space: pre-wrap;
         word-break: break-all;
-        cursor: pointer;
       }
-      .tool pre.expanded {
-        max-height: none;
-      }
-
-      /* 回合收口卡：这一回合机器改了哪些文件（底盘蓝，工具动作的总账） */
-      details.changes {
-        border: 1px solid var(--line);
-        border-left: 3px solid var(--chassis-strong);
-        border-radius: 8px;
-        background: var(--surface);
-        padding: 10px 14px;
-        margin: 12px auto;
-      }
-      details.changes summary {
-        font: 600 12px var(--human);
-        color: var(--chassis);
-        cursor: pointer;
-        list-style: none;
-      }
-      details.changes .change {
-        margin-top: 10px;
-      }
-      details.changes .change-head {
-        font: 11px var(--mono);
-        color: var(--text-dim);
-        margin-bottom: 4px;
-      }
-      details.changes pre {
-        font: 11px/1.55 var(--mono);
-        background: var(--well);
-        border-radius: 6px;
-        padding: 8px 10px;
-        max-height: 180px;
-        overflow: auto;
-        white-space: pre-wrap;
-        word-break: break-all;
-        margin: 6px 0;
-      }
-      details.changes pre.diff-old {
-        border-left: 2px solid var(--line);
-        color: var(--text-dim);
-        margin-bottom: 4px;
-      }
-      details.changes pre.diff-old::before,
-      details.changes pre.diff-new::before {
-        display: block;
-        font-size: 10px;
-        letter-spacing: 0.18em;
-        margin-bottom: 4px;
-      }
-      details.changes pre.diff-old::before {
-        content: '− 旧';
-        color: var(--text-dim);
-      }
-      details.changes pre.diff-new {
-        border-left: 2px solid var(--chassis-strong);
-        margin-top: 0;
-      }
-      details.changes pre.diff-new::before {
-        content: '+ 新';
-        color: var(--chassis);
-      }
-      details.changes .path {
-        font: 11px var(--mono);
-        color: var(--text-dim);
+      details.tool pre:empty {
+        display: none;
       }
 
       /* ── 审批卡：传感红，机器在等你 ─────────────────── */
       .approval {
-        border: 1px solid var(--sensor-deep);
-        border-left-width: 3px;
-        border-radius: 8px;
-        padding: 12px 16px;
+        border-left: 3px solid var(--sensor-deep);
+        border-radius: 12px;
+        padding: 13px 16px;
         margin: 14px auto;
-        background: color-mix(in srgb, var(--sensor) 6%, var(--surface));
+        background: color-mix(in srgb, var(--sensor) 7%, var(--surface));
       }
       .approval .ask {
         display: flex;
@@ -887,13 +677,8 @@
         flex: none;
         animation: pulse 1.2s ease-in-out infinite;
       }
-      @keyframes pulse {
-        50% {
-          opacity: 0.25;
-        }
-      }
       .approval.resolved {
-        border-color: var(--line);
+        border-left-color: var(--line);
         background: var(--surface);
       }
       .approval.resolved .eye {
@@ -907,8 +692,8 @@
       .approval pre {
         font: 11px/1.55 var(--mono);
         background: var(--well);
-        border-radius: 6px;
-        padding: 8px 10px;
+        border-radius: 8px;
+        padding: 9px 11px;
         max-height: 220px;
         overflow: auto;
         white-space: pre-wrap;
@@ -920,27 +705,33 @@
         color: var(--text-dim);
         margin-top: 8px;
       }
-      .approval pre.diff-old {
+      .approval pre.diff-old,
+      details.changes pre.diff-old {
         border-left: 2px solid var(--line);
         color: var(--text-dim);
         margin-bottom: 4px;
       }
       .approval pre.diff-old::before,
-      .approval pre.diff-new::before {
+      .approval pre.diff-new::before,
+      details.changes pre.diff-old::before,
+      details.changes pre.diff-new::before {
         display: block;
         font-size: 10px;
         letter-spacing: 0.18em;
         margin-bottom: 4px;
       }
-      .approval pre.diff-old::before {
+      .approval pre.diff-old::before,
+      details.changes pre.diff-old::before {
         content: '− 旧';
         color: var(--text-dim);
       }
-      .approval pre.diff-new {
+      .approval pre.diff-new,
+      details.changes pre.diff-new {
         border-left: 2px solid var(--chassis-strong);
         margin-top: 0;
       }
-      .approval pre.diff-new::before {
+      .approval pre.diff-new::before,
+      details.changes pre.diff-new::before {
         content: '+ 新';
         color: var(--chassis);
       }
@@ -952,10 +743,10 @@
       }
       .approval button {
         font: 600 12px var(--human);
-        border-radius: 6px;
+        border-radius: 8px;
         padding: 6px 18px;
         cursor: pointer;
-        border: 1px solid transparent;
+        border: none;
       }
       .approval button.approve {
         background: var(--sensor-deep);
@@ -965,12 +756,11 @@
         background: var(--sensor);
       }
       .approval button.deny {
-        background: none;
-        border-color: var(--line);
+        background: var(--raised);
         color: var(--text);
       }
       .approval button.deny:hover {
-        border-color: var(--text-dim);
+        background: color-mix(in srgb, var(--text-faint) 25%, var(--raised));
       }
       .approval .verdict-line {
         font: 12px var(--mono);
@@ -978,7 +768,58 @@
         margin-top: 8px;
       }
 
-      /* ── 状态与分隔 ─────────────────────────────────── */
+      /* ── 回合收口卡：这一回合改了什么（含行数账） ────── */
+      details.changes {
+        background: var(--surface);
+        border-left: 2px solid var(--chassis-strong);
+        border-radius: 9px;
+        padding: 8px 12px;
+        margin: 10px auto;
+      }
+      details.changes summary {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        font: 12px var(--mono);
+        color: var(--chassis);
+        cursor: pointer;
+        list-style: none;
+      }
+      details.changes summary .delta {
+        color: var(--text-faint);
+        font-size: 11px;
+      }
+      details.changes summary .delta .plus {
+        color: #7fbf7f;
+      }
+      details.changes summary .delta .minus {
+        color: var(--sensor);
+      }
+      details.changes .change {
+        margin-top: 10px;
+      }
+      details.changes .change-head {
+        font: 11px var(--mono);
+        color: var(--text-dim);
+        margin-bottom: 4px;
+      }
+      details.changes pre {
+        font: 11px/1.55 var(--mono);
+        background: var(--well);
+        border-radius: 8px;
+        padding: 8px 10px;
+        max-height: 180px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+        margin: 6px 0;
+      }
+      details.changes .path {
+        font: 11px var(--mono);
+        color: var(--text-dim);
+      }
+
+      /* ── 状态行 / 分隔线 / 召回行 ───────────────────── */
       .status-line {
         font: 11px var(--mono);
         color: var(--text-dim);
@@ -994,9 +835,9 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        font: 11px var(--mono);
+        font: 10px var(--mono);
         color: var(--text-faint);
-        margin: 22px auto;
+        margin: 20px auto;
         white-space: nowrap;
       }
       .session-divider::before,
@@ -1006,103 +847,274 @@
         border-top: 1px solid var(--line-soft);
         min-width: 24px;
       }
-
-      /* ── 输入区：人类的材质 ─────────────────────────── */
-      footer {
-        flex: none;
-        padding: 12px 18px 12px;
-        border-top: 1px solid var(--line);
-        background: var(--surface);
+      details.recall {
+        margin: 8px auto;
       }
-      footer .inner {
+      details.recall summary {
+        font: 11px var(--mono);
+        color: var(--oil);
+        cursor: pointer;
+        list-style: none;
+      }
+      details.recall summary::before {
+        content: '⟡ ';
+      }
+      details.recall .hit {
+        font: 11px/1.55 var(--mono);
+        color: var(--text-dim);
+        border-left: 1px solid color-mix(in srgb, var(--oil) 45%, transparent);
+        padding-left: 12px;
+        margin: 6px 0 0 2px;
+      }
+      details.recall .hit .kind {
+        color: var(--oil);
+        margin-right: 8px;
+      }
+
+      /* ── 滚到底：悬浮镜头按钮 ───────────────────────── */
+      #to-bottom {
+        position: absolute;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        border: none;
+        background: var(--raised);
+        color: var(--text-dim);
+        font: 14px var(--human);
+        cursor: pointer;
+        box-shadow: 0 6px 18px #0007;
+        z-index: 5;
+      }
+      #to-bottom:hover {
+        color: var(--chassis);
+      }
+      #to-bottom[hidden] {
+        display: none;
+      }
+
+      /* ── 记忆抽屉：机油琥珀 ─────────────────────────── */
+      #memory {
+        width: 300px;
+        flex: none;
+        background: var(--well);
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        max-width: 76ch;
-        margin: 0 auto;
-        padding: 0 10px;
       }
-      footer .compose {
-        display: flex;
-        gap: 10px;
-        align-items: flex-end;
+      #memory[hidden] {
+        display: none;
       }
-      #input {
-        flex: 1;
-        font: 14px/1.55 var(--human);
+      .memory-head {
+        padding: 12px 12px 10px;
+      }
+      #memory-search {
+        width: 100%;
+        font: 11px var(--mono);
         color: var(--text);
         background: var(--ground);
-        border: 1px solid var(--line);
-        border-radius: 9px;
-        padding: 9px 12px;
+        border: none;
+        border-radius: 7px;
+        padding: 6px 10px;
         outline: none;
-        resize: none;
-        max-height: 168px;
+      }
+      #memory-search:focus {
+        box-shadow: 0 0 0 1px var(--oil) inset;
+      }
+      #memory-search::placeholder {
+        color: var(--text-faint);
+      }
+      #memory-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 2px 8px 8px;
+      }
+      .memory-group {
+        font: 600 10px var(--human);
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: color-mix(in srgb, var(--oil) 75%, var(--text-dim));
+        padding: 12px 8px 4px;
+      }
+      .memory-row {
+        position: relative;
+        margin: 1px 0;
+        padding: 7px 30px 7px 10px;
+        border-left: 2px solid color-mix(in srgb, var(--oil) 40%, transparent);
+        border-radius: 7px;
+        transition: background-color 0.15s ease;
+      }
+      .memory-row:hover {
+        background: color-mix(in srgb, var(--oil) 7%, transparent);
+      }
+      .memory-row .content {
+        font: 12px/1.5 var(--human);
+        color: var(--text);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        word-break: break-word;
+      }
+      .memory-row .meta {
+        font: 10px var(--mono);
+        color: var(--text-faint);
+        margin-top: 3px;
+      }
+      .memory-row .del {
+        position: absolute;
+        right: 4px;
+        top: 6px;
+        display: flex;
+        background: none;
+        border: none;
+        color: var(--sensor);
+        cursor: pointer;
+        opacity: 0;
+        padding: 4px;
+        border-radius: 6px;
+      }
+      .memory-row:hover .del,
+      .memory-row .del:focus-visible {
+        opacity: 0.75;
+      }
+      .memory-row .del:hover {
+        opacity: 1;
+        background: color-mix(in srgb, var(--sensor) 14%, transparent);
+      }
+      .memory-row .confirm-bar {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .memory-empty {
+        font: 11px var(--mono);
+        color: var(--text-faint);
+        text-align: center;
+        padding: 28px 14px;
+      }
+      .memory-foot {
+        padding: 8px 12px 10px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #memory-clear {
+        font: 11px var(--human);
+        color: var(--text-faint);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+      }
+      #memory-clear:hover {
+        color: var(--sensor);
+      }
+      .memory-foot .confirm-bar {
+        display: flex;
+        gap: 6px;
+      }
+      #memory-toggle {
+        font: 12px var(--mono);
+        color: var(--text-dim);
+        background: none;
+        border: none;
+        border-radius: 7px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      #memory-toggle:hover {
+        color: var(--oil);
+        background: color-mix(in srgb, var(--oil) 10%, transparent);
+      }
+      #memory-toggle[aria-pressed='true'] {
+        color: var(--oil);
+        background: color-mix(in srgb, var(--oil) 12%, transparent);
+      }
+
+      /* ── 输入卡：一张完整的卡，机器的操作面都在这 ────── */
+      footer {
+        flex: none;
+        padding: 10px 18px 14px;
+        background: var(--ground);
+      }
+      .composer {
+        max-width: 78ch;
+        margin: 0 auto;
+        background: var(--surface);
+        border: 1px solid var(--line-soft);
+        border-radius: 14px;
+        padding: 10px 12px 8px;
         transition: border-color 0.15s ease;
       }
-      #input:focus {
+      .composer:focus-within {
         border-color: var(--chassis-strong);
+      }
+      #input {
+        display: block;
+        width: 100%;
+        font: 14px/1.55 var(--human);
+        color: var(--text);
+        background: none;
+        border: none;
+        padding: 2px 4px 6px;
+        outline: none;
+        resize: none;
+        max-height: 180px;
       }
       #input::placeholder {
         color: var(--text-faint);
       }
-      #send {
-        font: 600 13px var(--human);
-        background: var(--chassis-strong);
-        color: #fff;
-        border: none;
-        border-radius: 9px;
-        padding: 9px 20px;
-        cursor: pointer;
-        flex: none;
-      }
-      #send:hover {
-        background: var(--chassis);
-        color: var(--ground);
-      }
-      /* 生成中送出键变为"停止"：传感红——人对机器行动的即时控制权 */
-      #send.generating {
-        background: var(--sensor-deep);
-      }
-      #send.generating:hover {
-        background: var(--sensor);
-        color: #fff;
-      }
-      footer .params {
+      .composer .toolbar {
         display: flex;
-        gap: 8px;
-        justify-content: flex-end;
+        align-items: center;
+        gap: 4px;
         position: relative;
       }
-      footer .params button,
-      footer .params select {
+      .toolbar button,
+      .toolbar select {
         font: 11px var(--mono);
         color: var(--text-dim);
         background: none;
-        border: 1px solid var(--line-soft);
-        border-radius: 6px;
-        padding: 3px 10px;
+        border: none;
+        border-radius: 7px;
+        padding: 4px 8px;
         outline: none;
         cursor: pointer;
-        max-width: 40ch;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
         transition:
           color 0.15s ease,
-          border-color 0.15s ease;
+          background-color 0.15s ease;
       }
-      footer .params button:hover,
-      footer .params select:hover {
-        border-color: var(--chassis);
+      #workspace-chip {
+        max-width: 22ch;
+      }
+      #model-chip {
+        max-width: 18ch;
+      }
+      #thinking {
+        max-width: 17ch;
+      }
+      .toolbar button:hover,
+      .toolbar select:hover {
+        color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 9%, transparent);
+      }
+      #workspace-chip.granted {
         color: var(--chassis);
       }
-      footer .params button:focus-visible,
-      footer .params select:focus-visible {
-        border-color: var(--chassis-strong);
-        color: var(--text);
+      #toolset {
+        display: flex;
+        gap: 2px;
+        flex: none;
       }
-
+      #toolset button.active {
+        color: var(--chassis);
+        background: color-mix(in srgb, var(--chassis) 14%, transparent);
+      }
       /* 上下文用量仪表：>70% 转琥珀并给出压缩入口 */
       #ctx-gauge {
         display: inline-flex;
@@ -1110,12 +1122,13 @@
         gap: 7px;
         font: 10px var(--mono);
         color: var(--text-faint);
+        margin-right: 4px;
       }
       #ctx-gauge[hidden] {
         display: none;
       }
       #ctx-gauge .bar {
-        width: 56px;
+        width: 48px;
         height: 4px;
         border-radius: 2px;
         background: var(--line-soft);
@@ -1138,34 +1151,56 @@
       #compact-now {
         font: 10px var(--mono);
         color: var(--oil);
-        background: none;
-        border: 1px solid color-mix(in srgb, var(--oil) 55%, transparent);
-        border-radius: 5px;
-        padding: 1px 8px;
+        background: color-mix(in srgb, var(--oil) 10%, transparent);
+        border: none;
+        border-radius: 6px;
+        padding: 2px 8px;
         cursor: pointer;
       }
       #compact-now:hover {
-        background: color-mix(in srgb, var(--oil) 12%, transparent);
+        background: color-mix(in srgb, var(--oil) 18%, transparent);
       }
-      .model-row .ctx {
-        color: var(--text-faint);
-        font-size: 10px;
+      /* 圆形发送键：↑ 发送 / ■ 停止（传感红） */
+      #send {
         flex: none;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        border: none;
+        background: var(--chassis-strong);
+        color: #fff;
+        font: 600 14px/1 var(--human);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 6px;
+      }
+      #send:hover {
+        background: var(--chassis);
+        color: var(--ground);
+      }
+      #send.generating {
+        background: var(--sensor-deep);
+        font-size: 11px;
+      }
+      #send.generating:hover {
+        background: var(--sensor);
+        color: #fff;
       }
 
-      /* 模型选择面板：主题内自绘（原生 datalist 会被预填值过滤成单条 + 白底跳戏） */
+      /* 模型选择面板：主题内自绘 */
       #model-picker {
         position: absolute;
-        bottom: calc(100% + 10px);
+        bottom: calc(100% + 14px);
         right: 0;
         width: 46ch;
         max-height: 320px;
         display: flex;
         flex-direction: column;
         background: var(--raised);
-        border: 1px solid var(--line);
-        border-radius: 9px;
-        box-shadow: 0 12px 36px #000a;
+        border-radius: 12px;
+        box-shadow: 0 14px 40px #000a;
         overflow: hidden;
         z-index: 10;
         animation: rise 0.14s ease-out;
@@ -1178,8 +1213,7 @@
         color: var(--text);
         background: var(--well);
         border: none;
-        border-bottom: 1px solid var(--line);
-        padding: 9px 12px;
+        padding: 10px 13px;
         outline: none;
       }
       #model-filter::placeholder {
@@ -1195,7 +1229,7 @@
         gap: 8px;
         font: 11px var(--mono);
         color: var(--text);
-        padding: 6px 12px;
+        padding: 6px 13px;
         cursor: pointer;
         white-space: nowrap;
         overflow: hidden;
@@ -1222,6 +1256,11 @@
         padding: 0 7px;
         flex: none;
       }
+      .model-row .ctx {
+        color: var(--text-faint);
+        font-size: 10px;
+        flex: none;
+      }
       .model-row.hint {
         color: var(--text-faint);
         cursor: default;
@@ -1230,15 +1269,20 @@
         background: none;
       }
 
-      button:focus-visible,
-      #workspace-chip:focus-visible {
+      button:focus-visible {
         outline: 2px solid var(--chassis);
         outline-offset: 1px;
+      }
+      #input:focus-visible {
+        outline: none; /* 输入卡整体 focus-within 变色，内框多余 */
       }
       @media (prefers-reduced-motion: reduce) {
         * {
           animation: none !important;
           transition: none !important;
+        }
+        #log {
+          scroll-behavior: auto;
         }
       }
     </style>
@@ -1247,15 +1291,7 @@
     <header>
       <span class="wordmark"><span class="lens"></span>TACHIKOMA</span>
       <button id="sessions-toggle" aria-pressed="true" title="会话列表（⌘B）">会话</button>
-      <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
-      <span id="toolset">
-        <button data-toolset="read-only" class="active" title="read / grep / find / ls">
-          只读
-        </button>
-        <button data-toolset="coding" title="加 write / edit / bash，逐次审批">编码</button>
-      </span>
       <span class="spacer"></span>
-      <button id="memory-toggle" aria-pressed="false" title="记忆（⌘M）">记忆</button>
       <span id="status">connecting…</span>
     </header>
     <div id="shell">
@@ -1267,6 +1303,7 @@
         <div id="session-list"></div>
       </aside>
       <main id="log"></main>
+      <button id="to-bottom" hidden title="回到最新">↓</button>
       <aside id="memory" hidden>
         <div class="memory-head">
           <input id="memory-search" spellcheck="false" placeholder="搜索记忆…" />
@@ -1278,17 +1315,23 @@
       </aside>
     </div>
     <footer>
-      <span class="inner">
-        <span class="compose">
-          <textarea
-            id="input"
-            rows="1"
-            placeholder="发消息…（Enter 发送，Shift+Enter 换行）"
-            autofocus
-          ></textarea>
-          <button id="send">发送</button>
-        </span>
-        <span class="params">
+      <div class="composer">
+        <textarea
+          id="input"
+          rows="1"
+          placeholder="发消息…（Enter 发送，Shift+Enter 换行）"
+          autofocus
+        ></textarea>
+        <div class="toolbar">
+          <button id="workspace-chip" title="选择工作区，授予工具权限">无工作区 · 零工具</button>
+          <span id="toolset">
+            <button data-toolset="read-only" class="active" title="read / grep / find / ls">
+              只读
+            </button>
+            <button data-toolset="coding" title="加 write / edit / bash，逐次审批">编码</button>
+          </span>
+          <button id="memory-toggle" aria-pressed="false" title="记忆（⌘M）">记忆</button>
+          <span class="spacer"></span>
           <span id="ctx-gauge" hidden title="上下文用量（上回合 tokens / 模型窗口）">
             <span class="bar"><span class="fill"></span></span>
             <span class="pct"></span>
@@ -1300,16 +1343,17 @@
             <div id="model-options"></div>
           </div>
           <select id="thinking" title="thinking 深度">
-            <option value="off">thinking: off</option>
-            <option value="minimal">thinking: minimal</option>
-            <option value="low">thinking: low</option>
-            <option value="medium">thinking: medium</option>
-            <option value="high">thinking: high</option>
-            <option value="xhigh">thinking: xhigh</option>
-            <option value="max">thinking: max</option>
+            <option value="off">思考 off</option>
+            <option value="minimal">思考 minimal</option>
+            <option value="low">思考 low</option>
+            <option value="medium">思考 medium</option>
+            <option value="high">思考 high</option>
+            <option value="xhigh">思考 xhigh</option>
+            <option value="max">思考 max</option>
           </select>
-        </span>
-      </span>
+          <button id="send" title="发送（Enter）">↑</button>
+        </div>
+      </div>
     </footer>
     <script type="module" src="./app.js"></script>
   </body>

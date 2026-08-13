@@ -50,6 +50,7 @@ const memoryPanel = document.getElementById('memory') as HTMLElement;
 const memorySearch = document.getElementById('memory-search') as HTMLInputElement;
 const memoryListPane = document.getElementById('memory-list') as HTMLElement;
 const memoryClearButton = document.getElementById('memory-clear') as HTMLButtonElement;
+const toBottomButton = document.getElementById('to-bottom') as HTMLButtonElement;
 const ctxGauge = document.getElementById('ctx-gauge') as HTMLElement;
 const compactNowButton = document.getElementById('compact-now') as HTMLButtonElement;
 const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
@@ -70,6 +71,14 @@ function autosizeInput(): void {
   input.style.height = `${input.scrollHeight}px`;
 }
 input.addEventListener('input', autosizeInput);
+
+/** 滚到底悬浮按钮：离底 240px 以上出现 */
+log.addEventListener('scroll', () => {
+  toBottomButton.hidden = log.scrollHeight - log.scrollTop - log.clientHeight < 240;
+});
+toBottomButton.onclick = () => {
+  log.scrollTop = log.scrollHeight;
+};
 
 /**
  * 机器声音的 Markdown 渲染：纯 DOM 构建（textContent，不信任内容进 innerHTML）。
@@ -289,7 +298,8 @@ async function boot(): Promise<void> {
 
   function setGenerating(next: boolean): void {
     generating = next;
-    sendButton.textContent = next ? '停止' : '发送';
+    sendButton.textContent = next ? '■' : '↑';
+    sendButton.title = next ? '停止生成' : '发送（Enter）';
     sendButton.classList.toggle('generating', next);
     document.body.classList.toggle('generating', next); // 传感镜头呼吸
   }
@@ -321,16 +331,26 @@ async function boot(): Promise<void> {
   /** 本回合的 write/edit 调用——回合收口时聚合成"修改了 N 个文件"卡 */
   let turnFileChanges: { tool: string; input: unknown }[] = [];
 
-  const toolNodes = new Map<
-    string,
-    { head: HTMLElement; verdict: HTMLElement; pre?: HTMLPreElement }
-  >();
+  interface ToolNode {
+    details: HTMLDetailsElement;
+    verdict: HTMLElement;
+    dur: HTMLElement;
+    pre?: HTMLPreElement;
+    startTs: number;
+  }
+  const toolNodes = new Map<string, ToolNode>();
   const approvalCards = new Map<string, HTMLElement>();
 
-  function toolNode(callId: string, tool: string, preview: string) {
-    const container = block('tool');
-    const head = document.createElement('div');
-    head.className = 'head';
+  function formatDur(ms: number): string {
+    if (!Number.isFinite(ms) || ms < 0) return '';
+    return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  /** 工具遥测：单行状态芯片（名称·参数·状态·时长），点击展开输出 */
+  function toolNode(callId: string, tool: string, preview: string, startTs: number): ToolNode {
+    const details = document.createElement('details');
+    details.className = 'tool';
+    const summary = document.createElement('summary');
     const name = document.createElement('span');
     name.className = 'name';
     name.textContent = tool;
@@ -338,15 +358,17 @@ async function boot(): Promise<void> {
     args.className = 'args';
     args.textContent = preview;
     const verdict = document.createElement('span');
-    verdict.className = 'verdict';
-    head.append(name, args, verdict);
-    container.appendChild(head);
-    const node = { head, verdict, container } as {
-      head: HTMLElement;
-      verdict: HTMLElement;
-      pre?: HTMLPreElement;
-      container: HTMLElement;
-    };
+    verdict.className = 'verdict run';
+    verdict.textContent = '运行中';
+    const dur = document.createElement('span');
+    dur.className = 'dur';
+    const chev = document.createElement('span');
+    chev.className = 'chev';
+    chev.textContent = '▾';
+    summary.append(name, args, verdict, dur, chev);
+    details.appendChild(summary);
+    appendToLog(details);
+    const node: ToolNode = { details, verdict, dur, startTs };
     toolNodes.set(callId, node);
     return node;
   }
@@ -355,12 +377,8 @@ async function boot(): Promise<void> {
     const node = toolNodes.get(callId);
     if (!node) return undefined;
     if (!node.pre) {
-      const container = node.head.parentElement;
-      if (!container) return undefined;
       node.pre = document.createElement('pre');
-      node.pre.title = '点击展开 / 收起';
-      node.pre.onclick = () => node.pre?.classList.toggle('expanded');
-      container.appendChild(node.pre);
+      node.details.appendChild(node.pre);
     }
     return node.pre;
   }
@@ -369,13 +387,12 @@ async function boot(): Promise<void> {
     switch (event.type) {
       case 'user_message': {
         log.querySelector('.hero')?.remove(); // 第一句话说出口，空状态退场
-        // 用户回合也来自事件流：live 与 WAL 重放共用同一渲染路径
+        // 用户回合也来自事件流：live 与 WAL 重放共用同一渲染路径。人的声音=右侧气泡
         const userBlock = block('turn you');
-        userBlock.innerHTML = '<div class="role">you</div>';
-        const body = document.createElement('div');
-        body.className = 'body';
-        body.textContent = event.text;
-        userBlock.appendChild(body);
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble';
+        bubble.textContent = event.text;
+        userBlock.appendChild(bubble);
         break;
       }
       case 'message_start': {
@@ -421,14 +438,16 @@ async function boot(): Promise<void> {
         break;
       }
       case 'tool_call':
-        toolNode(event.callId, event.tool, inputPreview(event.input));
+        toolNode(event.callId, event.tool, inputPreview(event.input), event.timestamp);
         if (event.tool === 'write' || event.tool === 'edit') {
           turnFileChanges.push({ tool: event.tool, input: event.input });
         }
         break;
       case 'tool_update': {
         // partial 输出是累积快照：整块替换，滚动跟随
-        if (!toolNodes.has(event.callId)) toolNode(event.callId, event.tool, '');
+        if (!toolNodes.has(event.callId)) {
+          toolNode(event.callId, event.tool, '', event.timestamp);
+        }
         const pre = toolPre(event.callId);
         if (pre) {
           pre.textContent = event.output;
@@ -437,12 +456,16 @@ async function boot(): Promise<void> {
         break;
       }
       case 'tool_result': {
-        const node = toolNodes.get(event.callId) ?? toolNode(event.callId, event.tool, '');
+        const node =
+          toolNodes.get(event.callId) ?? toolNode(event.callId, event.tool, '', event.timestamp);
+        // 时长按事件时间戳算：live 与重放一致
+        node.dur.textContent = formatDur(event.timestamp - node.startTs);
         if (event.isError) {
-          node.verdict.textContent = `✕ ${event.output.split('\n')[0]?.slice(0, 120) ?? 'error'}`;
+          node.verdict.textContent = `✕ ${event.output.split('\n')[0]?.slice(0, 80) ?? 'error'}`;
           node.verdict.className = 'verdict err';
         } else {
           node.verdict.textContent = `✓ ${event.output.length} chars`;
+          node.verdict.className = 'verdict';
           if (node.pre) node.pre.textContent = event.output;
         }
         break;
@@ -548,14 +571,35 @@ async function boot(): Promise<void> {
         if (event.status !== 'success') {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;
         }
-        // 回合收口卡：这一回合机器改了哪些文件（复用审批卡的 diff 预览）
+        // 回合收口卡：这一回合机器改了哪些文件（带行数账，复用审批卡的 diff 预览）
         if (turnFileChanges.length > 0) {
           const changes = turnFileChanges;
           turnFileChanges = [];
+          let added = 0;
+          let removed = 0;
+          for (const change of changes) {
+            const record = (
+              change.input && typeof change.input === 'object' ? change.input : {}
+            ) as Record<string, unknown>;
+            if (typeof record.content === 'string') added += record.content.split('\n').length;
+            if (typeof record.newText === 'string') added += record.newText.split('\n').length;
+            if (typeof record.oldText === 'string') removed += record.oldText.split('\n').length;
+          }
           const card = document.createElement('details');
           card.className = 'changes';
           const summary = document.createElement('summary');
-          summary.textContent = `✎ 本回合修改 ${changes.length} 处文件`;
+          const label = document.createElement('span');
+          label.textContent = `✎ 本回合修改 ${changes.length} 处文件`;
+          const delta = document.createElement('span');
+          delta.className = 'delta';
+          const plus = document.createElement('span');
+          plus.className = 'plus';
+          plus.textContent = `+${added}`;
+          const minus = document.createElement('span');
+          minus.className = 'minus';
+          minus.textContent = ` −${removed}`;
+          delta.append(plus, minus);
+          summary.append(label, delta);
           card.appendChild(summary);
           for (const change of changes) {
             const entry = document.createElement('div');
@@ -594,6 +638,7 @@ async function boot(): Promise<void> {
     reasoningOpen = false;
     setGenerating(false);
     resetCtxGauge();
+    toBottomButton.hidden = true;
   }
 
   /** 空状态：机器就绪，等第一句话（仅新会话；第一条 user_message 到来即退场）。
@@ -609,9 +654,15 @@ async function boot(): Promise<void> {
     hint.className = 'hero-hint';
     const grantLine = grantedWorkspace
       ? `工作区 ${grantedWorkspace.root} · ${grantedWorkspace.tools.join(' / ')}`
-      : '零工具 · 点击上方「无工作区」选择目录，授予工具权限';
+      : '零工具 · 点击下方「无工作区」选择目录，授予工具权限';
     hint.append(grantLine, document.createElement('br'), 'Enter 发送 · Shift+Enter 换行');
     hero.append(lens, title, hint);
+  }
+
+  /** 工具条空间宝贵：chip 只显示模型名，provider 进 title */
+  function setModelChip(value: string): void {
+    modelChip.textContent = value ? (value.split('/').pop() ?? value) : 'model…';
+    modelChip.title = value ? `${value} · 点击切换` : '切换模型';
   }
 
   function adoptSummary(summary: SessionSummaryLite): void {
@@ -619,7 +670,7 @@ async function boot(): Promise<void> {
     grantedWorkspace = summary.workspace ?? null;
     if (summary.workspace) selectedToolset = summary.workspace.toolset;
     currentModel = summary.model ? `${summary.model.provider}/${summary.model.model}` : '';
-    modelChip.textContent = currentModel || 'model…';
+    setModelChip(currentModel);
     if (summary.thinkingLevel) thinkingSelect.value = summary.thinkingLevel;
   }
 
@@ -1173,7 +1224,7 @@ async function boot(): Promise<void> {
     });
     if (changed.ok) {
       currentModel = value;
-      modelChip.textContent = value;
+      setModelChip(value);
       refreshInstrumentCluster();
       void updateCtxGauge();
     } else {
@@ -1255,9 +1306,9 @@ async function boot(): Promise<void> {
     }
     const percent = Math.min(100, Math.round((lastTurnTokens / window) * 100));
     ctxGauge.hidden = false;
+    ctxGauge.title = `上下文用量 ${formatCtx(lastTurnTokens)} / ${formatCtx(window)}`;
     (ctxGauge.querySelector('.fill') as HTMLElement).style.width = `${Math.max(percent, 2)}%`;
-    (ctxGauge.querySelector('.pct') as HTMLElement).textContent =
-      `${percent}% / ${formatCtx(window)}`;
+    (ctxGauge.querySelector('.pct') as HTMLElement).textContent = `${percent}%`;
     const warn = percent >= 70;
     ctxGauge.classList.toggle('warn', warn);
     compactNowButton.hidden = !warn;
