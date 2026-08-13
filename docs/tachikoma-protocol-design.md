@@ -1,7 +1,7 @@
-# @tachikoma/protocol 设计稿（桌面轨 E1）
+# @tachikoma/protocol v2 设计与迁移（桌面轨 E1）
 
-> 状态：**已实现**（2026-08-12，提交 c84fb68：`packages/protocol` + 首个真实消费者
-> `packages/server`/`tachikoma-engined` 同批落地；真网端到端冒烟通过）。上游文档：
+> 状态：**已实现**。v1 于 2026-08-12 随提交 c84fb68 落地；当前 v2 于 2026-08-13 随提交 5e5cc7a 加入记忆 lifecycle
+> wire 投影，并已同步 core、protocol、server、CLI 和 desktop。上游文档：
 > `docs/tachikoma-desktop-plan.md`（总设计，§2.3 传输与握手、§4.1 协议包、§4.5 Server
 > RPC）、`docs/tachikoma-spiral-roadmap.md` （ChatEvent 契约与演进规则的语义源头）。
 >
@@ -84,7 +84,7 @@ function parseSessionEventFrame(raw: unknown):
 ## 3. 握手与版本
 
 ```ts
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 
 interface HelloRequest {
   protocolVersion: number;
@@ -98,8 +98,9 @@ interface HelloResponse {
 }
 ```
 
-- 版本判定：客户端 `protocolVersion` > server 版本 →
-  server 拒绝（客户端提示升级引擎）；小于 → 允许（协议只增量演进，旧客户端天然兼容），server 在响应中报自身版本。
+- server 校验请求中的 `protocolVersion` 为整数，并在响应中报告自身版本。仓内消费者直接使用
+  `@tachikoma/protocol` 导出的
+  `PROTOCOL_VERSION`，因此保持精确对齐；仓外消费者必须在继续 RPC 前比较响应版本。
 - `capabilities` 是字符串集合而非位图，与事件演进同规则（只增不改）。初始集： `"chat"`,
   `"reasoning"`, `"tools"`, `"approvals"`, `"memory"`, `"compaction"`,
   `"session-replay"`。现行全集以 `protocol/src/version.ts` 的 `CAPABILITIES` 为唯一事实源（此后已增
@@ -108,6 +109,19 @@ interface HelloResponse {
   快照并在提交里说明（§7.3）。
 - API key **永不过线**：凭证属于 sidecar 进程环境（env / pi auth.json / models.json 的 `$ENV`
   插值），Hello 与一切响应不含密钥；`session.model` 只有 `{provider, model}`。
+
+### 3.1 v1 → v2：记忆 lifecycle
+
+v2 的唯一破坏性迁移是给 strict `MemoryRecord` wire DTO 增加可选
+`lifecycle: 'active' | 'superseded' | 'inactive'`。它用于反馈规则的管理面状态，避免把已替代或已停用的规则展示成当前生效规则。
+
+虽然字段可选，但 v1 客户端的 strict
+schema 会拒绝带该字段的 v2 响应，因此版本升为 2，而不是伪装成透明兼容。升级要求：
+
+- producer 与 consumer 同步升级 `@tachikoma/protocol`，并使用导出的 `PROTOCOL_VERSION` 和 schema；
+- `memory.list` / `memory.search` 保留 lifecycle，CLI 和 desktop 只在 feedback 上展示状态；
+- 无 lifecycle 的旧记录及非 feedback 记录仍合法，不需要迁移 canonical memory 或 storage schema；
+- 不保留 v1 DTO shim；协议 schema 快照负责守住 v2 形状。
 
 ## 4. RPC 方法表
 
@@ -143,33 +157,33 @@ type RpcErrorCode =
 
 方法与当前引擎 API 的一一映射（右列为 core 现有实现）：
 
-| method                      | params                           | result               | core 对应                      |
-| --------------------------- | -------------------------------- | -------------------- | ------------------------------ |
-| `engine.hello`              | HelloRequest                     | HelloResponse        | —                              |
-| `engine.shutdown`           | {}                               | {}                   | server 侧 dispose 级联         |
-| `session.create`            | {model?, thinkingLevel?, title?} | SessionSummary       | `engine.createSession`         |
-| `session.list`              | {}                               | SessionSummary[]     | `engine.listSessions`          |
-| `session.open`              | {sessionId}                      | SessionSummary       | `engine.openSession`           |
-| `session.delete`            | {sessionId}                      | {deleted: boolean}   | `engine.deleteSession`         |
-| `session.send`              | {sessionId, text}                | {turnId}             | `session.send`（事件走 WS 帧） |
-| `session.abort`             | {sessionId}                      | {aborted: boolean}   | `session.abort`                |
-| `session.respondToApproval` | {sessionId, callId, approved}    | {matched: boolean}   | `session.respondToApproval`    |
-| `session.setModel`          | {sessionId, model}               | {model}              | `session.setModel`             |
-| `session.setThinkingLevel`  | {sessionId, level}               | {level}              | `session.setThinkingLevel`     |
-| `session.compact`           | {sessionId, instructions?}       | CompactionResult     | `session.compact`              |
-| `session.subscribe`（WS）   | {sessionId, fromSeq}             | SessionEventFrame 流 | server WAL 重放 + 实时         |
+| method                      | params                                                        | result                    | core 对应                      |
+| --------------------------- | ------------------------------------------------------------- | ------------------------- | ------------------------------ |
+| `engine.hello`              | HelloRequest                                                  | HelloResponse             | —                              |
+| `engine.listModels`         | {}                                                            | {models: Model[]}         | `engine.listModels`            |
+| `engine.shutdown`           | {}                                                            | {}                        | server 侧 dispose 级联         |
+| `session.create`            | {model?, thinkingLevel?, title?, workDir?, toolset?, skills?} | SessionSummary            | `engine.createSession`         |
+| `session.list`              | {}                                                            | SessionSummary[]          | `engine.listSessions`          |
+| `session.open`              | {sessionId}                                                   | SessionSummary            | `engine.openSession`           |
+| `session.delete`            | {sessionId}                                                   | {deleted: boolean}        | `engine.deleteSession`         |
+| `session.send`              | {sessionId, text, images?}                                    | {turnId}                  | `session.send`（事件走 WS 帧） |
+| `session.abort`             | {sessionId}                                                   | {aborted: boolean}        | `session.abort`                |
+| `session.respondToApproval` | {sessionId, callId, approved, scope?}                         | {matched: boolean}        | `session.respondToApproval`    |
+| `session.setModel`          | {sessionId, model}                                            | {model}                   | `session.setModel`             |
+| `session.setThinkingLevel`  | {sessionId, level}                                            | {level}                   | `session.setThinkingLevel`     |
+| `session.rename`            | {sessionId, title}                                            | {title}                   | `session.rename`               |
+| `session.compact`           | {sessionId, instructions?}                                    | CompactionResult          | `session.compact`              |
+| `memory.list`               | {}                                                            | {records: MemoryRecord[]} | `engine.memoryList`            |
+| `memory.search`             | {query}                                                       | {records: MemoryRecord[]} | `engine.memorySearch`          |
+| `memory.forget`             | {memoryId}                                                    | {forgotten: boolean}      | `engine.memoryForget`          |
+| `memory.clear`              | {}                                                            | {deleted: number}         | `engine.memoryClear`           |
+| `session.subscribe`（WS）   | {sessionId, fromSeq}                                          | SessionEventFrame 流      | server WAL 重放 + 实时         |
 
-DTO 直接镜像 core 现有 JSON-safe 类型：`SessionSummary` = `ChatSessionSummary` （含 status:
-ready\|corrupt 与 error）、`CompactionResult` = `ChatCompactionResult`、 `MemorySnapshot` =
-`ChatMemorySnapshot`、`ModelRef` = `ChatModelRef`。
-
-**预留方法**（协议占名、首版返回 `unsupported`，对应引擎缺口）：
-
-- `engine.listModels` → `{models: {provider, model, reasoning: boolean}[]}`
-  ——引擎目前没有模型目录枚举 API（`/model` 是盲输入）。需要 core 增 `ChatEngine.listModels()`（pi
-  ModelRuntime.getModels 的薄投影），desktop 的 "多 Provider 一键切换"
-  UI 依赖它。**这是 E 轨对 core 的第一个增量需求。**
-- `memory.query` → 记忆浏览器（Alma 对齐项）用；等 GoodMemory 侧检索 API 定型。
+DTO 直接镜像 core 现有 JSON-safe 类型：`SessionSummary` = `ChatSessionSummary`（含 status:
+ready\|corrupt 与 error）、`CompactionResult` = `ChatCompactionResult`、`MemorySnapshot` =
+`ChatMemorySnapshot`、`MemoryRecord` = `ChatMemoryRecord`、`ModelRef` =
+`ChatModelRef`。协议不预占尚未实现的方法；现行方法集合以 `packages/protocol/src/rpc.ts` 的
+`RPC_METHODS` 为唯一事实源。
 
 ## 5. 并发与会话语义（wire 层承诺）
 
@@ -195,7 +209,7 @@ ready\|corrupt 与 error）、`CompactionResult` = `ChatCompactionResult`、 `Me
 与 ChatEvent 契约同规则，落成协议条文：
 
 1. **只增不改**：新事件类型、新可选字段、新方法、新 capability；已有字段不改名不改义不删除。
-2. 破坏性变更 = `PROTOCOL_VERSION` +1，且必须提供迁移说明；预期整个 0.x 不发生。
+2. 破坏性变更 = `PROTOCOL_VERSION` +1，且必须提供迁移说明；v1 → v2 见 §3.1。
 3. **schema 快照守卫**：`protocol/tests/__snapshots__/schema.json`（每个 schema 的 JSON
    Schema 导出快照）入库；CI 上快照变化而 PROTOCOL_VERSION 未动 → 仅允许纯增量 diff（新增 properties
    / 新增 union 成员），否则失败。
@@ -236,9 +250,8 @@ packages/protocol/
   package.json        # deps: zod；devDeps: @tachikoma/core, typescript
 ```
 
-预估：schema 与测试 1 天量级（契约已冻结，无设计工作）；随后 `@tachikoma/server` （E5：Bun.serve +
-WS + WAL + token 引导）为第一个消费者。**core 侧前置增量仅一项**：
-`ChatEngine.listModels()`（§4 预留方法所需，半天量级，含离线测试）。
+上述目录、server 消费者、模型目录与记忆管理 RPC 均已落地。后续协议增量直接修改现有 schema、
+`RPC_METHODS` 与对应契约测试，不创建 placeholder package 或预留方法。
 
 ## 10. 显式非目标
 
