@@ -148,7 +148,11 @@ describe('RPC 信封与方法表', () => {
       protocolVersion: 1,
       engineVersion: '0.2.0',
       capabilities: ['chat', 'tools'],
-      session: { workDir: '/workspaces/demo', toolset: 'coding' as const },
+      session: {
+        workDir: '/workspaces/demo',
+        toolset: 'coding' as const,
+        skills: ['/home/user/skills/demo-skill'],
+      },
     };
     expect(helloResponseSchema.parse(JSON.parse(JSON.stringify(hello)))).toEqual(hello);
   });

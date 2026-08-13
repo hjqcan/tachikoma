@@ -61,6 +61,13 @@ export const workspaceStateSchema = z.strictObject({
 });
 export type WorkspaceState = z.infer<typeof workspaceStateSchema>;
 
+/** 已加载 skill 的展示信息（capability 'skills'）；授予同为 live 态，不持久化 */
+export const skillInfoSchema = z.strictObject({
+  name: z.string(),
+  description: z.string(),
+});
+export type SkillInfo = z.infer<typeof skillInfoSchema>;
+
 export const memoryStatusSchema = z.enum([
   'disabled',
   'ready',
@@ -103,6 +110,8 @@ export const sessionSummarySchema = z.strictObject({
   error: z.string().optional(),
   /** 仅 live 会话携带（server 侧补充） */
   workspace: workspaceStateSchema.optional(),
+  /** 仅 live 会话携带（server 侧补充）：已加载 skills（capability 'skills'） */
+  skills: z.array(skillInfoSchema).optional(),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 

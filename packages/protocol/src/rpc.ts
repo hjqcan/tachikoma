@@ -61,6 +61,8 @@ export const helloResponseSchema = z.strictObject({
   session: z.strictObject({
     workDir: z.string().optional(),
     toolset: toolsetSchema.optional(),
+    /** sidecar 会话默认 skill 授予路径（capability 'skills'） */
+    skills: z.array(z.string()).optional(),
   }),
 });
 export type HelloResponse = z.infer<typeof helloResponseSchema>;
@@ -87,6 +89,11 @@ export const RPC_METHODS = {
       /** 会话级工作区授予（capability 'session-workspace'）；不持久化 */
       workDir: z.string().optional(),
       toolset: toolsetSchema.optional(),
+      /**
+       * 会话级 skill 授予（capability 'skills'）：SKILL.md 文件或目录路径，
+       * 替换引擎默认（[] = 显式无）；不持久化，且要求工作区授予。
+       */
+      skills: z.array(z.string()).optional(),
     }),
     result: sessionSummarySchema,
   },

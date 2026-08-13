@@ -45,5 +45,8 @@
     "url": "git+https://github.com/hjqcan/tachikoma.git",
     "directory": "packages/core"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
 }

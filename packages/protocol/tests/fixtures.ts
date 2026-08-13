@@ -103,6 +103,7 @@ export const sessionSummaryFixtures: SessionSummary[] = [
     model: { provider: 'gurkiai', model: 'gpt-5.6-terra' },
     thinkingLevel: 'low',
     status: 'ready',
+    skills: [{ name: 'demo-skill', description: '演示技能' }],
   },
   {
     sessionId: 'session-2',

@@ -55,9 +55,12 @@ The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/models`, `/thinkin
 ## Custom models and endpoints
 
 pi's `ModelRuntime` resolves models from its built-in catalog plus an optional
-`<dataDir>/models.json` (default `~/.tachikoma/models.json`). Use it to register OpenAI-compatible
-gateways or models that are not in the catalog. `apiKey` supports `$ENV_VAR` interpolation, so no
-secret has to live in the file:
+`<configDir>/models.json` (default: `configDir` = `dataDir` = `~/.tachikoma`, so
+`~/.tachikoma/models.json`). Set `configDir` (env: `TACHIKOMA_CONFIG_DIR`) when `dataDir` is
+per-workspace — one sidecar per project/book — so every workspace shares one user-level model and
+credential file instead of a copy each. Use it to register OpenAI-compatible gateways or models that
+are not in the catalog. `apiKey` supports `$ENV_VAR` interpolation, so no secret has to live in the
+file:
 
 ```json
 {
@@ -98,6 +101,14 @@ In the interactive REPL, ungranted requests prompt `approve <tool>? [y/N]`;
 `--allow write,edit,bash` pre-grants for the invocation, and `run` mode / non-TTY denies ungranted
 requests immediately. Tool output streams as it happens (`tool_update`).
 
+Skills follow the same explicit-grant shape: `skills: [<path>…]` (CLI: `--skills <path>`,
+repeatable; REPL: `/skills`) loads the listed SKILL.md files or skill directories — nothing is
+discovered from the environment, and zero grants means zero disk scans. A grant requires `workDir`
+(pi only surfaces skills to sessions that hold the `read` tool), skill roots become read-only for
+the guard (write/edit stay workspace-only), unusable grants fail session creation instead of
+silently loading nothing, and the session summary lists what actually loaded. A session-level
+`skills` grant replaces the engine default; `[]` explicitly clears it.
+
 Grants are also per-session: `createSession({ workDir, toolset })` (RPC `session.create`, desktop:
 the workspace chip in the header) scopes tools to one live session, overriding the engine default.
 Grants never persist — reopening a session returns to the engine default until re-granted. Without
@@ -109,9 +120,12 @@ default.
 `tachikoma-engined` hosts one engine on `127.0.0.1` for remote consumers (the future desktop shell).
 The supervising shell injects a Bearer token as the first stdin line — never via argv or env — and
 reads one `listening` JSON line from stdout. Engine configuration comes from shell-controlled env
-(`TACHIKOMA_DATA_DIR`, `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORKDIR`,
-`TACHIKOMA_TOOLSET`, `TACHIKOMA_NO_MEMORY=1`). Clients speak `@tachikoma/protocol`: HTTP
-`POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
+(`TACHIKOMA_DATA_DIR`, `TACHIKOMA_CONFIG_DIR` — user-level config such as models.json when the data
+dir is per-workspace — `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORKDIR`,
+`TACHIKOMA_TOOLSET`, `TACHIKOMA_SKILLS` — skill grant paths joined with the platform PATH delimiter
+— `TACHIKOMA_SYSTEM_PROMPT_FILE` — replaces the default system prompt with the file's content,
+unreadable or empty fails startup — and `TACHIKOMA_NO_MEMORY=1`). Clients speak
+`@tachikoma/protocol`: HTTP `POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
 `subscribe {sessionId, fromSeq}` for lossless replay over the per-session WAL.
 
 The sidecar also compiles to a single binary: `bun run --cwd packages/server build:bin` produces

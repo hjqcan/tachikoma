@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type {
   ChatEngineConfig,
   ChatEvent,
@@ -53,6 +56,7 @@ class FakeSession implements ChatSessionPort {
   memoryStatus = { enabled: true, status: 'ready' } as const;
   activeTools: readonly string[] = [];
   workspace: { root: string; toolset: 'read-only' | 'coding'; tools: string[] } | null = null;
+  skills: readonly { name: string; description: string }[] | null = null;
   abortCount = 0;
   closeCount = 0;
   compactCount = 0;
@@ -146,6 +150,7 @@ class FakeEngine implements ChatEnginePort {
     title?: string;
     workDir?: string;
     toolset?: 'read-only' | 'coding';
+    skills?: string[];
   }): Promise<FakeSession> {
     if (this.createFailure) {
       const error = this.createFailure;
@@ -165,6 +170,12 @@ class FakeEngine implements ChatEnginePort {
           : ['read', 'grep', 'find', 'ls'];
       session.workspace = { root: input.workDir, toolset, tools };
       session.activeTools = tools;
+    }
+    if (input?.skills?.length) {
+      session.skills = input.skills.map((path, index) => ({
+        name: `skill-${index + 1}`,
+        description: `from ${path}`,
+      }));
     }
     this.created.push(session);
     this.sessions.set(session.id, session);
@@ -721,6 +732,99 @@ describe('runCli', () => {
     const invalid = createHarness({ lines: ['/workspace /tmp/x sudo', '/exit'] });
     await runCli([], invalid.dependencies);
     expect(invalid.stderr.join('')).toContain('/workspace <dir> [read-only|coding]');
+  });
+
+  test('--skills flows into engine config, accumulates on repeat, and requires --workdir', async () => {
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+    const code = await runCli(
+      ['run', 'hi', '--workdir', '/tmp/ws', '--skills', '/skills/a', '--skills', '/skills/b'],
+      harness.dependencies
+    );
+    expect(code).toBe(0);
+    expect(config?.skills).toEqual(['/skills/a', '/skills/b']);
+
+    const noWorkdir = createHarness();
+    expect(await runCli(['run', 'x', '--skills', '/skills/a'], noWorkdir.dependencies)).toBe(2);
+    expect(noWorkdir.stderr.join('')).toContain('--skills requires --workdir');
+  });
+
+  test('--system-prompt-file replaces the system prompt; unreadable or empty file exits 2', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tachikoma-cli-prompt-'));
+    const promptFile = join(dir, 'persona.md');
+    await writeFile(promptFile, '你是写作助手 PERSONA_MARKER\n');
+
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+    const code = await runCli(
+      ['run', 'hi', '--system-prompt-file', promptFile],
+      harness.dependencies
+    );
+    expect(code).toBe(0);
+    expect(config?.systemPrompt).toContain('PERSONA_MARKER');
+
+    const missing = createHarness();
+    expect(
+      await runCli(
+        ['run', 'x', '--system-prompt-file', join(dir, 'missing.md')],
+        missing.dependencies
+      )
+    ).toBe(2);
+    expect(missing.stderr.join('')).toContain('--system-prompt-file is not readable');
+
+    const emptyFile = join(dir, 'empty.md');
+    await writeFile(emptyFile, ' \n');
+    const empty = createHarness();
+    expect(await runCli(['run', 'x', '--system-prompt-file', emptyFile], empty.dependencies)).toBe(
+      2
+    );
+    expect(empty.stderr.join('')).toContain('--system-prompt-file is empty');
+  });
+
+  test('/skills lists, grants via a new session keeping the workspace, and clears with off', async () => {
+    const engine = new FakeEngine();
+    const harness = createHarness({
+      engine,
+      lines: [
+        '/workspace /tmp/ws coding',
+        '/skills',
+        '/skills /skills/demo',
+        '/skills',
+        '/skills off',
+        '/exit',
+      ],
+    });
+
+    const code = await runCli([], harness.dependencies);
+
+    expect(code).toBe(0);
+    const output = harness.stdout.join('');
+    expect(output).toContain('[skills] none — /skills <path>');
+    expect(output).toContain('[skill] skill-1 — from /skills/demo');
+    // 授予 = 新会话，且带上当前工作区授予
+    expect(engine.createInputs.at(2)).toMatchObject({
+      workDir: '/tmp/ws',
+      toolset: 'coding',
+      skills: ['/skills/demo'],
+    });
+    // off = 显式空数组（替换语义），工作区照旧
+    expect(engine.createInputs.at(3)).toMatchObject({
+      workDir: '/tmp/ws',
+      toolset: 'coding',
+      skills: [],
+    });
+
+    const noWorkspace = createHarness({ lines: ['/skills /skills/demo', '/exit'] });
+    await runCli([], noWorkspace.dependencies);
+    expect(noWorkspace.stderr.join('')).toContain('/skills requires a workspace');
   });
 
   test('runs one-shot chat through the same session surface and reports memory degradation', async () => {

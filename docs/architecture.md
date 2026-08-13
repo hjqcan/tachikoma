@@ -46,6 +46,11 @@ metadata. Credentials remain private to the engine process (pi auth, env, `model
 interpolation) and never appear in events, DTOs, or the public model reference
 `{ provider, model }`.
 
+Directory layering: `dataDir` holds workspace-scoped state (sessions, WAL, memory sqlite);
+`configDir` (default = `dataDir`, env `TACHIKOMA_CONFIG_DIR`) holds user-level configuration — today
+only `models.json`. Deployments that point `dataDir` into each workspace (one sidecar per project)
+set `configDir` once so model/credential configuration is shared, not copied.
+
 ## Event contract
 
 The frozen stream union (turns 1 and 2):
@@ -94,6 +99,15 @@ assertion enforces the empty set. Tool enablement is a per-invocation grant, nev
   (`createSession({ workDir, toolset })`, RPC `session.create`, capability `session-workspace`).
   Session grants are live-session state: they never persist, and a reopened session returns to the
   engine default until re-granted.
+- Skills are the same explicit-grant shape (capability `skills`): `ChatEngineConfig.skills` /
+  `createSession({ skills })` list SKILL.md files or skill directories; nothing is discovered from
+  the environment and zero grants means zero disk scans. A grant requires a workspace grant — pi
+  only surfaces skills to sessions holding the `read` tool — and skill roots join the guard as
+  read-only roots (read/grep/find/ls may read them; write/edit stay workspace-only; bash keeps
+  approval as its control surface). Unusable grant paths and grants that load nothing fail session
+  creation; partially dropped skills (e.g. missing `description`) are visible by absence in the
+  session summary's `skills` list, which is the truth surface. A session grant replaces the engine
+  default (`[]` = explicitly none), lives only in the live session, and is echoed nowhere else.
 - The CLI exposes this as `--workdir`, `--toolset read-only|coding`, and `--allow write,edit,bash`
   (which implies the coding toolset), plus `/workspace <dir> [toolset]` in the REPL for runtime
   grants (a new session with the grant; `/workspace off` revokes). The interactive REPL prompts

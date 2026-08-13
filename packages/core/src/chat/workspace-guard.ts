@@ -50,25 +50,38 @@ function isInside(candidate: string, root: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${sep}`);
 }
 
+function isInsideAny(candidate: string, roots: readonly string[]): boolean {
+  return roots.some((root) => isInside(candidate, root));
+}
+
 /**
  * 返回第一个越界的入参值；无越界返回 null。
- * root 必须已是 canonical（realpath 过的）绝对路径。
+ * roots 必须已是 canonical（realpath 过的）绝对路径；相对路径对第一个根
+ * （工作区根 = 会话 cwd）解析，落在任一根内即通过。
  */
-export function findWorkspaceViolation(input: unknown, root: string): string | null {
+export function findWorkspaceViolation(
+  input: unknown,
+  roots: string | readonly string[]
+): string | null {
   if (!input || typeof input !== 'object') {
     return null;
+  }
+  const rootList = typeof roots === 'string' ? [roots] : roots;
+  const primaryRoot = rootList[0];
+  if (primaryRoot === undefined) {
+    throw new Error('findWorkspaceViolation requires at least one root.');
   }
   for (const field of PATH_INPUT_FIELDS) {
     const value = (input as Record<string, unknown>)[field];
     if (typeof value !== 'string' || value.length === 0) {
       continue;
     }
-    const resolved = resolve(root, value);
-    if (!isInside(resolved, root)) {
+    const resolved = resolve(primaryRoot, value);
+    if (!isInsideAny(resolved, rootList)) {
       return value;
     }
     try {
-      if (!isInside(realpathSync(resolved), root)) {
+      if (!isInsideAny(realpathSync(resolved), rootList)) {
         return value;
       }
     } catch {
@@ -78,14 +91,20 @@ export function findWorkspaceViolation(input: unknown, root: string): string | n
   return null;
 }
 
+/** 路径必须落在工作区根内才可写的工具；只读根对它们不生效 */
+const WRITE_PATH_TOOLS: ReadonlySet<string> = new Set(['write', 'edit']);
+
 export function createWorkspaceGuardExtension(
   root: string,
   options: {
     approvalRequired?: ReadonlySet<string>;
     approvalBridge?: ToolApprovalBridge;
+    /** 额外只读根（如 skill 授予目录）：read/grep/find/ls 可读，write/edit 仍拒 */
+    readOnlyRoots?: readonly string[];
   } = {}
 ): InlineExtension {
   const approvalRequired = options.approvalRequired ?? new Set<string>();
+  const readRoots: readonly string[] = [root, ...(options.readOnlyRoots ?? [])];
   return {
     name: 'tachikoma-workspace-guard',
     hidden: true,
@@ -100,7 +119,8 @@ export function createWorkspaceGuardExtension(
               : BASH_DEFAULT_TIMEOUT_SECS;
         }
         // 路径边界先于审批：越界调用即使被批准也不执行。
-        const violation = findWorkspaceViolation(event.input, root);
+        const roots = WRITE_PATH_TOOLS.has(event.toolName) ? root : readRoots;
+        const violation = findWorkspaceViolation(event.input, roots);
         if (violation) {
           return {
             block: true,

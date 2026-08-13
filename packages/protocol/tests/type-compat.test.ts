@@ -12,10 +12,17 @@ import type {
   ChatMemorySnapshot,
   ChatModelListing,
   ChatSessionSummary,
+  ChatSkillInfo,
 } from '@tachikoma/core';
 
 import type { ChatEventWire } from '../src/events';
-import type { CompactionResult, MemorySnapshot, ModelListing, SessionSummary } from '../src/dto';
+import type {
+  CompactionResult,
+  MemorySnapshot,
+  ModelListing,
+  SessionSummary,
+  SkillInfo,
+} from '../src/dto';
 
 type AssertMutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 
@@ -25,9 +32,10 @@ const summaryCompat: AssertMutual<ChatSessionSummary, SessionSummary> = true;
 const compactionCompat: AssertMutual<ChatCompactionResult, CompactionResult> = true;
 const memoryCompat: AssertMutual<ChatMemorySnapshot, MemorySnapshot> = true;
 const listingCompat: AssertMutual<ChatModelListing, ModelListing> = true;
+const skillCompat: AssertMutual<ChatSkillInfo, SkillInfo> = true;
 
 it('core 与 wire 类型双向兼容（编译期已验证）', () => {
   expect(
-    eventCompat && summaryCompat && compactionCompat && memoryCompat && listingCompat
+    eventCompat && summaryCompat && compactionCompat && memoryCompat && listingCompat && skillCompat
   ).toBeTrue();
 });

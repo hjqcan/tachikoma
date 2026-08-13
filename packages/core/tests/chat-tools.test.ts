@@ -209,6 +209,31 @@ describe('findWorkspaceViolation 单元语义', () => {
       await rm(workDir, { recursive: true, force: true });
     }
   });
+
+  it('多根：任一根内放行，额外根的逃逸与 symlink 越界仍拦截', async () => {
+    const workDir = await realpath(await makeWorkspace());
+    const extraRoot = await realpath(await mkdtemp(join(tmpdir(), 'tachikoma-extra-')));
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'tachikoma-far-')));
+    await writeFile(join(extraRoot, 'SKILL.md'), 'skill\n');
+    await writeFile(join(outside, 'secret.txt'), 'secret\n');
+    await symlink(join(outside, 'secret.txt'), join(extraRoot, 'link.md'));
+    const roots = [workDir, extraRoot];
+    try {
+      // 相对路径仍对第一个根（工作区根）解析
+      expect(findWorkspaceViolation({ path: 'hello.txt' }, roots)).toBeNull();
+      expect(findWorkspaceViolation({ path: join(extraRoot, 'SKILL.md') }, roots)).toBeNull();
+      const escape = join(extraRoot, '..', 'escape.txt');
+      expect(findWorkspaceViolation({ path: escape }, roots)).toBe(escape);
+      const link = join(extraRoot, 'link.md');
+      expect(findWorkspaceViolation({ path: link }, roots)).toBe(link);
+      // 单字符串调用保持兼容
+      expect(findWorkspaceViolation({ path: 'hello.txt' }, workDir)).toBeNull();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await rm(extraRoot, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('第二圈：会话级工作区授予', () => {

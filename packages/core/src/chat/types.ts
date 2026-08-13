@@ -25,6 +25,11 @@ export interface ChatMemoryConfig {
 
 export interface ChatEngineConfig {
   dataDir?: string;
+  /**
+   * 用户级配置目录（当前仅 models.json）。缺省 = dataDir，即零行为变化；
+   * per-workspace dataDir 的部署（如每本书一个 sidecar）用它共享模型/凭据配置。
+   */
+  configDir?: string;
   model?: ChatModelRef;
   thinkingLevel?: ChatThinkingLevel;
   systemPrompt?: string;
@@ -44,6 +49,11 @@ export interface ChatEngineConfig {
   toolset?: ChatToolset;
   /** 审批等待超时（毫秒），超时默认拒绝。默认 120000 */
   approvalTimeoutMs?: number;
+  /**
+   * Skill 授予：SKILL.md 文件或含 skill 的目录路径，显式列举（零环境发现，
+   * 缺省零 skill）。skills 依赖 read 工具进入系统提示，因此授予要求 workDir。
+   */
+  skills?: string[];
 }
 
 export type ChatToolset = 'read-only' | 'coding';
@@ -66,6 +76,17 @@ export interface ChatSessionInit {
   workDir?: string;
   /** 本会话工具集；缺省用引擎配置。仅在（本会话或引擎）设置了 workDir 时生效 */
   toolset?: ChatToolset;
+  /**
+   * 本会话的 skill 授予，**替换**引擎默认（`[]` = 显式无；undefined = 继承）。
+   * 与 workDir/toolset 同为 live 授予：不落盘，重开不恢复。
+   */
+  skills?: string[];
+}
+
+/** 已加载 skill 的展示信息（summary 即真相面：授予但被 pi 丢弃者以缺席可见） */
+export interface ChatSkillInfo {
+  name: string;
+  description: string;
 }
 
 /** 图片附件：base64 原文随 send 进 pi（转录是像素的事实源；事件只留元数据） */
@@ -111,6 +132,8 @@ export interface ChatSessionSummary {
   error?: string;
   /** 仅 live 会话携带（server 侧补充）；listSessions 的磁盘摘要没有它 */
   workspace?: ChatWorkspaceState;
+  /** 仅 live 会话携带（server 侧补充）：已加载 skills */
+  skills?: ChatSkillInfo[];
 }
 
 export interface ChatCompactionResult {

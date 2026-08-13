@@ -34,10 +34,13 @@ async function bootSidecar(): Promise<SidecarHandle> {
     token,
     env: {
       TACHIKOMA_DATA_DIR: process.env.TACHIKOMA_DATA_DIR,
+      TACHIKOMA_CONFIG_DIR: process.env.TACHIKOMA_CONFIG_DIR,
       TACHIKOMA_PROVIDER: process.env.TACHIKOMA_PROVIDER,
       TACHIKOMA_MODEL: process.env.TACHIKOMA_MODEL,
       TACHIKOMA_WORKDIR: process.env.TACHIKOMA_WORKDIR,
       TACHIKOMA_TOOLSET: process.env.TACHIKOMA_TOOLSET,
+      TACHIKOMA_SKILLS: process.env.TACHIKOMA_SKILLS,
+      TACHIKOMA_SYSTEM_PROMPT_FILE: process.env.TACHIKOMA_SYSTEM_PROMPT_FILE,
       TACHIKOMA_NO_MEMORY: process.env.TACHIKOMA_NO_MEMORY,
     },
   });

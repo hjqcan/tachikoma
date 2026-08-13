@@ -20,6 +20,7 @@ import type {
   RpcResponse,
   SessionEventFrame,
   SessionSummary,
+  SkillInfo,
   ThinkingLevel,
   Toolset,
   WorkspaceState,
@@ -68,6 +69,7 @@ class FakeSession implements ServerSessionPort {
   memoryStatus: MemorySnapshot = { enabled: false, status: 'disabled' };
   activeTools: readonly string[] = [];
   workspace: WorkspaceState | null = null;
+  skills: readonly SkillInfo[] | null = null;
   approvals: { callId: string; approved: boolean; scope?: 'call' | 'session' }[] = [];
   aborted = 0;
   closed = 0;
@@ -141,9 +143,19 @@ class FakeEngine implements ServerEnginePort {
   readonly sessions = new Map<string, FakeSession>();
   private counter = 0;
 
-  async createSession(init?: { workDir?: string; toolset?: Toolset }): Promise<FakeSession> {
+  async createSession(init?: {
+    workDir?: string;
+    toolset?: Toolset;
+    skills?: string[];
+  }): Promise<FakeSession> {
     this.counter += 1;
     const session = new FakeSession(`session-${this.counter}`);
+    if (init?.skills?.length) {
+      session.skills = init.skills.map((path, index) => ({
+        name: `skill-${index + 1}`,
+        description: `from ${path}`,
+      }));
+    }
     if (init?.workDir) {
       const toolset = init.toolset ?? 'read-only';
       session.workspace = {
@@ -239,7 +251,11 @@ async function startHarness(): Promise<Harness> {
     token: TOKEN,
     dataDir,
     engineVersion: '0.2.0-test',
-    sessionDefaults: { workDir: '/workspaces/demo', toolset: 'read-only' },
+    sessionDefaults: {
+      workDir: '/workspaces/demo',
+      toolset: 'read-only',
+      skills: ['/skills/default'],
+    },
   });
 
   async function rpc(method: string, params: unknown = {}, token = TOKEN): Promise<RpcResponse> {
@@ -340,7 +356,11 @@ describe('sidecar', () => {
         expect(hello.result).toMatchObject({
           protocolVersion: 1,
           engineVersion: '0.2.0-test',
-          session: { workDir: '/workspaces/demo', toolset: 'read-only' },
+          session: {
+            workDir: '/workspaces/demo',
+            toolset: 'read-only',
+            skills: ['/skills/default'],
+          },
         });
         expect(JSON.stringify(hello.result)).not.toContain('sk-');
       }
@@ -435,6 +455,30 @@ describe('sidecar', () => {
 
       const invalid = await harness.rpc('session.create', { toolset: 'sudo' });
       expect(invalid).toMatchObject({ ok: false, error: { code: 'invalid_params' } });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  it('session.create 携带 skills 时摘要带回已加载 skills；裸建不带该字段', async () => {
+    const harness = await startHarness();
+    try {
+      const granted = await harness.rpc('session.create', {
+        workDir: '/workspaces/demo',
+        skills: ['/skills/demo'],
+      });
+      expect(granted.ok).toBeTrue();
+      if (granted.ok) {
+        expect((granted.result as SessionSummary).skills).toEqual([
+          { name: 'skill-1', description: 'from /skills/demo' },
+        ]);
+      }
+
+      const bare = await harness.rpc('session.create');
+      expect(bare.ok).toBeTrue();
+      if (bare.ok) {
+        expect((bare.result as SessionSummary).skills).toBeUndefined();
+      }
     } finally {
       await harness.stop();
     }

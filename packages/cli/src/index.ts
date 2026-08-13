@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import {
   ChatEngine,
@@ -33,6 +34,7 @@ export interface ChatSessionPort {
     toolset: 'read-only' | 'coding';
     tools: string[];
   } | null;
+  readonly skills: readonly { name: string; description: string }[] | null;
   abort(): Promise<boolean>;
   respondToApproval(callId: string, approved: boolean, scope?: 'call' | 'session'): boolean;
   close(): Promise<void>;
@@ -51,6 +53,7 @@ export interface ChatEnginePort {
     title?: string;
     workDir?: string;
     toolset?: 'read-only' | 'coding';
+    skills?: string[];
   }): Promise<ChatSessionPort>;
   deleteSession(sessionId: string): Promise<boolean>;
   listModels(): Promise<ChatModelListing[]>;
@@ -119,6 +122,10 @@ interface ParsedArguments {
   toolset?: 'read-only' | 'coding';
   /** --allow 按次授予的审批工具（write/edit/bash 子集）；隐含 toolset: 'coding' */
   allowTools?: readonly string[];
+  /** --skills 可重复：SKILL.md 文件或目录路径的显式授予（requires --workdir） */
+  skills?: readonly string[];
+  /** --system-prompt-file：整体替换默认系统提示词（文件路径；多行/非 ASCII 友好） */
+  systemPromptFile?: string;
 }
 
 interface TurnResult {
@@ -224,7 +231,7 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --skills <path>    grant a SKILL.md file or a skills directory (requires --workdir;\n                     repeatable)\n  --system-prompt-file <path>\n                     replace the default system prompt with the file's content\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session;\n                               does not carry skills — re-grant with /skills)\n  /skills [<path> [path…] | off]\n                               show or grant this session's skills (new session,\n                               keeps the current workspace grant)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
@@ -253,6 +260,8 @@ function parseArguments(
   let workDir: string | undefined;
   let toolset: 'read-only' | 'coding' | undefined;
   let allowTools: readonly string[] | undefined;
+  let skills: string[] | undefined;
+  let systemPromptFile: string | undefined;
   let noMemory = false;
   let forceHelp = false;
   let forceVersion = false;
@@ -304,6 +313,14 @@ function parseArguments(
         index += 1;
         break;
       }
+      case '--skills':
+        (skills ??= []).push(takeValue(args, index, argument));
+        index += 1;
+        break;
+      case '--system-prompt-file':
+        systemPromptFile = takeValue(args, index, argument);
+        index += 1;
+        break;
       case '--no-memory':
         noMemory = true;
         break;
@@ -335,6 +352,9 @@ function parseArguments(
   if (toolset && !workDir) {
     throw new CliUsageError('--toolset requires --workdir');
   }
+  if (skills && !workDir) {
+    throw new CliUsageError('--skills requires --workdir');
+  }
 
   const first = positional[0];
   const command = first === undefined ? 'chat' : first;
@@ -358,7 +378,27 @@ function parseArguments(
     ...(workDir ? { workDir } : {}),
     ...(toolset ? { toolset } : {}),
     ...(allowTools ? { allowTools } : {}),
+    ...(skills ? { skills } : {}),
+    ...(systemPromptFile ? { systemPromptFile } : {}),
   };
+}
+
+/** 读提示词文件；读不到/为空是用法错误（退出码 2），不静默回退默认提示词 */
+function readSystemPromptFile(path: string): string {
+  let content: string;
+  try {
+    content = readFileSync(path, 'utf8');
+  } catch (error) {
+    throw new CliUsageError(
+      `--system-prompt-file is not readable: ${path} (${
+        error instanceof Error ? error.message : String(error)
+      })`
+    );
+  }
+  if (!content.trim()) {
+    throw new CliUsageError(`--system-prompt-file is empty: ${path}`);
+  }
+  return content;
 }
 
 function engineConfig(
@@ -367,6 +407,7 @@ function engineConfig(
 ): ChatEngineConfig {
   return {
     ...(env.TACHIKOMA_DATA_DIR ? { dataDir: env.TACHIKOMA_DATA_DIR } : {}),
+    ...(env.TACHIKOMA_CONFIG_DIR ? { configDir: env.TACHIKOMA_CONFIG_DIR } : {}),
     ...(parsed.model ? { model: parsed.model } : {}),
     ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
     ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
@@ -375,6 +416,10 @@ function engineConfig(
       : parsed.allowTools?.length
         ? { toolset: 'coding' as const }
         : {}),
+    ...(parsed.skills?.length ? { skills: [...parsed.skills] } : {}),
+    ...(parsed.systemPromptFile
+      ? { systemPrompt: readSystemPromptFile(parsed.systemPromptFile) }
+      : {}),
     memory: parsed.noMemory
       ? false
       : {
@@ -733,6 +778,37 @@ async function handleSlashCommand(
           workspace
             ? `${workspace.root} (${workspace.toolset}: ${workspace.tools.join(', ')})`
             : 'none'
+        }\n`
+      );
+      return { exit: false, session: next };
+    }
+    case 'skills': {
+      if (!value) {
+        const skills = session.skills;
+        dependencies.write(
+          skills
+            ? skills.map((skill) => `[skill] ${skill.name} — ${skill.description}\n`).join('')
+            : '[skills] none — /skills <path> [path…] to grant, /skills off to clear\n'
+        );
+        return { exit: false, session };
+      }
+      const workspace = session.workspace;
+      if (!workspace) {
+        throw new CliUsageError('/skills requires a workspace — /workspace <dir> first');
+      }
+      // 授予是会话级的：换 skills = 带当前工作区授予开新会话（/workspace 不带 skills 前行）
+      const next = await engine.createSession({
+        model: session.model,
+        thinkingLevel: session.thinkingLevel,
+        workDir: workspace.root,
+        toolset: workspace.toolset,
+        skills: value === 'off' ? [] : value.split(/\s+/),
+      });
+      await session.close();
+      const skills = next.skills;
+      dependencies.write(
+        `[session] ${next.id}\n[skills] ${
+          skills ? skills.map((skill) => skill.name).join(', ') : 'none'
         }\n`
       );
       return { exit: false, session: next };

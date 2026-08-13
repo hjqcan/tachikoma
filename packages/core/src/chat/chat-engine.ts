@@ -87,6 +87,7 @@ export class ChatEngine {
   private readonly configuredThinkingLevel: ChatThinkingLevel | undefined;
   private readonly workDir: string | undefined;
   private readonly toolset: ChatToolset;
+  private readonly skills: readonly string[];
   private readonly approvalTimeoutMs: number;
   private readonly systemPrompt: string;
   private readonly injectedMemoryKit: GoodMemoryRuntimeKit | undefined;
@@ -106,6 +107,7 @@ export class ChatEngine {
     this.configuredThinkingLevel = config.thinkingLevel;
     this.workDir = config.workDir ? resolve(config.workDir) : undefined;
     this.toolset = config.toolset ?? 'read-only';
+    this.skills = config.skills ?? [];
     this.approvalTimeoutMs = config.approvalTimeoutMs ?? 120_000;
     this.systemPrompt = config.systemPrompt ?? buildChatSystemPrompt();
     this.memoryEnabled = config.memory !== false;
@@ -118,12 +120,13 @@ export class ChatEngine {
         ? undefined
         : resolve(config.memory?.databasePath ?? join(this.dataDir, 'memory', 'goodmemory.sqlite'));
     this.injectedMemoryKit = options.memoryRuntimeKit;
+    const configDir = resolve(config.configDir ?? this.dataDir);
     this.modelRuntimePromise = options.modelRuntime
       ? Promise.resolve(options.modelRuntime)
       : ModelRuntime.create({
           allowModelNetwork: false,
           refreshOnCreate: false,
-          modelsPath: join(this.dataDir, 'models.json'),
+          modelsPath: join(configDir, 'models.json'),
         });
   }
 
@@ -138,6 +141,8 @@ export class ChatEngine {
         ...(init.title ? { title: init.title } : {}),
         ...(init.workDir ? { workDir: init.workDir } : {}),
         ...(init.toolset ? { toolset: init.toolset } : {}),
+        // `[]` 是显式清空（替换语义），不得折叠成 undefined。
+        ...(init.skills !== undefined ? { skills: init.skills } : {}),
       });
     } catch (error) {
       throw credentialSafeError(error);
@@ -430,6 +435,7 @@ export class ChatEngine {
       title?: string;
       workDir?: string;
       toolset?: ChatToolset;
+      skills?: string[];
     }
   ): Promise<ChatSession> {
     const { model: requestedModel, thinkingLevel, title } = options;
@@ -448,6 +454,27 @@ export class ChatEngine {
         ? CODING_TOOLS
         : WORKSPACE_TOOLS
       : [];
+    // skill 授予：会话授予替换引擎默认（[] = 显式无）。路径逐条 canonical 化，
+    // 坏授予快败——静默不生效的授予违背显式授予哲学。
+    const skillGrants = options.skills ?? this.skills;
+    const skillPaths: string[] = [];
+    const skillRoots: string[] = [];
+    for (const grant of skillGrants) {
+      let canonical: string;
+      try {
+        canonical = await realpath(resolve(grant));
+      } catch (error) {
+        throw new Error(`skills path is not usable: ${grant} (${safeErrorMessage(error)})`, {
+          cause: error,
+        });
+      }
+      skillPaths.push(canonical);
+      skillRoots.push((await stat(canonical)).isDirectory() ? canonical : dirname(canonical));
+    }
+    if (skillPaths.length > 0 && !workspaceRoot) {
+      // pi 只对拥有 read 工具的会话注入 skills；零工具会话的授予会静默失效。
+      throw new Error('skills require a workspace grant (workDir).');
+    }
     const approvalBridge: ToolApprovalBridge = {};
     const promptMemoryContext: PromptMemoryContext = { value: '', abortRequested: false };
     const settingsManager = SettingsManager.inMemory({
@@ -482,17 +509,24 @@ export class ChatEngine {
         });
       },
     };
+    // 有 skill 授予时必须声明其根可读，否则"工作区外拒绝"会让模型拒读自己的 skill。
+    const skillRootsNote =
+      skillRoots.length > 0 ? ` Skill files under ${skillRoots.join(', ')} are also readable.` : '';
+    // 工具姿态段落由引擎统一追加（零工具/只读/coding 三种），自定义提示词同样适用。
     const effectiveSystemPrompt = workspaceRoot
       ? toolset === 'coding'
-        ? `${this.systemPrompt}\n\nYou have coding tools (read/grep/find/ls/write/edit/bash) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected. write/edit/bash calls require user approval and may be denied; adapt when they are.`
-        : `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.`
-      : this.systemPrompt;
+        ? `${this.systemPrompt}\n\nYou have coding tools (read/grep/find/ls/write/edit/bash) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.${skillRootsNote} write/edit/bash calls require user approval and may be denied; adapt when they are.`
+        : `${this.systemPrompt}\n\nYou have read-only tools (read/grep/find/ls) scoped to the workspace at ${workspaceRoot}. Paths outside the workspace are rejected.${skillRootsNote}`
+      : `${this.systemPrompt}\n\nYou have no tools in this session. Do not claim to read files, run commands, browse, or change external state.`;
     const resourceLoader = new DefaultResourceLoader({
       cwd: workspaceRoot ?? this.dataDir,
       agentDir: this.agentDir,
       settingsManager,
       noExtensions: true,
+      // noSkills 只关环境发现；additionalSkillPaths 是显式授予通道，
+      // includeDefaults: false —— 零授予即零磁盘扫描。
       noSkills: true,
+      additionalSkillPaths: skillPaths,
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
@@ -504,12 +538,21 @@ export class ChatEngine {
               createWorkspaceGuardExtension(workspaceRoot, {
                 approvalRequired: new Set(toolset === 'coding' ? APPROVAL_REQUIRED_TOOLS : []),
                 approvalBridge,
+                readOnlyRoots: skillRoots,
               }),
             ]
           : []),
       ],
     });
     await resourceLoader.reload();
+    const loadedSkills = resourceLoader.getSkills();
+    if (skillPaths.length > 0 && loadedSkills.skills.length === 0) {
+      const detail = loadedSkills.diagnostics
+        .map((d) => (d.path ? `${d.path}: ${d.message}` : d.message))
+        .join('; ');
+      throw new Error(`Skill grants loaded no skills: ${detail || skillPaths.join(', ')}`);
+    }
+    const skillInfos = loadedSkills.skills.map(({ name, description }) => ({ name, description }));
 
     const effectiveThinkingLevel = thinkingLevel ?? this.configuredThinkingLevel;
     const result = await createAgentSession({
@@ -548,6 +591,7 @@ export class ChatEngine {
       promptMemoryContext,
       allowedTools,
       ...(workspaceRoot ? { workspace: { root: workspaceRoot, toolset } } : {}),
+      ...(skillInfos.length > 0 ? { skills: skillInfos } : {}),
       approvalBridge,
       approvalTimeoutMs: this.approvalTimeoutMs,
       onClose: (sessionId) => this.openSessions.delete(sessionId),

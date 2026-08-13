@@ -36,7 +36,7 @@ export interface TachikomaServerOptions {
   dataDir: string;
   engineVersion: string;
   port?: number;
-  sessionDefaults?: { workDir?: string; toolset?: 'read-only' | 'coding' };
+  sessionDefaults?: { workDir?: string; toolset?: 'read-only' | 'coding'; skills?: string[] };
 }
 
 export interface TachikomaServer {
@@ -130,8 +130,12 @@ export async function startTachikomaServer(
       thinkingLevel: session.thinkingLevel,
       status: 'ready' as const,
     };
-    // 工作区授予是 live 会话属性（磁盘摘要没有它），server 侧补充。
-    return session.workspace ? { ...summary, workspace: session.workspace } : summary;
+    // 工作区/skill 授予是 live 会话属性（磁盘摘要没有它们），server 侧补充。
+    return {
+      ...summary,
+      ...(session.workspace ? { workspace: session.workspace } : {}),
+      ...(session.skills ? { skills: [...session.skills] } : {}),
+    };
   }
 
   async function requireSession(sessionId: string): Promise<ServerSessionPort> {
@@ -202,6 +206,8 @@ export async function startTachikomaServer(
         ...(parsed.title ? { title: parsed.title } : {}),
         ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
         ...(parsed.toolset ? { toolset: parsed.toolset } : {}),
+        // [] 是显式清空（替换语义），判 undefined 而非真值
+        ...(parsed.skills !== undefined ? { skills: parsed.skills } : {}),
       });
       sessions.set(session.id, session);
       return summaryOf(session);

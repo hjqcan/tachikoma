@@ -1,6 +1,12 @@
 import { fauxAssistantMessage } from '@earendil-works/pi-ai';
+import {
+  createDeterministicMemoryExtractor,
+  createGoodMemory,
+  createLocalEmbeddingAdapter,
+} from 'goodmemory';
 import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { describe, expect, it } from 'bun:test';
+import { join } from 'node:path';
 
 import { ChatEngine } from '../src';
 import type { ChatEvent, ChatMessageCompleteEvent } from '../src';
@@ -161,6 +167,128 @@ describe('GoodMemory lifecycle', () => {
       const deleted = await engine.memoryClear();
       expect(deleted).toBeGreaterThanOrEqual(0);
       expect(await engine.memoryList()).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('普通中文问句不会经聊天写回进入持久记忆', async () => {
+    const harness = await createFauxHarness();
+    try {
+      harness.faux.setResponses([
+        fauxAssistantMessage('我可以帮助你回答问题。'),
+        fauxAssistantMessage('我不知道你昨天吃了什么。'),
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: { userId: 'question-admission-user' },
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const session = await engine.createSession();
+
+      for (const question of ['你能帮我做什么', '我昨天吃了什么']) {
+        const events = await collect(session.send(question));
+        expect(complete(events).status).toBe('success');
+        expect(events).toContainEqual(
+          expect.objectContaining({ type: 'memory_status', phase: 'writeback', status: 'ready' })
+        );
+      }
+      await session.close();
+
+      const questionCandidates = (await engine.memoryList()).filter(
+        (record) => record.type !== 'experience' && record.type !== 'archive'
+      );
+      expect(questionCandidates).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it('历史问句坏事实不会被图片问题召回，并可按 exact ID 清理', async () => {
+    const harness = await createFauxHarness();
+    const databasePath = join(harness.dataDir, 'historical-question-memory.sqlite');
+    const userId = 'historical-question-user';
+    const scope = { userId, workspaceId: 'tachikoma', agentId: 'tachikoma' } as const;
+    const badFactContents = ['我正在做什么。', '我吃了什么。'];
+    try {
+      const memory = createGoodMemory({
+        storage: { provider: 'sqlite', url: databasePath },
+        adapters: {
+          assistedExtractor: createDeterministicMemoryExtractor(),
+          embeddingAdapter: createLocalEmbeddingAdapter(),
+        },
+      });
+      for (const content of badFactContents) {
+        const result = await memory.remember({
+          scope,
+          messages: [{ role: 'user', content }],
+          annotations: [
+            {
+              messageIndex: 0,
+              remember: 'always',
+              kindHint: 'fact',
+              confirmed: true,
+              reason: 'historical-question-regression-seed',
+            },
+          ],
+          extractionStrategy: 'rules-only',
+          locale: 'zh-Hans',
+        });
+        expect(result.accepted).toBe(1);
+      }
+
+      let modelMessages = '';
+      harness.faux.setResponses([
+        (context) => {
+          modelMessages = JSON.stringify(context.messages);
+          return fauxAssistantMessage('这是一张测试图片。');
+        },
+      ]);
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: { databasePath, userId },
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const seeded = (await engine.memoryList()).filter(
+        (record) => record.type === 'fact' && badFactContents.includes(record.content)
+      );
+      expect(seeded.map((record) => record.content).sort()).toEqual([...badFactContents].sort());
+
+      const session = await engine.createSession();
+      const image = Buffer.from('offline-image-bytes').toString('base64');
+      const events = await collect(
+        session.send('这张图片里画的是什么', {
+          images: [{ name: 'memory-regression.png', mimeType: 'image/png', data: image }],
+        })
+      );
+      expect(complete(events).status).toBe('success');
+      await session.close();
+
+      for (const record of seeded) {
+        expect(await engine.memoryForget(record.id)).toBeTrue();
+      }
+      const remainingIds = new Set((await engine.memoryList()).map((record) => record.id));
+      for (const record of seeded) {
+        expect(remainingIds.has(record.id)).toBeFalse();
+      }
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'memory_status',
+          phase: 'recall',
+          status: 'empty',
+          hasContext: false,
+        })
+      );
+      expect(modelMessages).not.toContain('<recalled_user_context>');
+      expect(modelMessages).not.toContain('我正在做什么。');
+      expect(modelMessages).not.toContain('我吃了什么。');
     } finally {
       await harness.cleanup();
     }

@@ -71,6 +71,57 @@ describe('custom models.json resolution', () => {
     }
   });
 
+  it('configDir set: models.json resolves from configDir, not from the per-workspace dataDir', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'tachikoma-models-data-'));
+    const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-models-config-'));
+    const previousKey = process.env.CUSTOM_GATEWAY_KEY;
+    process.env.CUSTOM_GATEWAY_KEY = 'offline-placeholder-key';
+    try {
+      await writeFile(
+        join(configDir, 'models.json'),
+        JSON.stringify({
+          providers: {
+            'config-gateway': {
+              name: 'Config Gateway',
+              baseUrl: 'https://gateway.invalid/v1',
+              api: 'openai-completions',
+              apiKey: '$CUSTOM_GATEWAY_KEY',
+              models: [
+                {
+                  id: 'config-model',
+                  name: 'Config Model',
+                  reasoning: false,
+                  input: ['text'],
+                  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                  contextWindow: 128_000,
+                  maxTokens: 16_384,
+                },
+              ],
+            },
+          },
+        })
+      );
+
+      const engine = new ChatEngine({
+        dataDir,
+        configDir,
+        model: { provider: 'config-gateway', model: 'config-model' },
+        memory: false,
+      });
+      const session = await engine.createSession();
+      expect(session.model).toEqual({ provider: 'config-gateway', model: 'config-model' });
+      await session.close();
+    } finally {
+      if (previousKey === undefined) {
+        delete process.env.CUSTOM_GATEWAY_KEY;
+      } else {
+        process.env.CUSTOM_GATEWAY_KEY = previousKey;
+      }
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a model that neither the catalog nor models.json defines', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'tachikoma-models-'));
     try {

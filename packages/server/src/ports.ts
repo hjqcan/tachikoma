@@ -11,6 +11,7 @@ import type {
   ModelListing,
   ModelRef,
   SessionSummary,
+  SkillInfo,
   ThinkingLevel,
   Toolset,
   WorkspaceState,
@@ -24,6 +25,8 @@ export interface ServerSessionPort {
   readonly activeTools: readonly string[];
   /** live 会话的工作区授予；null = 零工具 */
   readonly workspace: WorkspaceState | null;
+  /** live 会话已加载的 skills；null = 无授予 */
+  readonly skills: readonly SkillInfo[] | null;
   send(
     text: string,
     options?: {
@@ -48,6 +51,8 @@ export interface ServerEnginePort {
     /** 会话级工作区授予（不持久化；重开回到引擎默认） */
     workDir?: string;
     toolset?: Toolset;
+    /** 会话级 skill 授予，替换引擎默认（[] = 显式无）；要求工作区授予 */
+    skills?: string[];
   }): Promise<ServerSessionPort>;
   openSession(sessionId: string): Promise<ServerSessionPort | null>;
   listSessions(): Promise<SessionSummary[]>;

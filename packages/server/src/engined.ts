@@ -4,15 +4,13 @@
  *
  * 引导：壳经 stdin 第一行注入 Bearer token（不走 argv/env）；
  * 启动后向 stdout 输出恰好一行 listening JSON。
- * 引擎配置经 env（由壳按 workspace 显式设置，非用户环境泄漏）：
- *   TACHIKOMA_DATA_DIR / TACHIKOMA_PROVIDER / TACHIKOMA_MODEL /
- *   TACHIKOMA_WORKDIR / TACHIKOMA_TOOLSET / TACHIKOMA_USER_ID / TACHIKOMA_NO_MEMORY=1
+ * 引擎配置经 env（由壳按 workspace 显式设置，非用户环境泄漏）；
+ * 变量清单与组装语义见 engine-env.ts（enginedOptionsFromEnv）。
  */
 
 import { ChatEngine, VERSION } from '@tachikoma/core';
 import { PROTOCOL_VERSION } from '@tachikoma/protocol';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { enginedOptionsFromEnv } from './engine-env';
 import { startTachikomaServer } from './server';
 
 async function readTokenLine(): Promise<string> {
@@ -31,34 +29,17 @@ async function readTokenLine(): Promise<string> {
   return token;
 }
 
-const env = process.env;
 const token = await readTokenLine();
-const dataDir = env.TACHIKOMA_DATA_DIR ?? join(homedir(), '.tachikoma');
-const provider = env.TACHIKOMA_PROVIDER;
-const model = env.TACHIKOMA_MODEL;
-const workDir = env.TACHIKOMA_WORKDIR;
-const toolset = env.TACHIKOMA_TOOLSET === 'coding' ? ('coding' as const) : undefined;
+const { dataDir, engineConfig, sessionDefaults } = enginedOptionsFromEnv(process.env);
 
-const engine = new ChatEngine({
-  dataDir,
-  ...(provider && model ? { model: { provider, model } } : {}),
-  ...(workDir ? { workDir } : {}),
-  ...(toolset ? { toolset } : {}),
-  memory:
-    env.TACHIKOMA_NO_MEMORY === '1'
-      ? false
-      : { ...(env.TACHIKOMA_USER_ID ? { userId: env.TACHIKOMA_USER_ID } : {}) },
-});
+const engine = new ChatEngine(engineConfig);
 
 const server = await startTachikomaServer({
   engine,
   token,
   dataDir,
   engineVersion: VERSION,
-  sessionDefaults: {
-    ...(workDir ? { workDir } : {}),
-    ...(toolset ? { toolset } : {}),
-  },
+  sessionDefaults,
 });
 
 process.stdout.write(

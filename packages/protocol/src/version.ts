@@ -19,6 +19,8 @@ export const CAPABILITIES = [
   'memory-management',
   // session.send 接受 images（base64）；user_message 事件携带附件元数据
   'image-input',
+  // session.create 接受 skills（显式路径授予，要求 workDir）；summary 携带已加载 skills
+  'skills',
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

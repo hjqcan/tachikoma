@@ -25,6 +25,7 @@ export type {
   ChatSendOptions,
   ChatSessionInit,
   ChatSessionSummary,
+  ChatSkillInfo,
   ChatThinkingLevel,
   ChatToolApprovalRequestEvent,
   ChatToolApprovalResolvedEvent,

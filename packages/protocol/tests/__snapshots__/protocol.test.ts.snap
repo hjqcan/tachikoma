@@ -816,6 +816,12 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "session": {
         "additionalProperties": false,
         "properties": {
+          "skills": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
           "toolset": {
             "enum": [
               "read-only",
@@ -963,6 +969,12 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       "session": {
         "additionalProperties": false,
         "properties": {
+          "skills": {
+            "items": {
+              "type": "string",
+            },
+            "type": "array",
+          },
           "toolset": {
             "enum": [
               "read-only",
@@ -1498,6 +1510,12 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
         ],
         "type": "object",
       },
+      "skills": {
+        "items": {
+          "type": "string",
+        },
+        "type": "array",
+      },
       "thinkingLevel": {
         "enum": [
           "off",
@@ -1573,6 +1591,25 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "sessionId": {
         "type": "string",
+      },
+      "skills": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "name",
+            "description",
+          ],
+          "type": "object",
+        },
+        "type": "array",
       },
       "status": {
         "enum": [
@@ -1756,6 +1793,25 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             "sessionId": {
               "type": "string",
             },
+            "skills": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "description": {
+                    "type": "string",
+                  },
+                  "name": {
+                    "type": "string",
+                  },
+                },
+                "required": [
+                  "name",
+                  "description",
+                ],
+                "type": "object",
+              },
+              "type": "array",
+            },
             "status": {
               "enum": [
                 "ready",
@@ -1904,6 +1960,25 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "sessionId": {
         "type": "string",
+      },
+      "skills": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "name",
+            "description",
+          ],
+          "type": "object",
+        },
+        "type": "array",
       },
       "status": {
         "enum": [
@@ -3036,6 +3111,25 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
       },
       "sessionId": {
         "type": "string",
+      },
+      "skills": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "type": "string",
+            },
+            "name": {
+              "type": "string",
+            },
+          },
+          "required": [
+            "name",
+            "description",
+          ],
+          "type": "object",
+        },
+        "type": "array",
       },
       "status": {
         "enum": [
