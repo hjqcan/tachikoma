@@ -129,7 +129,8 @@ ipcMain.handle('tachikoma:pick-workspace', async () => {
 
 // 附件：原生多选文件对话框，main 进程代读文本（renderer 无 fs）。
 // 二进制（含 \0）与超限文件如实拒绝——图片等多模态输入是引擎层的后续增量。
-const ATTACHMENT_MAX_BYTES = 256_000;
+// 上限 10MB（用户定）：超大文本照样内联，撑爆上下文时由模型侧错误如实反馈。
+const ATTACHMENT_MAX_BYTES = 10_000_000;
 ipcMain.handle('tachikoma:pick-files', async () => {
   const result = await dialog.showOpenDialog({
     title: '附加文件',
@@ -144,7 +145,11 @@ ipcMain.handle('tachikoma:pick-files', async () => {
     try {
       const info = await stat(path);
       if (info.size > ATTACHMENT_MAX_BYTES) {
-        files.push({ name, size: info.size, error: `超过 ${ATTACHMENT_MAX_BYTES / 1000}KB 上限` });
+        files.push({
+          name,
+          size: info.size,
+          error: `超过 ${ATTACHMENT_MAX_BYTES / 1_000_000}MB 上限`,
+        });
         continue;
       }
       const buffer = await readFile(path);
