@@ -127,18 +127,39 @@ describe('Skills 通道：显式授予', () => {
     }
   });
 
-  it('授予存在但全部无效（缺 description）快败并携带 pi 诊断', async () => {
+  it('授予存在但无效（缺 description）快败并携带 pi 诊断', async () => {
     const harness = await createFauxHarness();
     const workDir = await makeWorkspace();
     const skillBase = await makeSkillDir('broken-skill', null);
     try {
       const engine = buildEngine(harness, { workDir });
       await expect(engine.createSession({ skills: [skillBase] })).rejects.toThrow(
-        'Skill grants loaded no skills'
+        'Skill grant loaded no skills'
       );
     } finally {
       await rm(workDir, { recursive: true, force: true });
       await rm(skillBase, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+
+  it('逐授予快败：好授予不掩护坏授予', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    const goodSkill = await makeSkillDir('good-skill');
+    const brokenSkill = await makeSkillDir('broken-skill', null);
+    try {
+      const engine = buildEngine(harness, { workDir });
+      const error = await engine
+        .createSession({ skills: [goodSkill, brokenSkill] })
+        .then(() => null)
+        .catch((caught: unknown) => caught);
+      expect(String(error)).toContain('Skill grant loaded no skills');
+      expect(String(error)).toContain(brokenSkill);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await rm(goodSkill, { recursive: true, force: true });
+      await rm(brokenSkill, { recursive: true, force: true });
       await harness.cleanup();
     }
   });

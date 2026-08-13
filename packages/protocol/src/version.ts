@@ -1,5 +1,5 @@
 /** 协议版本：只增不改；破坏性变更必须 +1（预期整个 0.x 不发生）。 */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 /**
  * 能力集：字符串集合，只增不改，一经发布永不复用于不同语义。

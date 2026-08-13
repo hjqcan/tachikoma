@@ -51,6 +51,12 @@ describe('enginedOptionsFromEnv', () => {
     });
   });
 
+  it('TACHIKOMA_SKILLS 无 TACHIKOMA_WORKDIR 时启动即失败——不允许健康启动后逐请求报错', () => {
+    expect(() => enginedOptionsFromEnv({ TACHIKOMA_SKILLS: '/skills/a' })).toThrow(
+      'TACHIKOMA_SKILLS requires TACHIKOMA_WORKDIR'
+    );
+  });
+
   it('TACHIKOMA_NO_MEMORY=1 关记忆；USER_ID 透传', () => {
     expect(enginedOptionsFromEnv({ TACHIKOMA_NO_MEMORY: '1' }).engineConfig.memory).toBeFalse();
     expect(enginedOptionsFromEnv({ TACHIKOMA_USER_ID: 'alice' }).engineConfig.memory).toEqual({

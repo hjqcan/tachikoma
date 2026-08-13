@@ -86,6 +86,7 @@ export const memoryRecordSchema = z.strictObject({
   tags: z.array(z.string()).optional(),
   importance: z.number().optional(),
   createdAt: z.string().optional(),
+  lifecycle: z.enum(['active', 'superseded', 'inactive']).optional(),
   score: z.number().optional(),
 });
 export type MemoryRecord = z.infer<typeof memoryRecordSchema>;

@@ -102,10 +102,10 @@ interface HelloResponse {
   server 拒绝（客户端提示升级引擎）；小于 → 允许（协议只增量演进，旧客户端天然兼容），server 在响应中报自身版本。
 - `capabilities` 是字符串集合而非位图，与事件演进同规则（只增不改）。初始集： `"chat"`,
   `"reasoning"`, `"tools"`, `"approvals"`, `"memory"`, `"compaction"`,
-  `"session-replay"`。现行全集以 `protocol/src/version.ts` 的 `CAPABILITIES`
-  为唯一事实源（此后已增 `"session-workspace"`、`"memory-management"`、`"image-input"`、
-  `"skills"`）。客户端按能力渲染（无 `"tools"` 则不渲染工具面板）。任何 schema
-  增量都要重生成 `protocol/tests/__snapshots__/` 快照并在提交里说明（§7.3）。
+  `"session-replay"`。现行全集以 `protocol/src/version.ts` 的 `CAPABILITIES` 为唯一事实源（此后已增
+  `"session-workspace"`、`"memory-management"`、`"image-input"`、 `"skills"`）。客户端按能力渲染（无
+  `"tools"` 则不渲染工具面板）。任何 schema 增量都要重生成 `protocol/tests/__snapshots__/`
+  快照并在提交里说明（§7.3）。
 - API key **永不过线**：凭证属于 sidecar 进程环境（env / pi auth.json / models.json 的 `$ENV`
   插值），Hello 与一切响应不含密钥；`session.model` 只有 `{provider, model}`。
 

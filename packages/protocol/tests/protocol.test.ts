@@ -10,8 +10,10 @@ import {
   chatEventWireSchema,
   compactionResultSchema,
   helloResponseSchema,
+  memoryRecordSchema,
   memorySnapshotSchema,
   parseSessionEventFrame,
+  PROTOCOL_VERSION,
   rpcRequestSchema,
   rpcResponseSchema,
   RPC_METHODS,
@@ -22,6 +24,7 @@ import {
   compactionResultFixture,
   eventFixtures,
   frameFixture,
+  memoryRecordFixtures,
   memorySnapshotFixture,
   sessionSummaryFixtures,
 } from './fixtures';
@@ -47,6 +50,9 @@ describe('round-trip 恒等', () => {
     expect(memorySnapshotSchema.parse(structuredClone(memorySnapshotFixture))).toEqual(
       memorySnapshotFixture
     );
+    for (const record of memoryRecordFixtures) {
+      expect(memoryRecordSchema.parse(structuredClone(record))).toEqual(record);
+    }
   });
 
   it('strict：未知顶层字段被拒绝', () => {
@@ -54,6 +60,9 @@ describe('round-trip 恒等', () => {
     expect(chatEventWireSchema.safeParse(polluted).success).toBeFalse();
     const summaryPolluted = { ...sessionSummaryFixtures[0], apiKey: 'nope' };
     expect(sessionSummarySchema.safeParse(summaryPolluted).success).toBeFalse();
+    expect(
+      memoryRecordSchema.safeParse({ ...memoryRecordFixtures[0], lifecycle: 'deleted' }).success
+    ).toBeFalse();
   });
 
   it('缺字段/错类型被拒绝', () => {
@@ -126,6 +135,13 @@ describe('凭证永不过线', () => {
 });
 
 describe('RPC 信封与方法表', () => {
+  it('strict memory record schema is carried by protocol v2', () => {
+    expect(PROTOCOL_VERSION).toBe(2);
+    expect(
+      RPC_METHODS['memory.list'].result.parse({ records: memoryRecordFixtures })
+    ).toEqual({ records: memoryRecordFixtures });
+  });
+
   it('每个方法的 params/result schema 可用且信封往返', () => {
     const request = { id: 'r1', method: 'session.send', params: { sessionId: 's', text: 'hi' } };
     const parsed = rpcRequestSchema.parse(JSON.parse(JSON.stringify(request)));
@@ -145,7 +161,7 @@ describe('RPC 信封与方法表', () => {
 
   it('hello 响应不含凭证且往返恒等', () => {
     const hello = {
-      protocolVersion: 1,
+      protocolVersion: 2,
       engineVersion: '0.2.0',
       capabilities: ['chat', 'tools'],
       session: {

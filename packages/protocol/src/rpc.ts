@@ -92,6 +92,7 @@ export const RPC_METHODS = {
       /**
        * 会话级 skill 授予（capability 'skills'）：SKILL.md 文件或目录路径，
        * 替换引擎默认（[] = 显式无）；不持久化，且要求工作区授予。
+       * 远端消费者应传绝对路径——相对路径按引擎进程 cwd 解析，跨机不可预期。
        */
       skills: z.array(z.string()).optional(),
     }),

@@ -105,9 +105,11 @@ Skills follow the same explicit-grant shape: `skills: [<path>…]` (CLI: `--skil
 repeatable; REPL: `/skills`) loads the listed SKILL.md files or skill directories — nothing is
 discovered from the environment, and zero grants means zero disk scans. A grant requires `workDir`
 (pi only surfaces skills to sessions that hold the `read` tool), skill roots become read-only for
-the guard (write/edit stay workspace-only), unusable grants fail session creation instead of
-silently loading nothing, and the session summary lists what actually loaded. A session-level
-`skills` grant replaces the engine default; `[]` explicitly clears it.
+the guard (write/edit stay workspace-only), and every grant must load at least one skill or session
+creation fails — a broken grant is never silently inactive. The session summary lists what actually
+loaded. A session-level `skills` grant replaces the engine default; `[]` explicitly clears it. Note:
+granting a single SKILL.md file makes its **parent directory** the read-only root (a skill's
+references resolve against its directory), so keep each skill in its own directory.
 
 Grants are also per-session: `createSession({ workDir, toolset })` (RPC `session.create`, desktop:
 the workspace chip in the header) scopes tools to one live session, overriding the engine default.
@@ -124,7 +126,8 @@ reads one `listening` JSON line from stdout. Engine configuration comes from she
 dir is per-workspace — `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORKDIR`,
 `TACHIKOMA_TOOLSET`, `TACHIKOMA_SKILLS` — skill grant paths joined with the platform PATH delimiter
 — `TACHIKOMA_SYSTEM_PROMPT_FILE` — replaces the default system prompt with the file's content,
-unreadable or empty fails startup — and `TACHIKOMA_NO_MEMORY=1`). Clients speak
+unreadable or empty fails startup; the engine always appends one factual tool-posture sentence
+(zero-tool / read-only / coding) after any prompt — and `TACHIKOMA_NO_MEMORY=1`). Clients speak
 `@tachikoma/protocol`: HTTP `POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
 `subscribe {sessionId, fromSeq}` for lossless replay over the per-session WAL.
 

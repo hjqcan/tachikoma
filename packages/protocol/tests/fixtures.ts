@@ -1,5 +1,11 @@
 import type { ChatEventWire, SessionEventFrame } from '../src/events';
-import type { CompactionResult, MemorySnapshot, SessionSummary, Usage } from '../src/dto';
+import type {
+  CompactionResult,
+  MemoryRecord,
+  MemorySnapshot,
+  SessionSummary,
+  Usage,
+} from '../src/dto';
 
 const base = { sessionId: 'session-1', turnId: 'turn-1', timestamp: 1_700_000_000_000 };
 
@@ -130,3 +136,18 @@ export const memorySnapshotFixture: MemorySnapshot = {
   status: 'ready',
   databasePath: '/home/user/.tachikoma/memory/goodmemory.sqlite',
 };
+
+export const memoryRecordFixtures: MemoryRecord[] = [
+  {
+    id: 'feedback-1',
+    type: 'feedback',
+    content: '回答时先给结论',
+    lifecycle: 'active',
+    createdAt: '2026-08-13T00:00:00.000Z',
+  },
+  {
+    id: 'experience-1',
+    type: 'experience',
+    content: 'Recall rules-only returned 0 hit(s).',
+  },
+];

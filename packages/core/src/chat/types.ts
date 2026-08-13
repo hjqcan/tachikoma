@@ -52,6 +52,8 @@ export interface ChatEngineConfig {
   /**
    * Skill 授予：SKILL.md 文件或含 skill 的目录路径，显式列举（零环境发现，
    * 缺省零 skill）。skills 依赖 read 工具进入系统提示，因此授予要求 workDir。
+   * 注意：文件授予会把其**所在目录**作为只读根（skill 的 references 相对该目录
+   * 解析）——规范做法是每个 skill 独占一个目录。相对路径按引擎进程 cwd 解析。
    */
   skills?: string[];
 }

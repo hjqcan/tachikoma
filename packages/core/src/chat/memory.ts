@@ -54,6 +54,7 @@ export interface ChatMemoryRecord {
   tags?: string[];
   importance?: number;
   createdAt?: string;
+  lifecycle?: 'active' | 'superseded' | 'inactive';
   /** 仅搜索/召回结果携带（recall 命中分） */
   score?: number;
 }
@@ -67,6 +68,12 @@ const MEMORY_BUCKETS: Record<string, ChatMemoryRecord['type']> = {
   archives: 'archive',
   experiences: 'experience',
 };
+
+const MEMORY_LIFECYCLES = new Set<ChatMemoryRecord['lifecycle']>([
+  'active',
+  'superseded',
+  'inactive',
+]);
 
 function recordContent(record: Record<string, unknown>): string {
   if (typeof record.content === 'string') return record.content;
@@ -115,6 +122,9 @@ export function projectMemoryBuckets(buckets: unknown): ChatMemoryRecord[] {
           : typeof record.updatedAt === 'string'
             ? { createdAt: record.updatedAt }
             : {}),
+        ...(MEMORY_LIFECYCLES.has(record.lifecycle as ChatMemoryRecord['lifecycle'])
+          ? { lifecycle: record.lifecycle as NonNullable<ChatMemoryRecord['lifecycle']> }
+          : {}),
       });
     }
   }
@@ -129,11 +139,12 @@ function truncate(text: string): string {
  * recall 结果 → 事件里的召回明细。以 metadata.hits 为准（durable 桶之外，
  * profile/workingMemory 等运行时命中也如实呈现），预览从各桶按 id 反查。
  */
-export function projectRecalledMemories(recall: unknown): ChatRecalledMemory[] {
-  if (!recall || typeof recall !== 'object') return [];
-  const result = recall as Record<string, unknown>;
+export function projectRecalledMemories(
+  recall: unknown,
+  recordRefs: readonly string[] = []
+): ChatRecalledMemory[] {
+  const result = recall && typeof recall === 'object' ? (recall as Record<string, unknown>) : {};
   const hits = (result.metadata as { hits?: unknown } | undefined)?.hits;
-  if (!Array.isArray(hits)) return [];
   const findById = (id: string): Record<string, unknown> | undefined => {
     for (const [key, value] of Object.entries(result)) {
       if (key === 'metadata') continue;
@@ -151,17 +162,37 @@ export function projectRecalledMemories(recall: unknown): ChatRecalledMemory[] {
     return undefined;
   };
   const rows: ChatRecalledMemory[] = [];
-  for (const hit of hits) {
-    if (!hit || typeof hit !== 'object') continue;
-    const { id, type, score } = hit as { id?: unknown; type?: unknown; score?: unknown };
-    if (typeof id !== 'string' || typeof type !== 'string') continue;
-    const source = findById(id);
-    rows.push({
-      id,
-      type,
-      preview: source ? truncate(recordContent(source)) : '',
-      ...(typeof score === 'number' ? { score } : {}),
-    });
+  const seen = new Set<string>();
+  if (Array.isArray(hits)) {
+    for (const hit of hits) {
+      if (!hit || typeof hit !== 'object') continue;
+      const { id, type, score } = hit as { id?: unknown; type?: unknown; score?: unknown };
+      if (typeof id !== 'string' || typeof type !== 'string') continue;
+      const source = findById(id);
+      rows.push({
+        id,
+        type,
+        preview: source ? truncate(recordContent(source)) : '',
+        ...(typeof score === 'number' ? { score } : {}),
+      });
+      seen.add(`${type}:${id}`);
+    }
+  }
+  for (const recordRef of recordRefs) {
+    const match = /^gmrec:v1:[^:]+:([^:]+):(.+)$/u.exec(recordRef);
+    if (!match) continue;
+    const [, type, encodedId] = match;
+    if (!type || !encodedId) continue;
+    let id: string;
+    try {
+      id = decodeURIComponent(encodedId);
+    } catch {
+      continue;
+    }
+    const key = `${type}:${id}`;
+    if (seen.has(key)) continue;
+    rows.push({ id, type, preview: '' });
+    seen.add(key);
   }
   return rows;
 }

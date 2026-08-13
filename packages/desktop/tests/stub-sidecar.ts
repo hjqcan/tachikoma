@@ -54,7 +54,7 @@ console.log(
     port: server.port,
     pid: process.pid,
     engineVersion: '0.0.0-stub',
-    protocolVersion: 1,
+    protocolVersion: 2,
   })
 );
 

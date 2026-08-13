@@ -647,13 +647,15 @@ export class ChatSession {
         retrievalProfile: 'general_chat',
         messages: [{ role: 'user', content: text }],
       });
-      // 空库时渲染文本仍含框架头，命中与否以召回桶为准（recall 缺失时退回文本判定）
+      const recordRefs = result.context.recordRefs ?? [];
+      // fragment/progressive 上下文可能只给 recordRefs，不回填 recall 桶；两者都是真实命中。
+      // recall 缺失则保持旧 runtime-kit 的文本判定兼容。
       const hasContext =
-        (result.recall === undefined || recallHasHits(result.recall)) &&
+        (result.recall === undefined || recallHasHits(result.recall) || recordRefs.length > 0) &&
         result.context.content.trim().length > 0;
       this.promptMemoryContext.value = hasContext ? result.context.content : '';
       const status: ChatMemoryStatus = hasContext ? 'recalled' : 'empty';
-      const recalled = hasContext ? projectRecalledMemories(result.recall) : [];
+      const recalled = hasContext ? projectRecalledMemories(result.recall, recordRefs) : [];
       this.setMemoryState(status);
       emit({
         ...base,

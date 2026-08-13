@@ -199,7 +199,13 @@ class FakeEngine implements ServerEnginePort {
   }
 
   memoryRecords: MemoryRecord[] = [
-    { id: 'm1', type: 'fact', content: '用户喜欢等宽字体', createdAt: '2026-08-12T00:00:00Z' },
+    {
+      id: 'm1',
+      type: 'feedback',
+      content: '用户喜欢等宽字体',
+      lifecycle: 'active',
+      createdAt: '2026-08-12T00:00:00Z',
+    },
   ];
   forgotten: string[] = [];
 
@@ -350,11 +356,11 @@ describe('sidecar', () => {
   it('hello 报协议版本、能力与工具姿态；不含凭证', async () => {
     const harness = await startHarness();
     try {
-      const hello = await harness.rpc('engine.hello', { protocolVersion: 1, client: 'test/0' });
+      const hello = await harness.rpc('engine.hello', { protocolVersion: 2, client: 'test/0' });
       expect(hello.ok).toBeTrue();
       if (hello.ok) {
         expect(hello.result).toMatchObject({
-          protocolVersion: 1,
+          protocolVersion: 2,
           engineVersion: '0.2.0-test',
           session: {
             workDir: '/workspaces/demo',
@@ -543,7 +549,7 @@ describe('sidecar', () => {
       const listed = await harness.rpc('memory.list');
       expect(listed).toMatchObject({
         ok: true,
-        result: { records: [{ id: 'm1', type: 'fact' }] },
+        result: { records: [{ id: 'm1', type: 'feedback', lifecycle: 'active' }] },
       });
 
       const found = await harness.rpc('memory.search', { query: '等宽' });

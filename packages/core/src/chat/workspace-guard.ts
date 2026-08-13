@@ -91,8 +91,9 @@ export function findWorkspaceViolation(
   return null;
 }
 
-/** 路径必须落在工作区根内才可写的工具；只读根对它们不生效 */
-const WRITE_PATH_TOOLS: ReadonlySet<string> = new Set(['write', 'edit']);
+/** 只读根仅对已知只读工具集放宽（allow-list，fail-closed）：未来新增的
+ * 路径型工具默认只认工作区根，不会静默获得 skill 根的读权限。 */
+const READ_ROOT_TOOLS: ReadonlySet<string> = new Set(WORKSPACE_TOOLS);
 
 export function createWorkspaceGuardExtension(
   root: string,
@@ -119,7 +120,7 @@ export function createWorkspaceGuardExtension(
               : BASH_DEFAULT_TIMEOUT_SECS;
         }
         // 路径边界先于审批：越界调用即使被批准也不执行。
-        const roots = WRITE_PATH_TOOLS.has(event.toolName) ? root : readRoots;
+        const roots = READ_ROOT_TOOLS.has(event.toolName) ? readRoots : root;
         const violation = findWorkspaceViolation(event.input, roots);
         if (violation) {
           return {

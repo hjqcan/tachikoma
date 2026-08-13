@@ -117,7 +117,9 @@ class FakeEngine implements ChatEnginePort {
   createFailure: Error | undefined;
   private nextCreated: FakeSession | undefined;
 
-  memoryRecords = [{ id: 'm1', type: 'fact', content: '喜欢等宽字体' }];
+  memoryRecords = [
+    { id: 'm1', type: 'feedback', content: '喜欢等宽字体', lifecycle: 'active' as const },
+  ];
   forgottenIds: string[] = [];
 
   async memoryList() {
@@ -685,8 +687,8 @@ describe('runCli', () => {
 
     expect(code).toBe(0);
     const output = harness.stdout.join('');
-    expect(output).toContain('m1  [fact] 喜欢等宽字体');
-    expect(output).toContain('(0.87) 喜欢等宽字体');
+    expect(output).toContain('m1  [feedback:active] 喜欢等宽字体');
+    expect(output).toContain('[feedback:active] (0.87) 喜欢等宽字体');
     expect(output).toContain('[forgotten] m1');
     expect(engine.forgottenIds).toEqual(['m1']);
     expect(harness.stderr.join('')).toContain('/memory [list | search <query> | forget <id>]');

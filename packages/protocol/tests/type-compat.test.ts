@@ -9,6 +9,7 @@ import { expect, it } from 'bun:test';
 import type {
   ChatCompactionResult,
   ChatEvent,
+  ChatMemoryRecord,
   ChatMemorySnapshot,
   ChatModelListing,
   ChatSessionSummary,
@@ -18,6 +19,7 @@ import type {
 import type { ChatEventWire } from '../src/events';
 import type {
   CompactionResult,
+  MemoryRecord,
   MemorySnapshot,
   ModelListing,
   SessionSummary,
@@ -31,11 +33,18 @@ const eventCompat: AssertMutual<ChatEvent, ChatEventWire> = true;
 const summaryCompat: AssertMutual<ChatSessionSummary, SessionSummary> = true;
 const compactionCompat: AssertMutual<ChatCompactionResult, CompactionResult> = true;
 const memoryCompat: AssertMutual<ChatMemorySnapshot, MemorySnapshot> = true;
+const memoryRecordCompat: AssertMutual<ChatMemoryRecord, MemoryRecord> = true;
 const listingCompat: AssertMutual<ChatModelListing, ModelListing> = true;
 const skillCompat: AssertMutual<ChatSkillInfo, SkillInfo> = true;
 
 it('core 与 wire 类型双向兼容（编译期已验证）', () => {
   expect(
-    eventCompat && summaryCompat && compactionCompat && memoryCompat && listingCompat && skillCompat
+    eventCompat &&
+      summaryCompat &&
+      compactionCompat &&
+      memoryCompat &&
+      memoryRecordCompat &&
+      listingCompat &&
+      skillCompat
   ).toBeTrue();
 });

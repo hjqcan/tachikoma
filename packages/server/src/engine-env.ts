@@ -33,6 +33,11 @@ export function enginedOptionsFromEnv(
   const skills = env.TACHIKOMA_SKILLS?.split(delimiter)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+  if (skills?.length && !workDir) {
+    // 与 CLI 的解析期校验、提示词文件的启动期快败同一姿势：配置错误不允许
+    // "健康"启动后每个 session.create 才在运行期报错。
+    throw new Error('TACHIKOMA_SKILLS requires TACHIKOMA_WORKDIR (skills need the read tool).');
+  }
 
   let systemPrompt: string | undefined;
   const promptFile = env.TACHIKOMA_SYSTEM_PROMPT_FILE;
