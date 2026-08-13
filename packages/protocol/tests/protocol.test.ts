@@ -137,9 +137,9 @@ describe('凭证永不过线', () => {
 describe('RPC 信封与方法表', () => {
   it('strict memory record schema is carried by protocol v2', () => {
     expect(PROTOCOL_VERSION).toBe(2);
-    expect(
-      RPC_METHODS['memory.list'].result.parse({ records: memoryRecordFixtures })
-    ).toEqual({ records: memoryRecordFixtures });
+    expect(RPC_METHODS['memory.list'].result.parse({ records: memoryRecordFixtures })).toEqual({
+      records: memoryRecordFixtures,
+    });
   });
 
   it('每个方法的 params/result schema 可用且信封往返', () => {

@@ -27,14 +27,19 @@
 # 2. 全量验证（含打包验证：tarball 内容、workspace 重写、scratch 消费者安装）
 bun run verify
 
-# 3. 按依赖顺序发布
-cd packages/protocol && npm publish
-cd ../core          && npm publish
-cd ../server        && npm publish
+# 3. 按依赖顺序发布 —— 必须用 bun publish：
+#    npm publish 不认识 workspace:* 协议，会把 server 的
+#    "@tachikoma/core": "workspace:*" 原样发出去（消费者装不上）；
+#    bun publish 与 bun pm pack 同一打包逻辑，自动重写为精确版本。
+cd packages/protocol && bun publish
+cd ../core          && bun publish
+cd ../server        && bun publish
 
 # 4. 打 tag
 git tag v0.2.x && git push origin v0.2.x
 ```
+
+认证：`bun publish` 复用 `~/.npmrc` 的 npm 凭证（`npm login` 一次即可）。
 
 ## sidecar 二进制
 

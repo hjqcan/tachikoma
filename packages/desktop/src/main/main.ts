@@ -9,7 +9,9 @@
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PROTOCOL_VERSION } from '@tachikoma/protocol';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { resolveSidecarDataDir, withTemporarySmokeDataDir } from './smoke-data-dir';
 import { startSidecar } from './supervisor';
 import type { SidecarHandle } from './supervisor';
 
@@ -20,7 +22,7 @@ const smoke = process.argv.includes('--smoke');
 let handle: SidecarHandle | undefined;
 let token = '';
 
-async function bootSidecar(): Promise<SidecarHandle> {
+async function bootSidecar(dataDir?: string): Promise<SidecarHandle> {
   token = randomBytes(32).toString('hex');
   // 缺省 dev 形态：bun 跑 workspace dist。TACHIKOMA_ENGINED_BIN 显式指向
   // compiled 二进制（bun run --cwd packages/server build:bin 产出）——
@@ -33,7 +35,7 @@ async function bootSidecar(): Promise<SidecarHandle> {
     cwd: repoRoot,
     token,
     env: {
-      TACHIKOMA_DATA_DIR: process.env.TACHIKOMA_DATA_DIR,
+      TACHIKOMA_DATA_DIR: resolveSidecarDataDir(process.env.TACHIKOMA_DATA_DIR, dataDir),
       TACHIKOMA_CONFIG_DIR: process.env.TACHIKOMA_CONFIG_DIR,
       TACHIKOMA_PROVIDER: process.env.TACHIKOMA_PROVIDER,
       TACHIKOMA_MODEL: process.env.TACHIKOMA_MODEL,
@@ -193,22 +195,35 @@ ipcMain.handle('tachikoma:pick-files', async () => {
 });
 
 app.whenReady().then(async () => {
+  if (smoke) {
+    try {
+      await withTemporarySmokeDataDir(async (dataDir) => {
+        try {
+          handle = await bootSidecar(dataDir);
+          const hello = await rpc('engine.hello', {
+            protocolVersion: PROTOCOL_VERSION,
+            client: 'tachikoma-desktop/0.2.0',
+          });
+          console.log(JSON.stringify({ smoke: true, listening: handle.info, hello }));
+        } finally {
+          const closing = handle;
+          handle = undefined;
+          await closing?.stop();
+        }
+      });
+      app.exit(0);
+    } catch (error) {
+      console.error('[desktop] smoke failed:', error);
+      app.exit(1);
+    }
+    return;
+  }
+
   try {
     handle = await bootSidecar();
   } catch (error) {
     console.error('[desktop] sidecar boot failed:', error);
     app.exit(1);
-    return;
-  }
-
-  if (smoke) {
-    const hello = await rpc('engine.hello', {
-      protocolVersion: 1,
-      client: 'tachikoma-desktop/0.2.0',
-    });
-    console.log(JSON.stringify({ smoke: true, listening: handle.info, hello }));
-    await handle.stop();
-    app.exit(0);
     return;
   }
 

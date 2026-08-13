@@ -75,6 +75,8 @@ class FakeSession implements ServerSessionPort {
   closed = 0;
   sending = false;
   script: ChatEventWire[][] = [];
+  /** 测试用门闩：设置后回合在产出全部事件后保持"生成中"直到 promise 解决 */
+  holdTurnOpen: Promise<void> | null = null;
   private turn = 0;
 
   constructor(readonly id: string) {}
@@ -97,6 +99,9 @@ class FakeSession implements ServerSessionPort {
       for (const event of events) {
         await Bun.sleep(1);
         yield event;
+      }
+      if (this.holdTurnOpen) {
+        await this.holdTurnOpen;
       }
     } finally {
       this.sending = false;
@@ -415,6 +420,7 @@ describe('sidecar', () => {
 
   it('同会话并发 send 得 conflict', async () => {
     const harness = await startHarness();
+    let releaseTurn: (() => void) | undefined;
     try {
       const created = await harness.rpc('session.create');
       if (!created.ok) throw new Error('create failed');
@@ -422,18 +428,21 @@ describe('sidecar', () => {
       const session = harness.engine.sessions.get(sessionId);
       if (!session) throw new Error('missing fake session');
       session.script = [
-        [
-          ...turnEvents(sessionId, 'turn-1', 'slow').slice(0, 2),
-          // 故意留一个未完成的长回合：complete 延后由脚本第二段给出
-        ],
+        turnEvents(sessionId, 'turn-1', 'slow').slice(0, 2),
         turnEvents(sessionId, 'turn-2', 'second'),
       ];
+      // 确定性并发窗口：第一回合产完事件后由门闩保持"生成中"，
+      // 不依赖毫秒级时序（全量并跑时曾抖动）。
+      session.holdTurnOpen = new Promise<void>((resolve) => {
+        releaseTurn = resolve;
+      });
 
       const first = await harness.rpc('session.send', { sessionId, text: 'a' });
       expect(first.ok).toBeTrue();
       const second = await harness.rpc('session.send', { sessionId, text: 'b' });
       expect(second).toMatchObject({ ok: false, error: { code: 'conflict' } });
     } finally {
+      releaseTurn?.();
       await harness.stop();
     }
   });

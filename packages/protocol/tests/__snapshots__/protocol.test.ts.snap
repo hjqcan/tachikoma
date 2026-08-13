@@ -1122,6 +1122,14 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             "importance": {
               "type": "number",
             },
+            "lifecycle": {
+              "enum": [
+                "active",
+                "superseded",
+                "inactive",
+              ],
+              "type": "string",
+            },
             "score": {
               "type": "number",
             },
@@ -1210,6 +1218,14 @@ exports[`schema 快照守卫（变更必须显式过审） 全部 schema 的 JSO
             },
             "importance": {
               "type": "number",
+            },
+            "lifecycle": {
+              "enum": [
+                "active",
+                "superseded",
+                "inactive",
+              ],
+              "type": "string",
             },
             "score": {
               "type": "number",

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { access } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { withTemporarySmokeDataDir } from '../src/main/smoke-data-dir';
+import { resolveSidecarDataDir, withTemporarySmokeDataDir } from '../src/main/smoke-data-dir';
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -32,5 +34,28 @@ describe('desktop smoke dataDir', () => {
       })
     ).rejects.toThrow('smoke failed');
     expect(await exists(observed)).toBeFalse();
+  });
+
+  it('overrides an existing environment dataDir without touching its sentinel', async () => {
+    const configuredDataDir = await mkdtemp(join(tmpdir(), 'tachikoma-configured-data-'));
+    const sentinel = join(configuredDataDir, 'sentinel.txt');
+    await writeFile(sentinel, 'must-survive');
+    const previous = process.env.TACHIKOMA_DATA_DIR;
+    process.env.TACHIKOMA_DATA_DIR = configuredDataDir;
+    try {
+      let smokeDataDir = '';
+      await withTemporarySmokeDataDir(async (temporaryDataDir) => {
+        const resolved = resolveSidecarDataDir(process.env.TACHIKOMA_DATA_DIR, temporaryDataDir);
+        smokeDataDir = resolved ?? '';
+        expect(smokeDataDir).toBe(temporaryDataDir);
+        expect(smokeDataDir).not.toBe(configuredDataDir);
+      });
+      expect(await exists(smokeDataDir)).toBeFalse();
+      expect(await readFile(sentinel, 'utf8')).toBe('must-survive');
+    } finally {
+      if (previous === undefined) delete process.env.TACHIKOMA_DATA_DIR;
+      else process.env.TACHIKOMA_DATA_DIR = previous;
+      await rm(configuredDataDir, { recursive: true, force: true });
+    }
   });
 });

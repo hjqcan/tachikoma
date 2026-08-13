@@ -9,6 +9,9 @@
 import { parseSessionEventFrame } from '@tachikoma/protocol';
 import type { ChatEventWire, RpcResponse } from '@tachikoma/protocol';
 
+import { buildMemoryView, feedbackLifecycleLabel } from './memory-view';
+import type { MemoryRecordView } from './memory-view';
+
 declare global {
   interface Window {
     tachikoma: {
@@ -1047,15 +1050,6 @@ async function boot(): Promise<void> {
 
   // ── 记忆抽屉：琥珀支柱——看得见、搜得着、删得掉 ────────────────
 
-  interface MemoryRecordLite {
-    id: string;
-    type: string;
-    content: string;
-    tags?: string[];
-    createdAt?: string;
-    score?: number;
-  }
-
   const MEMORY_TYPE_LABELS: Record<string, string> = {
     fact: '事实',
     preference: '偏好',
@@ -1067,7 +1061,7 @@ async function boot(): Promise<void> {
     profile: '画像',
   };
 
-  function memoryRow(record: MemoryRecordLite): HTMLElement {
+  function memoryRow(record: MemoryRecordView): HTMLElement {
     const row = document.createElement('div');
     row.className = 'memory-row';
     const content = document.createElement('div');
@@ -1076,12 +1070,23 @@ async function boot(): Promise<void> {
     content.title = record.content;
     const meta = document.createElement('div');
     meta.className = 'meta';
-    meta.textContent = [
+    const lifecycle =
+      record.type === 'feedback' ? feedbackLifecycleLabel(record.lifecycle) : undefined;
+    if (lifecycle) {
+      const badge = document.createElement('span');
+      badge.className = `memory-lifecycle ${record.lifecycle}`;
+      badge.textContent = lifecycle;
+      meta.appendChild(badge);
+    }
+    const metaText = [
       record.createdAt ? relativeWhen(Date.parse(record.createdAt)) : '',
       ...(record.tags ?? []),
     ]
       .filter(Boolean)
       .join(' · ');
+    if (metaText) {
+      meta.appendChild(document.createTextNode(`${lifecycle ? ' · ' : ''}${metaText}`));
+    }
     const del = document.createElement('button');
     del.className = 'del';
     del.title = '删除这条记忆';
@@ -1116,30 +1121,36 @@ async function boot(): Promise<void> {
     return row;
   }
 
-  function renderMemoryList(records: MemoryRecordLite[]): void {
+  function renderMemoryList(records: MemoryRecordView[]): void {
     memoryListPane.innerHTML = '';
-    if (records.length === 0) {
+    const searchActive = memorySearch.value.trim().length > 0;
+    const view = buildMemoryView(records, searchActive);
+    if (view.userMemoryEmpty) {
       const empty = document.createElement('div');
       empty.className = 'memory-empty';
-      empty.textContent = memorySearch.value.trim() ? '没有匹配的记忆' : '还没有持久记忆';
+      empty.textContent = searchActive ? '没有匹配的用户记忆' : '还没有用户记忆';
       memoryListPane.appendChild(empty);
-      return;
     }
-    const groups = new Map<string, MemoryRecordLite[]>();
-    for (const record of records) {
-      const list = groups.get(record.type) ?? [];
-      list.push(record);
-      groups.set(record.type, list);
-    }
-    for (const [type, list] of groups) {
+    for (const { type, records: groupRecords } of view.userGroups) {
       const head = document.createElement('div');
       head.className = 'memory-group';
-      head.textContent = `${MEMORY_TYPE_LABELS[type] ?? type} · ${list.length}`;
+      head.textContent = `${MEMORY_TYPE_LABELS[type] ?? type} · ${groupRecords.length}`;
       memoryListPane.appendChild(head);
-      list.sort((left, right) => (right.createdAt ?? '').localeCompare(left.createdAt ?? ''));
-      for (const record of list) {
+      for (const record of groupRecords) {
         memoryListPane.appendChild(memoryRow(record));
       }
+    }
+    if (view.experiences.length > 0) {
+      const details = document.createElement('details');
+      details.className = 'memory-experiences';
+      details.open = view.expandExperiences;
+      const summary = document.createElement('summary');
+      summary.textContent = `系统经验 · ${view.experiences.length}`;
+      details.appendChild(summary);
+      for (const record of view.experiences) {
+        details.appendChild(memoryRow(record));
+      }
+      memoryListPane.appendChild(details);
     }
   }
 
@@ -1154,7 +1165,7 @@ async function boot(): Promise<void> {
       memoryListPane.appendChild(failed);
       return;
     }
-    renderMemoryList((listed.result as { records: MemoryRecordLite[] }).records);
+    renderMemoryList((listed.result as { records: MemoryRecordView[] }).records);
   }
 
   function toggleMemoryPanel(): void {

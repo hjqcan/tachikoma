@@ -179,19 +179,19 @@ export function projectRecalledMemories(
     }
   }
   for (const recordRef of recordRefs) {
-    const match = /^gmrec:v1:[^:]+:([^:]+):(.+)$/u.exec(recordRef);
+    const match = /^gmrec:v1:[^:]+:experience:(.+)$/u.exec(recordRef);
     if (!match) continue;
-    const [, type, encodedId] = match;
-    if (!type || !encodedId) continue;
-    let id: string;
+    const encodedId = match[1];
+    if (!encodedId) continue;
+    let canonicalId: string;
     try {
-      id = decodeURIComponent(encodedId);
+      canonicalId = decodeURIComponent(encodedId);
     } catch {
       continue;
     }
-    const key = `${type}:${id}`;
+    const key = `experience:${canonicalId}`;
     if (seen.has(key)) continue;
-    rows.push({ id, type, preview: '' });
+    rows.push({ id: recordRef, type: 'experience', preview: recordRef });
     seen.add(key);
   }
   return rows;

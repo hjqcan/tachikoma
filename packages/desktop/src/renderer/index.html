@@ -1024,6 +1024,33 @@
         color: var(--text-faint);
         margin-top: 3px;
       }
+      .memory-lifecycle {
+        display: inline-block;
+        border: 1px solid color-mix(in srgb, var(--oil) 50%, transparent);
+        border-radius: 999px;
+        color: color-mix(in srgb, var(--oil) 82%, var(--text));
+        padding: 1px 5px;
+      }
+      .memory-lifecycle.superseded,
+      .memory-lifecycle.inactive {
+        border-color: color-mix(in srgb, var(--text-faint) 55%, transparent);
+        color: var(--text-faint);
+      }
+      .memory-experiences {
+        margin-top: 8px;
+      }
+      .memory-experiences > summary {
+        cursor: pointer;
+        list-style-position: inside;
+        font: 600 10px var(--human);
+        letter-spacing: 0.16em;
+        color: var(--text-faint);
+        padding: 8px;
+        user-select: none;
+      }
+      .memory-experiences[open] > summary {
+        color: color-mix(in srgb, var(--oil) 65%, var(--text-dim));
+      }
       .memory-row .del {
         position: absolute;
         right: 4px;
