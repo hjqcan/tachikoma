@@ -14,6 +14,7 @@ declare global {
     tachikoma: {
       getServerInfo(): Promise<{ port: number; token: string; engineVersion: string }>;
       pickWorkspace(): Promise<string | null>;
+      pickFiles(): Promise<{ name: string; text?: string; size: number; error?: string }[]>;
     };
   }
 }
@@ -51,6 +52,9 @@ const memorySearch = document.getElementById('memory-search') as HTMLInputElemen
 const memoryListPane = document.getElementById('memory-list') as HTMLElement;
 const memoryClearButton = document.getElementById('memory-clear') as HTMLButtonElement;
 const toBottomButton = document.getElementById('to-bottom') as HTMLButtonElement;
+const attachButton = document.getElementById('attach') as HTMLButtonElement;
+const accessChip = document.getElementById('access-chip') as HTMLButtonElement;
+const attachmentsRow = document.getElementById('attachments') as HTMLElement;
 const ctxGauge = document.getElementById('ctx-gauge') as HTMLElement;
 const compactNowButton = document.getElementById('compact-now') as HTMLButtonElement;
 const modelChip = document.getElementById('model-chip') as HTMLButtonElement;
@@ -71,6 +75,46 @@ function autosizeInput(): void {
   input.style.height = `${input.scrollHeight}px`;
 }
 input.addEventListener('input', autosizeInput);
+
+/**
+ * 附件的线格式：文本文件以定界块内联进 prompt（转录即事实源，重放一致）。
+ * 气泡端按同一定界解析回芯片展示。图片等二进制是引擎层的后续增量。
+ */
+const ATTACHMENT_OPEN = (name: string) => `<tachikoma:attachment name="${name}">`;
+const ATTACHMENT_RE =
+  /<tachikoma:attachment name="([^"\n]*)">\n?([\s\S]*?)\n?<\/tachikoma:attachment>\n*/g;
+
+function formatBytes(size: number): string {
+  if (size >= 1_000_000) return `${(size / 1_000_000).toFixed(1)}MB`;
+  if (size >= 1000) return `${Math.round(size / 1000)}KB`;
+  return `${size}B`;
+}
+
+function attachmentChip(name: string, size?: number, onRemove?: () => void): HTMLElement {
+  const chip = document.createElement('span');
+  chip.className = 'attachment-chip';
+  const icon = document.createTextNode('📄 ');
+  const fname = document.createElement('span');
+  fname.className = 'fname';
+  fname.textContent = name;
+  fname.title = name;
+  chip.append(icon, fname);
+  if (size !== undefined) {
+    const fsize = document.createElement('span');
+    fsize.className = 'fsize';
+    fsize.textContent = formatBytes(size);
+    chip.appendChild(fsize);
+  }
+  if (onRemove) {
+    const remove = document.createElement('button');
+    remove.className = 'remove';
+    remove.textContent = '✕';
+    remove.title = '移除附件';
+    remove.onclick = onRemove;
+    chip.appendChild(remove);
+  }
+  return chip;
+}
 
 /** 滚到底悬浮按钮：离底 240px 以上出现 */
 log.addEventListener('scroll', () => {
@@ -321,6 +365,20 @@ async function boot(): Promise<void> {
     }
     // 仪表条只留机器自身的状态；模型归页脚 chip，会话身份归侧栏
     statusLine(`engine ${engineVersion}${memoryNote ? ` · memory ${memoryNote}` : ''}`);
+    // composer 权限芯片与头部授予联动：零工具暗 / chat 蓝 / work 琥珀警示
+    if (!grantedWorkspace) {
+      accessChip.textContent = '零工具';
+      accessChip.className = '';
+      accessChip.title = '当前零工具；点击选择工作区授予';
+    } else if (grantedWorkspace.toolset === 'coding') {
+      accessChip.textContent = `⚠ work · ${basename(grantedWorkspace.root)}`;
+      accessChip.className = 'work';
+      accessChip.title = `${grantedWorkspace.root}\n${grantedWorkspace.tools.join(', ')}（写/改/执行逐次审批）`;
+    } else {
+      accessChip.textContent = `chat · ${basename(grantedWorkspace.root)}`;
+      accessChip.className = 'chat';
+      accessChip.title = `${grantedWorkspace.root}\n${grantedWorkspace.tools.join(', ')}（只读）`;
+    }
   }
 
   // ── 事件渲染 ────────────────────────────────────────────────
@@ -391,7 +449,19 @@ async function boot(): Promise<void> {
         const userBlock = block('turn you');
         const bubble = document.createElement('div');
         bubble.className = 'bubble';
-        bubble.textContent = event.text;
+        // 附件定界块解析回芯片；剩余部分才是正文
+        const names: string[] = [];
+        const remainder = event.text.replace(ATTACHMENT_RE, (_whole, name: string) => {
+          names.push(name);
+          return '';
+        });
+        if (names.length > 0) {
+          const files = document.createElement('div');
+          files.className = 'attached-files';
+          for (const name of names) files.appendChild(attachmentChip(name));
+          bubble.appendChild(files);
+        }
+        bubble.append(remainder.trim());
         userBlock.appendChild(bubble);
         break;
       }
@@ -1120,6 +1190,36 @@ async function boot(): Promise<void> {
     if (!picked) return;
     await startSession({ workDir: picked, toolset: selectedToolset });
   };
+  accessChip.onclick = () => workspaceChip.click(); // composer 权限芯片=同一授予入口
+
+  // ── 附件：+ 选文件 → 芯片行 → 发送时定界内联 ────────────────
+  let pendingAttachments: { name: string; text: string; size: number }[] = [];
+
+  function renderAttachments(): void {
+    attachmentsRow.innerHTML = '';
+    attachmentsRow.hidden = pendingAttachments.length === 0;
+    pendingAttachments.forEach((file, index) => {
+      attachmentsRow.appendChild(
+        attachmentChip(file.name, file.size, () => {
+          pendingAttachments.splice(index, 1);
+          renderAttachments();
+        })
+      );
+    });
+  }
+
+  attachButton.onclick = async () => {
+    const picked = await window.tachikoma.pickFiles();
+    for (const file of picked) {
+      if (file.error || file.text === undefined) {
+        block('status-line error').textContent = `[附件] ${file.name}: ${file.error ?? '读取失败'}`;
+        continue;
+      }
+      pendingAttachments.push({ name: file.name, text: file.text, size: file.size });
+    }
+    renderAttachments();
+    input.focus();
+  };
 
   toolsetGroup.addEventListener('click', async (mouse) => {
     const target = mouse.target as HTMLElement;
@@ -1139,11 +1239,19 @@ async function boot(): Promise<void> {
 
   async function submit(): Promise<void> {
     const text = input.value.trim();
-    if (!text || !sessionId || generating) return;
+    if ((!text && pendingAttachments.length === 0) || !sessionId || generating) return;
+    // 附件以定界块内联在正文前：转录即事实源，气泡端按同一定界还原成芯片
+    const blocks = pendingAttachments.map(
+      (file) =>
+        `${ATTACHMENT_OPEN(file.name.replace(/["\n]/g, '_'))}\n${file.text}\n</tachikoma:attachment>`
+    );
+    const payload = [...blocks, text].filter(Boolean).join('\n\n');
     input.value = '';
+    pendingAttachments = [];
+    renderAttachments();
     autosizeInput();
     // 用户回合不本地回显：user_message 事件是唯一渲染来源（live 与重放一致）
-    const sent = await rpc('session.send', { sessionId, text });
+    const sent = await rpc('session.send', { sessionId, text: payload });
     if (!sent.ok) {
       block('status-line error').textContent = `[error] ${sent.error.message}`;
     }

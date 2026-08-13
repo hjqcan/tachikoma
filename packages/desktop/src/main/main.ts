@@ -127,6 +127,39 @@ ipcMain.handle('tachikoma:pick-workspace', async () => {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 });
 
+// 附件：原生多选文件对话框，main 进程代读文本（renderer 无 fs）。
+// 二进制（含 \0）与超限文件如实拒绝——图片等多模态输入是引擎层的后续增量。
+const ATTACHMENT_MAX_BYTES = 256_000;
+ipcMain.handle('tachikoma:pick-files', async () => {
+  const result = await dialog.showOpenDialog({
+    title: '附加文件',
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled) return [];
+  const { readFile, stat } = await import('node:fs/promises');
+  const { basename } = await import('node:path');
+  const files: { name: string; text?: string; size: number; error?: string }[] = [];
+  for (const path of result.filePaths.slice(0, 8)) {
+    const name = basename(path);
+    try {
+      const info = await stat(path);
+      if (info.size > ATTACHMENT_MAX_BYTES) {
+        files.push({ name, size: info.size, error: `超过 ${ATTACHMENT_MAX_BYTES / 1000}KB 上限` });
+        continue;
+      }
+      const buffer = await readFile(path);
+      if (buffer.includes(0)) {
+        files.push({ name, size: info.size, error: '二进制文件暂不支持' });
+        continue;
+      }
+      files.push({ name, size: info.size, text: buffer.toString('utf8') });
+    } catch (error) {
+      files.push({ name, size: 0, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return files;
+});
+
 app.whenReady().then(async () => {
   try {
     handle = await bootSidecar();

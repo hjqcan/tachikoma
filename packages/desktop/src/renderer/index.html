@@ -1077,6 +1077,61 @@
         display: flex;
         gap: 6px;
       }
+      /* ── 附件芯片：composer 内、输入框上方 ─────────────── */
+      #attachments {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 2px 4px 8px;
+      }
+      #attachments[hidden] {
+        display: none;
+      }
+      .attachment-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font: 11px var(--mono);
+        color: var(--text);
+        background: var(--raised);
+        border-radius: 8px;
+        padding: 4px 6px 4px 10px;
+        max-width: 32ch;
+      }
+      .attachment-chip .fname {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .attachment-chip .fsize {
+        color: var(--text-faint);
+        font-size: 10px;
+        flex: none;
+      }
+      .attachment-chip .remove {
+        border: none;
+        background: none;
+        color: var(--text-faint);
+        cursor: pointer;
+        padding: 0 4px;
+        font-size: 12px;
+        border-radius: 4px;
+      }
+      .attachment-chip .remove:hover {
+        color: var(--sensor);
+      }
+      /* 气泡内的附件标记（发送后） */
+      .bubble .attachment-chip {
+        background: color-mix(in srgb, var(--ground) 55%, transparent);
+        margin: 0 6px 6px 0;
+        padding: 3px 10px;
+      }
+      .bubble .attached-files {
+        display: flex;
+        flex-wrap: wrap;
+        margin-bottom: 2px;
+      }
+
       /* ── 输入卡：生成参数聚拢在说话的地方 ─────────────── */
       footer {
         flex: none;
@@ -1138,6 +1193,21 @@
       }
       #thinking {
         max-width: 17ch;
+      }
+      #attach {
+        font: 400 16px/1 var(--human);
+        padding: 4px 9px;
+        flex: none;
+      }
+      /* 权限芯片：零工具暗、chat 底盘蓝、work 琥珀警示——授予状态在说话的地方也可见 */
+      #access-chip {
+        flex: none;
+      }
+      #access-chip.chat {
+        color: var(--chassis);
+      }
+      #access-chip.work {
+        color: var(--oil);
       }
       .toolbar button:hover,
       .toolbar select:hover {
@@ -1353,6 +1423,7 @@
     </div>
     <footer>
       <div class="composer">
+        <div id="attachments" hidden></div>
         <textarea
           id="input"
           rows="1"
@@ -1360,6 +1431,8 @@
           autofocus
         ></textarea>
         <div class="toolbar">
+          <button id="attach" title="附加文本文件">＋</button>
+          <button id="access-chip" title="当前授予；点击选择工作区">零工具</button>
           <span class="spacer"></span>
           <span id="ctx-gauge" hidden title="上下文用量（上回合 tokens / 模型窗口）">
             <span class="bar"><span class="fill"></span></span>
