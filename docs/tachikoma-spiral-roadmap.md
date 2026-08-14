@@ -45,6 +45,6 @@ engine-core strategy is superseded by this roadmap: the engine grows from `ChatS
 frozen turn-1 `ChatEvent` contract (sessionId/turnId on every event) is the event family the desktop
 protocol package will carry. Desktop shell work starts after turn 2 stabilizes the tool-facing event
 surface. The protocol package's implementation-level design lives in
-`docs/tachikoma-protocol-design.md`; `@tachikoma/protocol` and its first real consumer
-(`@tachikoma/server`, the `tachikoma-engined` sidecar) are implemented. The remaining desktop work
-is the Electron shell itself.
+`docs/tachikoma-protocol-design.md`; `@hjqcan/tachikoma-protocol` and its first real consumer
+(`@hjqcan/tachikoma-server`, the `tachikoma-engined` sidecar) are implemented. The remaining desktop
+work is the Electron shell itself.

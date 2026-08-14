@@ -1,17 +1,17 @@
-# @tachikoma/protocol v2 设计与迁移（桌面轨 E1）
+# @hjqcan/tachikoma-protocol v2 设计与迁移（桌面轨 E1）
 
 > 状态：**已实现**。v1 于 2026-08-12 随提交 c84fb68 落地；当前 v2 于 2026-08-13 随提交 5e5cc7a 加入记忆 lifecycle
 > wire 投影，并已同步 core、protocol、server、CLI 和 desktop。上游文档：
 > `docs/tachikoma-desktop-plan.md`（总设计，§2.3 传输与握手、§4.1 协议包、§4.5 Server
 > RPC）、`docs/tachikoma-spiral-roadmap.md` （ChatEvent 契约与演进规则的语义源头）。
 >
-> **落地时机**：与第一个真实消费者（`@tachikoma/server`
+> **落地时机**：与第一个真实消费者（`@hjqcan/tachikoma-server`
 > 本机 sidecar 或桌面行走骨架 D-A）同一批提交落地。路线图规定 "Placeholder packages and speculative
 > services are not progress" —— 本文把契约钉到可直接实现的精度，但不提前创建空包。
 
 ## 1. 定位与边界
 
-`@tachikoma/protocol` 是引擎与一切远端消费者（Electron renderer、未来 Web
+`@hjqcan/tachikoma-protocol` 是引擎与一切远端消费者（Electron renderer、未来 Web
 UI、第三方客户端）之间的**唯一线上契约**：
 
 - **纯类型 + zod schema**。零运行时依赖 bun/node API（renderer 直接 import）；唯一依赖 `zod`。
@@ -92,14 +92,14 @@ interface HelloRequest {
 } // client: "tachikoma-desktop/0.2.0"
 interface HelloResponse {
   protocolVersion: number; // server 实现的版本
-  engineVersion: string; // @tachikoma/core VERSION
+  engineVersion: string; // @hjqcan/tachikoma-core VERSION
   capabilities: string[]; // 见下
   session: { workDir?: string; toolset?: 'read-only' | 'coding' }; // 本 sidecar 的工具姿态
 }
 ```
 
 - server 校验请求中的 `protocolVersion` 为整数，并在响应中报告自身版本。仓内消费者直接使用
-  `@tachikoma/protocol` 导出的
+  `@hjqcan/tachikoma-protocol` 导出的
   `PROTOCOL_VERSION`，因此保持精确对齐；仓外消费者必须在继续 RPC 前比较响应版本。
 - `capabilities` 是字符串集合而非位图，与事件演进同规则（只增不改）。初始集： `"chat"`,
   `"reasoning"`, `"tools"`, `"approvals"`, `"memory"`, `"compaction"`,
@@ -118,7 +118,8 @@ v2 的唯一破坏性迁移是给 strict `MemoryRecord` wire DTO 增加可选
 虽然字段可选，但 v1 客户端的 strict
 schema 会拒绝带该字段的 v2 响应，因此版本升为 2，而不是伪装成透明兼容。升级要求：
 
-- producer 与 consumer 同步升级 `@tachikoma/protocol`，并使用导出的 `PROTOCOL_VERSION` 和 schema；
+- producer 与 consumer 同步升级 `@hjqcan/tachikoma-protocol`，并使用导出的 `PROTOCOL_VERSION`
+  和 schema；
 - `memory.list` / `memory.search` 保留 lifecycle，CLI 和 desktop 只在 feedback 上展示状态；
 - 无 lifecycle 的旧记录及非 feedback 记录仍合法，不需要迁移 canonical memory 或 storage schema；
 - 不保留 v1 DTO shim；协议 schema 快照负责守住 v2 形状。
@@ -225,13 +226,13 @@ protocol 包自身（零网络、零 bun API）：
 - **快照守卫**：见 §7.3。
 - **凭证扫描**：见 §6.2。
 
-跨包契约测试（放在 protocol 包，`@tachikoma/core` 仅 devDependency）：
+跨包契约测试（放在 protocol 包，`@hjqcan/tachikoma-core` 仅 devDependency）：
 
 ```ts
 // 双向可赋值断言：core 事件 ⊆ wire 类型，wire 类型 ⊆ core 事件。
 // 编译期完成（tsc 即测试），运行期零成本；core 契约增量时此处强制同步 protocol。
-const _coreToWire: ChatEventWire = {} as import('@tachikoma/core').ChatEvent;
-const _wireToCore: import('@tachikoma/core').ChatEvent = {} as ChatEventWire;
+const _coreToWire: ChatEventWire = {} as import('@hjqcan/tachikoma-core').ChatEvent;
+const _wireToCore: import('@hjqcan/tachikoma-core').ChatEvent = {} as ChatEventWire;
 ```
 
 CI：并入现有 verify 管线（typecheck/test/build/pack 各自然扩展到新包）；dist 导出面按 core 同款精确钉死测试。
@@ -247,7 +248,7 @@ packages/protocol/
     dto.ts            # SessionSummary / CompactionResult / MemorySnapshot / ModelRef
     index.ts          # 显式导出面（钉死测试）
   tests/              # §8 全部
-  package.json        # deps: zod；devDeps: @tachikoma/core, typescript
+  package.json        # deps: zod；devDeps: @hjqcan/tachikoma-core, typescript
 ```
 
 上述目录、server 消费者、模型目录与记忆管理 RPC 均已落地。后续协议增量直接修改现有 schema、

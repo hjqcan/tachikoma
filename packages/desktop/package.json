@@ -1,5 +1,5 @@
 {
-  "name": "@tachikoma/desktop",
+  "name": "@hjqcan/tachikoma-desktop",
   "version": "0.2.0",
   "description": "The Tachikoma desktop shell: Electron supervisor over the local sidecar.",
   "type": "module",
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.renderer.json"
   },
   "dependencies": {
-    "@tachikoma/protocol": "workspace:*"
+    "@hjqcan/tachikoma-protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

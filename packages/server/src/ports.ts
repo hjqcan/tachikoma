@@ -1,5 +1,5 @@
 /**
- * server 对引擎的结构化端口（@tachikoma/core 的 ChatEngine/ChatSession 天然满足）。
+ * server 对引擎的结构化端口（@hjqcan/tachikoma-core 的 ChatEngine/ChatSession 天然满足）。
  * 测试用 fake 实现脚本化事件，零网络零 pi 依赖。
  */
 
@@ -15,7 +15,7 @@ import type {
   ThinkingLevel,
   Toolset,
   WorkspaceState,
-} from '@tachikoma/protocol';
+} from '@hjqcan/tachikoma-protocol';
 
 export interface ServerSessionPort {
   readonly id: string;

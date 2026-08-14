@@ -6,7 +6,7 @@
  * 设置了但读不到的提示词文件是配置错误：启动即失败，不静默回退默认。
  */
 
-import type { ChatEngineConfig } from '@tachikoma/core';
+import type { ChatEngineConfig } from '@hjqcan/tachikoma-core';
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';

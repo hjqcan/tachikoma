@@ -5,7 +5,7 @@ import {
   VERSION as CORE_VERSION,
   type ChatEngineConfig,
   type ChatEvent,
-} from '@tachikoma/core';
+} from '@hjqcan/tachikoma-core';
 import type {
   ChatMemorySnapshot,
   ChatModelListing,
@@ -13,7 +13,7 @@ import type {
   ChatSession,
   ChatSessionSummary,
   ChatThinkingLevel,
-} from '@tachikoma/core';
+} from '@hjqcan/tachikoma-core';
 
 export const VERSION = CORE_VERSION;
 

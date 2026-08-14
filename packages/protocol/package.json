@@ -1,5 +1,5 @@
 {
-  "name": "@tachikoma/protocol",
+  "name": "@hjqcan/tachikoma-protocol",
   "version": "0.2.0",
   "description": "The Tachikoma wire contract: zod schemas for events, frames, and RPC.",
   "type": "module",
@@ -24,7 +24,7 @@
     "zod": "4.2.1"
   },
   "devDependencies": {
-    "@tachikoma/core": "workspace:*",
+    "@hjqcan/tachikoma-core": "workspace:*",
     "@types/bun": "1.3.14",
     "typescript": "6.0.3"
   },

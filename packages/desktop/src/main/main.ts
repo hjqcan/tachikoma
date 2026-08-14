@@ -9,7 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PROTOCOL_VERSION } from '@tachikoma/protocol';
+import { PROTOCOL_VERSION } from '@hjqcan/tachikoma-protocol';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { resolveSidecarDataDir, withTemporarySmokeDataDir } from './smoke-data-dir';
 import { startSidecar } from './supervisor';

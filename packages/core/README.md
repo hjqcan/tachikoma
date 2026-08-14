@@ -1,4 +1,4 @@
-# @tachikoma/core
+# @hjqcan/tachikoma-core
 
 Tachikoma 0.2 的 chat-only 核心。它把 `@earendil-works/pi-coding-agent`
 的模型、流式响应、重试、压缩和 JSONL 会话生命周期收敛成一层很薄的公共 API。
@@ -9,7 +9,7 @@ Tachikoma 0.2 的 chat-only 核心。它把 `@earendil-works/pi-coding-agent`
 ## 安装
 
 ```bash
-bun add @tachikoma/core
+bun add @hjqcan/tachikoma-core
 ```
 
 要求 Bun 1.3.14 或更新版本。
@@ -17,7 +17,7 @@ bun add @tachikoma/core
 ## 使用
 
 ```ts
-import { ChatEngine } from '@tachikoma/core';
+import { ChatEngine } from '@hjqcan/tachikoma-core';
 
 const engine = new ChatEngine({
   model: { provider: 'anthropic', model: 'claude-sonnet-5' },

@@ -34,10 +34,10 @@ for TACHIKOMA_PKG in protocol core server cli; do
   )
 done
 
-TACHIKOMA_PROTOCOL_TGZ="$TACHIKOMA_PACK_DIR/tachikoma-protocol-$TACHIKOMA_VERSION.tgz"
-TACHIKOMA_CORE_TGZ="$TACHIKOMA_PACK_DIR/tachikoma-core-$TACHIKOMA_VERSION.tgz"
-TACHIKOMA_SERVER_TGZ="$TACHIKOMA_PACK_DIR/tachikoma-server-$TACHIKOMA_VERSION.tgz"
-TACHIKOMA_CLI_TGZ="$TACHIKOMA_PACK_DIR/tachikoma-cli-$TACHIKOMA_VERSION.tgz"
+TACHIKOMA_PROTOCOL_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-protocol-$TACHIKOMA_VERSION.tgz"
+TACHIKOMA_CORE_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-core-$TACHIKOMA_VERSION.tgz"
+TACHIKOMA_SERVER_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-server-$TACHIKOMA_VERSION.tgz"
+TACHIKOMA_CLI_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-cli-$TACHIKOMA_VERSION.tgz"
 
 tar -xOzf "$TACHIKOMA_CORE_TGZ" package/package.json | bun -e '
   const manifest = await Bun.stdin.json();
@@ -57,8 +57,8 @@ tar -xOzf "$TACHIKOMA_CORE_TGZ" package/package.json | bun -e '
 tar -xOzf "$TACHIKOMA_CLI_TGZ" package/package.json | bun -e '
   const manifest = await Bun.stdin.json();
   const version = process.argv[1];
-  if (manifest.dependencies?.["@tachikoma/core"] !== version) {
-    throw new Error(`packed CLI has @tachikoma/core ${manifest.dependencies?.["@tachikoma/core"]}`);
+  if (manifest.dependencies?.["@hjqcan/tachikoma-core"] !== version) {
+    throw new Error(`packed CLI has @hjqcan/tachikoma-core ${manifest.dependencies?.["@hjqcan/tachikoma-core"]}`);
   }
   if (manifest.bin?.tachikoma !== "./dist/cli.js") {
     throw new Error(`unexpected bin target: ${manifest.bin?.tachikoma}`);
@@ -69,7 +69,7 @@ tar -xOzf "$TACHIKOMA_CLI_TGZ" package/package.json | bun -e '
 tar -xOzf "$TACHIKOMA_SERVER_TGZ" package/package.json | bun -e '
   const manifest = await Bun.stdin.json();
   const version = process.argv[1];
-  for (const name of ["@tachikoma/core", "@tachikoma/protocol"]) {
+  for (const name of ["@hjqcan/tachikoma-core", "@hjqcan/tachikoma-protocol"]) {
     if (manifest.dependencies?.[name] !== version) {
       throw new Error(`packed server has ${name} ${manifest.dependencies?.[name]}`);
     }
@@ -112,17 +112,17 @@ test "$(head -n 1 "$TACHIKOMA_UNPACK_DIR/package/dist/cli.js")" = '#!/usr/bin/en
   bun -e '
     const manifest = await Bun.file("package.json").json();
     manifest.overrides = {
-      "@tachikoma/core": `file:${process.argv[1]}`,
-      "@tachikoma/protocol": `file:${process.argv[2]}`,
+      "@hjqcan/tachikoma-core": `file:${process.argv[1]}`,
+      "@hjqcan/tachikoma-protocol": `file:${process.argv[2]}`,
     };
     await Bun.write("package.json", JSON.stringify(manifest, null, 2));
   ' "$TACHIKOMA_CORE_TGZ" "$TACHIKOMA_PROTOCOL_TGZ"
   bun add --exact "$TACHIKOMA_PROTOCOL_TGZ" "$TACHIKOMA_CORE_TGZ" "$TACHIKOMA_SERVER_TGZ" "$TACHIKOMA_CLI_TGZ"
   bun -e '
     const version = process.argv[1];
-    const core = await import("@tachikoma/core");
-    const cli = await import("@tachikoma/cli");
-    const protocol = await import("@tachikoma/protocol");
+    const core = await import("@hjqcan/tachikoma-core");
+    const cli = await import("@hjqcan/tachikoma-cli");
+    const protocol = await import("@hjqcan/tachikoma-protocol");
     if (core.VERSION !== version || cli.VERSION !== version) {
       throw new Error("unexpected installed package versions");
     }

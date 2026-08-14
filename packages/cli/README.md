@@ -1,4 +1,4 @@
-# @tachikoma/cli
+# @hjqcan/tachikoma-cli
 
 The only Tachikoma executable package. `tachikoma` and `tachikoma chat` open the same REPL;
 `tachikoma run <prompt>` is a one-shot facade over the same Core `ChatSession`.

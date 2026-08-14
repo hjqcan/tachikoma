@@ -9,16 +9,16 @@ cards, workspace grants). There is intentionally no coordination runtime yet.
 
 ## What owns what
 
-- `@tachikoma/core` exposes the stable `ChatEngine`, `ChatSession`, and `ChatEvent` product
+- `@hjqcan/tachikoma-core` exposes the stable `ChatEngine`, `ChatSession`, and `ChatEvent` product
   boundary.
 - `@earendil-works/pi-coding-agent` owns model discovery and credentials, streaming, retries,
   compaction, interruption, tool execution, and append-only JSONL v3 sessions.
 - `goodmemory` owns durable recall and writeback. It is enabled by default and stores local data at
   `~/.tachikoma/memory/goodmemory.sqlite`.
-- `@tachikoma/protocol` is the renderer-safe wire contract (zod-only) for remote consumers.
-- `@tachikoma/server` ships `tachikoma-engined`, the local sidecar: HTTP RPC plus WS event frames
-  replayed from a per-session WAL.
-- `@tachikoma/cli` is the interactive product surface.
+- `@hjqcan/tachikoma-protocol` is the renderer-safe wire contract (zod-only) for remote consumers.
+- `@hjqcan/tachikoma-server` ships `tachikoma-engined`, the local sidecar: HTTP RPC plus WS event
+  frames replayed from a per-session WAL.
+- `@hjqcan/tachikoma-cli` is the interactive product surface.
 
 Tachikoma does not carry a second provider catalog, retry loop, transcript format, or legacy session
 reader.
@@ -128,8 +128,9 @@ dir is per-workspace — `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORK
 — `TACHIKOMA_SYSTEM_PROMPT_FILE` — replaces the default system prompt with the file's content,
 unreadable or empty fails startup; the engine always appends one factual tool-posture sentence
 (zero-tool / read-only / coding) after any prompt — and `TACHIKOMA_NO_MEMORY=1`). Clients speak
-`@tachikoma/protocol`: HTTP `POST /v1/rpc`, one-time WS tickets from `POST /v1/auth/ws-ticket`, and
-`subscribe {sessionId, fromSeq}` for lossless replay over the per-session WAL.
+`@hjqcan/tachikoma-protocol`: HTTP `POST /v1/rpc`, one-time WS tickets from
+`POST /v1/auth/ws-ticket`, and `subscribe {sessionId, fromSeq}` for lossless replay over the
+per-session WAL.
 
 The sidecar also compiles to a single binary: `bun run --cwd packages/server build:bin` produces
 `packages/server/dist/tachikoma-engined` (bun runtime embedded; real model turns and the GoodMemory
@@ -139,7 +140,7 @@ points at the binary — an explicit opt-in so a stale binary can never silently
 ## Library
 
 ```ts
-import { ChatEngine } from '@tachikoma/core';
+import { ChatEngine } from '@hjqcan/tachikoma-core';
 
 const engine = new ChatEngine({ memory: {} });
 const session = await engine.createSession({

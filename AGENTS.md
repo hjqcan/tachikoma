@@ -7,7 +7,8 @@ one.
 ## Current product boundary
 
 - Bun `1.3.14` is the canonical runtime and package manager.
-- Workspaces: `@tachikoma/core`, `@tachikoma/protocol`, `@tachikoma/server`, `@tachikoma/cli`.
+- Workspaces: `@hjqcan/tachikoma-core`, `@hjqcan/tachikoma-protocol`, `@hjqcan/tachikoma-server`,
+  `@hjqcan/tachikoma-cli`.
 - pi-mono owns models, credentials, streaming, retry, compaction, transcript persistence, the
   session lifecycle, and tool execution.
 - GoodMemory owns durable user memory and is enabled by default.
@@ -15,8 +16,8 @@ one.
   adds write/edit/bash behind per-call approval with timeout-deny. The default product has zero
   tools.
 - `tachikoma-engined` is the local sidecar for remote consumers (HTTP RPC + WS frames over a WAL),
-  speaking only `@tachikoma/protocol`. No desktop shell exists yet; coordination (turn 3) has not
-  started.
+  speaking only `@hjqcan/tachikoma-protocol`. No desktop shell exists yet; coordination (turn 3) has
+  not started.
 - There is no compatibility promise for pre-`0.2.0` APIs, commands, or session files.
 
 ## Commands

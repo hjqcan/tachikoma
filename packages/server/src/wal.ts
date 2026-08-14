@@ -11,8 +11,8 @@
 
 import { access, appendFile, mkdir, readFile, rename, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { ChatEventWire, SessionEventFrame } from '@tachikoma/protocol';
-import { FRAME_VERSION, parseSessionEventFrame } from '@tachikoma/protocol';
+import type { ChatEventWire, SessionEventFrame } from '@hjqcan/tachikoma-protocol';
+import { FRAME_VERSION, parseSessionEventFrame } from '@hjqcan/tachikoma-protocol';
 
 export class SessionWal {
   private nextSeq = 1;

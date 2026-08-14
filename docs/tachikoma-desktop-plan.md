@@ -43,7 +43,8 @@ Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面�
 
 - 桌面 App 可安装可分发（签名/公证/自动更新），首次运行无需安装 Bun。
 - 引擎以 sidecar 二进制形式被桌面壳托管，崩溃可恢复、退出无孤儿进程。
-- 渲染进程只依赖 `@tachikoma/protocol`（纯类型 + zod），不透明拖入 ioredis/level/qdrant/playwright。
+- 渲染进程只依赖 `@hjqcan/tachikoma-protocol`（纯类型 +
+  zod），不透明拖入 ioredis/level/qdrant/playwright。
 - 现有两个 CLI（`packages/core/bin/tachikoma.ts`、`packages/cli`）在每个阶段合入后行为不回归。
 - 审批（HITL）从「文件轮询竞态」变为一等公民 API，同时修复现有 CLI 与自动仲裁的竞态缺陷。
 
@@ -54,7 +55,7 @@ Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面�
 ```
 ┌──────────────────────────┐  spawn/监督/进程树击杀   ┌────────────────────────────────┐
 │ Electron main（壳）       │────────────────────────▶│ Bun sidecar: tachikoma-engined │
-│ 窗口/菜单/托盘/deep link   │  stdin: token+key 引导   │ @tachikoma/server (HTTP+WS)    │
+│ 窗口/菜单/托盘/deep link   │  stdin: token+key 引导   │ @hjqcan/tachikoma-server (HTTP+WS)    │
 │ safeStorage(keychain)    │  stdout: {"listening"}   │  └ AgentEngine 门面            │
 │ 自动更新/崩溃恢复          │◀── /healthz + WS ping ──│     └ ConversationalRunner     │
 └───────────▲──────────────┘                          │        └ Orchestrator/Workers  │
@@ -62,7 +63,7 @@ Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面�
             │ serverInfo、keychain、原生对话框）          │ dev-server/(Docker)            │
 ┌───────────┴──────────────┐                          └───────────────▲────────────────┘
 │ Renderer (React 19)      │      HTTP /v1 + WS /ws（127.0.0.1，Bearer token）
-│ 仅依赖 @tachikoma/protocol │──────────────────────────────────────────┘
+│ 仅依赖 @hjqcan/tachikoma-protocol │──────────────────────────────────────────┘
 └──────────────────────────┘
 ```
 
@@ -122,13 +123,13 @@ Engine（协议 + 门面 + 生命周期 + 审批 API），再在其上建桌面�
 
 ## 4. 接口设计（现在预留的嵌入边界）
 
-### 4.1 `@tachikoma/protocol`（E1）
+### 4.1 `@hjqcan/tachikoma-protocol`（E1）
 
 > 2026-08-12：本节的实现级设计已细化于 `docs/tachikoma-protocol-design.md`
 > （对齐架构重启后的 ChatEvent/ChatSession 契约，含方法表、帧模型、演进与测试规则）；本节保留为总设计语境。
 
 **定位**：纯类型 + zod schema，renderer 安全（无 bun/node types、无 DOM 依赖、仅依赖
-`zod`）。desktop 永不直接依赖 `@tachikoma/core`。
+`zod`）。desktop 永不直接依赖 `@hjqcan/tachikoma-core`。
 
 ```
 packages/protocol/
@@ -390,7 +391,7 @@ NDJSON 模式（同信封）作为可选传输保留给未来 Tauri 形态。
 - `bun run build:core` 产物 `dist/` 实际缺失而 `packages/cli` 的 `main` 指向它。
 - `.env.example` 漂移（`REDIS_URL`/`LEVELDB_PATH` core 从不读；`SANDBOX_*` 前缀与 loader 的
   `TACHIKOMA_SANDBOX_*` 不符）；README 工具表/开发状态过期；`servers/_client.ts` 的
-  `@tachikoma/core/mcp/sandbox-ipc` 子路径不在 core exports map（运行时会挂）。
+  `@hjqcan/tachikoma-core/mcp/sandbox-ipc` 子路径不在 core exports map（运行时会挂）。
 
 ## 6. 分阶段实施计划
 
@@ -399,7 +400,7 @@ NDJSON 模式（同信封）作为可选传输保留给未来 Tauri 形态。
 | 阶段 | 内容                                                                                                                                                | 规模 | 依赖                   | 对桌面轨的解锁                        |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------- | ------------------------------------- |
 | E0   | 尖峰验证（§7.1 A/B/C）+ §5.3 卫生修复                                                                                                               | S    | —                      | 数据决定 E5/E7/E9 细节                |
-| E1   | `@tachikoma/protocol`（§4.1）+ 契约测试 + core re-export                                                                                            | M    | E0                     | **UI 可对 fixtures/mock server 开发** |
+| E1   | `@hjqcan/tachikoma-protocol`（§4.1）+ 契约测试 + core re-export                                                                                     | M    | E0                     | **UI 可对 fixtures/mock server 开发** |
 | E2   | `AgentEngine` 门面 + `dispose()` + `ChildProcessRegistry` + 真 `interrupt()` + 单 workDir 守卫                                                      | M    | E1                     | 中断按钮、退出保障                    |
 | E3   | StreamEvent v2 结构化事件（4.2.1/4.2.2，3a/3b 可并行）                                                                                              | M    | E1,E2                  | 活动面板保真                          |
 | E4   | 审批升级 + `respondToApproval`（§4.4，顺带修 CLI 竞态）                                                                                             | M    | E2,E3                  | 审批 UX                               |
@@ -434,7 +435,7 @@ remark-gfm、shiki 懒加载、@tanstack/react-virtual（长事件流虚拟化�
 
 ### 7.1 先行尖峰（按序执行，E0）
 
-1. **尖峰 A：`bun build --compile` 含 core**。10 行入口 import `@tachikoma/core`
+1. **尖峰 A：`bun build --compile` 含 core**。10 行入口 import `@hjqcan/tachikoma-core`
    创建 runner；预期失败模式 = `level`（classic-level N-API）；用
    `--external level --external playwright`
    与模拟懒加载补丁重试。产出：单二进制 go/no-go 结论 + 精确 external 清单。

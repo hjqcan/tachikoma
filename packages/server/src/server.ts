@@ -17,14 +17,14 @@ import {
   isRpcMethod,
   rpcRequestSchema,
   subscribeRequestSchema,
-} from '@tachikoma/protocol';
+} from '@hjqcan/tachikoma-protocol';
 import type {
   ChatEventWire,
   RpcErrorCode,
   RpcMethod,
   SessionEventFrame,
   SessionSummary,
-} from '@tachikoma/protocol';
+} from '@hjqcan/tachikoma-protocol';
 import type { ServerEnginePort, ServerSessionPort } from './ports';
 import { SessionWal } from './wal';
 

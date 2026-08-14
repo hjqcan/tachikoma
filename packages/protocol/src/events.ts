@@ -1,7 +1,7 @@
 /**
  * ChatEvent 的 wire 镜像 + 会话事件帧。
  *
- * 语义源头是 @tachikoma/core 的 ChatEvent 联合（第一、二圈已冻结）；
+ * 语义源头是 @hjqcan/tachikoma-core 的 ChatEvent 联合（第一、二圈已冻结）；
  * 双向类型兼容由 tests/type-compat.test.ts 在编译期强制。
  * 演进规则：只增不改；消费者必须容忍未知事件类型（parseSessionEventFrame 绝不丢 seq）。
  */

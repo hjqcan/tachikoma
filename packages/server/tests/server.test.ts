@@ -24,7 +24,7 @@ import type {
   ThinkingLevel,
   Toolset,
   WorkspaceState,
-} from '@tachikoma/protocol';
+} from '@hjqcan/tachikoma-protocol';
 
 import type { ServerEnginePort, ServerSessionPort } from '../src/ports';
 import { startTachikomaServer } from '../src/server';

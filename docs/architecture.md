@@ -5,11 +5,11 @@
 Tachikoma `0.2.x` has four packages and one runtime path:
 
 ```text
-@tachikoma/cli            @tachikoma/server (tachikoma-engined sidecar)
+@hjqcan/tachikoma-cli            @hjqcan/tachikoma-server (tachikoma-engined sidecar)
       |                        |          \
-      |                        |           +-> @tachikoma/protocol (wire schemas)
+      |                        |           +-> @hjqcan/tachikoma-protocol (wire schemas)
       v                        v                    ^
-@tachikoma/core: ChatEngine -> ChatSession          |  (desktop renderer depends
+@hjqcan/tachikoma-core: ChatEngine -> ChatSession          |  (desktop renderer depends
       |                         |                   |   on protocol only)
       |                         +-> GoodMemory runtime-kit
       v
@@ -21,10 +21,10 @@ pi AgentSession -> ModelRuntime + SessionManager JSONL v3
 thinking level, compacts, and closes. Each session owns one pi `AgentSession`; engine-wide mutable
 model state is forbidden.
 
-`@tachikoma/cli` talks to core in-process. `@tachikoma/server` is the local sidecar for remote
-consumers (the future desktop shell): HTTP RPC plus a WebSocket event stream, speaking only the
-schemas in `@tachikoma/protocol`. The protocol package is renderer-safe: zod-only, compiled with an
-empty `types` list so no bun/node API can leak in.
+`@hjqcan/tachikoma-cli` talks to core in-process. `@hjqcan/tachikoma-server` is the local sidecar
+for remote consumers (the future desktop shell): HTTP RPC plus a WebSocket event stream, speaking
+only the schemas in `@hjqcan/tachikoma-protocol`. The protocol package is renderer-safe: zod-only,
+compiled with an empty `types` list so no bun/node API can leak in.
 
 ## Sources of truth
 
@@ -37,9 +37,9 @@ empty `types` list so no bun/node API can leak in.
 | Stable product events                              | Tachikoma `ChatEvent`            |
 | Workspace path boundary and approval policy        | core `workspace-guard` extension |
 | Durable recall and writeback                       | GoodMemory `runtime-kit`         |
-| Wire schemas, frames, RPC envelope                 | `@tachikoma/protocol`            |
-| Event `seq`, WAL, replay, transport auth           | `@tachikoma/server`              |
-| Terminal UX and slash commands                     | `@tachikoma/cli`                 |
+| Wire schemas, frames, RPC envelope                 | `@hjqcan/tachikoma-protocol`     |
+| Event `seq`, WAL, replay, transport auth           | `@hjqcan/tachikoma-server`       |
+| Terminal UX and slash commands                     | `@hjqcan/tachikoma-cli`          |
 
 Tachikoma does not translate the transcript into a second storage schema or reconstruct provider
 metadata. Credentials remain private to the engine process (pi auth, env, `models.json` `$ENV`
@@ -69,8 +69,8 @@ reported by pi, including input/output, cache, reasoning, and cost fields.
 
 The contract evolves additively only: new event types and optional fields may be added; existing
 semantics never change. Consumers must tolerate unknown event types. On the wire,
-`@tachikoma/protocol` mirrors this union with zod schemas, enforces bidirectional type compatibility
-with core at compile time, and guards its own shape with a JSON Schema snapshot.
+`@hjqcan/tachikoma-protocol` mirrors this union with zod schemas, enforces bidirectional type
+compatibility with core at compile time, and guards its own shape with a JSON Schema snapshot.
 
 GoodMemory failure is non-fatal to model chat but never silent: recall degradation and write failure
 surface as `memory_status` events and CLI status lines. A successful recall additionally carries
@@ -119,13 +119,13 @@ reimplements executors.
 
 ## Local sidecar
 
-`tachikoma-engined` (in `@tachikoma/server`) hosts one engine for remote consumers on `127.0.0.1`:
-the shell injects a Bearer token as the first stdin line, the sidecar prints a single `listening`
-JSON line, HTTP `/v1/rpc` carries the RPC envelope, and WebSocket subscribers replay the per-session
-WAL from any `fromSeq` before receiving live frames. The server is the sole consumer of each turn's
-event stream: it assigns the monotonic `seq`, appends to the WAL first, then fans out. After a
-crash, an unterminated turn is completed with a synthetic `failed` frame written into the WAL so
-replay cursors stay consistent.
+`tachikoma-engined` (in `@hjqcan/tachikoma-server`) hosts one engine for remote consumers on
+`127.0.0.1`: the shell injects a Bearer token as the first stdin line, the sidecar prints a single
+`listening` JSON line, HTTP `/v1/rpc` carries the RPC envelope, and WebSocket subscribers replay the
+per-session WAL from any `fromSeq` before receiving live frames. The server is the sole consumer of
+each turn's event stream: it assigns the monotonic `seq`, appends to the WAL first, then fans out.
+After a crash, an unterminated turn is completed with a synthetic `failed` frame written into the
+WAL so replay cursors stay consistent.
 
 The WAL lives at `<dataDir>/events/<sessionId>.jsonl` (never inside pi's `sessions/` directory) and
 is a derived replay cache: the pi transcript is the source of truth. A ledger that is missing or has
@@ -136,14 +136,14 @@ transcript does not store (thinking deltas, `tool_update`) are not reconstructed
 
 ## Desktop shell (walking skeleton)
 
-`@tachikoma/desktop` is the Electron shell: the main process supervises `tachikoma-engined` (token
-via stdin, three-stage stop: shutdown RPC → SIGTERM → SIGKILL), exposes `serverInfo` and a native
-workspace picker over a context-isolated preload, and the renderer is vanilla TS that speaks only
-`@tachikoma/protocol` — streaming, collapsible reasoning, live tool telemetry, approval cards, and
-session-level workspace grants from the header. The machine voice renders a minimal safe Markdown
-subset (DOM construction only, never innerHTML with model output); links open in the system browser
-and the window itself never navigates. On macOS the title bar is `hiddenInset` with the header as
-the drag region.
+`@hjqcan/tachikoma-desktop` is the Electron shell: the main process supervises `tachikoma-engined`
+(token via stdin, three-stage stop: shutdown RPC → SIGTERM → SIGKILL), exposes `serverInfo` and a
+native workspace picker over a context-isolated preload, and the renderer is vanilla TS that speaks
+only `@hjqcan/tachikoma-protocol` — streaming, collapsible reasoning, live tool telemetry, approval
+cards, and session-level workspace grants from the header. The machine voice renders a minimal safe
+Markdown subset (DOM construction only, never innerHTML with model output); links open in the system
+browser and the window itself never navigates. On macOS the title bar is `hiddenInset` with the
+header as the drag region.
 
 Sessions are threads: a persistent sidebar (filter, inline rename via `session.rename`, relative
 timestamps), and switching away from a generating session does not abort it — the renderer keeps one

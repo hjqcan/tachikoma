@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "paths": {
-      "@tachikoma/core": ["../core/src/index.ts"]
+      "@hjqcan/tachikoma-core": ["../core/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

@@ -1,13 +1,13 @@
 /**
- * Tachikoma 桌面 renderer：原生 TS + DOM，仅依赖 @tachikoma/protocol。
+ * Tachikoma 桌面 renderer：原生 TS + DOM，仅依赖 @hjqcan/tachikoma-protocol。
  *
  * 工具授予流：header 的工作区 chip → 原生目录选择器（main 进程）→
  * session.create({workDir, toolset}) 开新会话 —— 授予是会话级、显式、不持久化的。
  * 事件渲染语义：底盘蓝 = 工具遥测；传感红 = 审批（机器请求对世界动手）；琥珀 = 记忆。
  */
 
-import { parseSessionEventFrame } from '@tachikoma/protocol';
-import type { ChatEventWire, RpcResponse } from '@tachikoma/protocol';
+import { parseSessionEventFrame } from '@hjqcan/tachikoma-protocol';
+import type { ChatEventWire, RpcResponse } from '@hjqcan/tachikoma-protocol';
 
 import { buildMemoryView, feedbackLifecycleLabel, systemRecordsSummary } from './memory-view';
 import type { MemoryRecordView } from './memory-view';

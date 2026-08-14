@@ -1,7 +1,8 @@
 # Releasing
 
-`@tachikoma/protocol`、`@tachikoma/core`、`@tachikoma/server` 三包发布到 npm（公开，MIT）。
-`@tachikoma/cli` 暂不发布；`@tachikoma/desktop` 是 private 壳，永不发布。
+`@hjqcan/tachikoma-protocol`、`@hjqcan/tachikoma-core`、`@hjqcan/tachikoma-server`
+三包发布到 npm（公开，MIT）。 `@hjqcan/tachikoma-cli` 暂不发布；`@hjqcan/tachikoma-desktop`
+是 private 壳，永不发布。
 
 ## 版本策略
 
@@ -15,10 +16,12 @@
 
 ## 首次发布（一次性）
 
-1. `npm login`（发布者账号）。
-2. `@tachikoma` scope 未注册：首个 `npm publish`
-   会随包自动创建（组织名被占时需先在 npmjs.com 建 org）。三包 `publishConfig.access: public`
-   已就位（scoped 首发必需）。
+1. `npm login`（发布者账号 `hjqcan`）。
+2. scope 就是发布者用户名（`@hjqcan`），无需任何组织。历史教训：`tachikoma` 在 npm 上是
+   **别人的用户名**（scope 与同名用户/组织绑定，永远发不进去），因此包名带 `tachikoma-`
+   前缀挂在个人 scope 下。三包 `publishConfig.access: public` 已就位（scoped 首发必需）。
+3. 账号开了 2FA 时，发布需要 `--otp=<验证器6位码>`，或用短有效期的 granular token（All packages /
+   Read-write / bypass 2FA，发完立即撤销）。
 
 ## 每次发布
 
@@ -29,7 +32,7 @@ bun run verify
 
 # 3. 按依赖顺序发布 —— 必须用 bun publish：
 #    npm publish 不认识 workspace:* 协议，会把 server 的
-#    "@tachikoma/core": "workspace:*" 原样发出去（消费者装不上）；
+#    "@hjqcan/tachikoma-core": "workspace:*" 原样发出去（消费者装不上）；
 #    bun publish 与 bun pm pack 同一打包逻辑，自动重写为精确版本。
 cd packages/protocol && bun publish
 cd ../core          && bun publish

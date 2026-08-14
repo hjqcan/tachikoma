@@ -9,7 +9,7 @@ import type {
   ChatModelRef,
   ChatSessionSummary,
   ChatThinkingLevel,
-} from '@tachikoma/core';
+} from '@hjqcan/tachikoma-core';
 import {
   VERSION,
   runCli,

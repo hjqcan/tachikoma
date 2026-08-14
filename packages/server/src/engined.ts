@@ -8,8 +8,8 @@
  * 变量清单与组装语义见 engine-env.ts（enginedOptionsFromEnv）。
  */
 
-import { ChatEngine, VERSION } from '@tachikoma/core';
-import { PROTOCOL_VERSION } from '@tachikoma/protocol';
+import { ChatEngine, VERSION } from '@hjqcan/tachikoma-core';
+import { PROTOCOL_VERSION } from '@hjqcan/tachikoma-protocol';
 import { enginedOptionsFromEnv } from './engine-env';
 import { startTachikomaServer } from './server';
 

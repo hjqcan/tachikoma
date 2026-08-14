@@ -14,7 +14,7 @@ import type {
   ChatModelListing,
   ChatSessionSummary,
   ChatSkillInfo,
-} from '@tachikoma/core';
+} from '@hjqcan/tachikoma-core';
 
 import type { ChatEventWire } from '../src/events';
 import type {

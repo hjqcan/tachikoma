@@ -1,5 +1,5 @@
 {
-  "name": "@tachikoma/cli",
+  "name": "@hjqcan/tachikoma-cli",
   "version": "0.2.0",
   "description": "The Tachikoma conversation-first CLI.",
   "type": "module",
@@ -26,7 +26,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@tachikoma/core": "workspace:*"
+    "@hjqcan/tachikoma-core": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",

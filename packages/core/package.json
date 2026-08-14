@@ -1,5 +1,5 @@
 {
-  "name": "@tachikoma/core",
+  "name": "@hjqcan/tachikoma-core",
   "version": "0.2.0",
   "description": "Chat-only Tachikoma runtime built on pi AgentSession.",
   "type": "module",
