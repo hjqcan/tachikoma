@@ -8,7 +8,7 @@ one.
 
 - Bun `1.3.14` is the canonical runtime and package manager.
 - Workspaces: `@hjqcan/tachikoma-core`, `@hjqcan/tachikoma-protocol`, `@hjqcan/tachikoma-server`,
-  `@hjqcan/tachikoma-cli`.
+  `@hjqcan/tachikoma-cli`, and `@hjqcan/tachikoma-desktop` (private, unpublished).
 - pi-mono owns models, credentials, streaming, retry, compaction, transcript persistence, the
   session lifecycle, and tool execution.
 - GoodMemory owns durable user memory and is enabled by default.
@@ -16,8 +16,12 @@ one.
   adds write/edit/bash behind per-call approval with timeout-deny. The default product has zero
   tools.
 - `tachikoma-engined` is the local sidecar for remote consumers (HTTP RPC + WS frames over a WAL),
-  speaking only `@hjqcan/tachikoma-protocol`. No desktop shell exists yet; coordination (turn 3) has
-  not started.
+  speaking only `@hjqcan/tachikoma-protocol`; the desktop Electron shell (walking skeleton)
+  supervises it. `tachikoma-acp` is a second, ACP-speaking bin for editors
+  ([`docs/acp.md`](docs/acp.md)). Coordination (turn 3) has not started.
+- Named presets bundle session composition as data under `<configDir>/presets/`
+  ([`docs/presets.md`](docs/presets.md)); model-visible surfaces are documented in
+  [`docs/model-experience.md`](docs/model-experience.md).
 - There is no compatibility promise for pre-`0.2.0` APIs, commands, or session files.
 
 ## Commands

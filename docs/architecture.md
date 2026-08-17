@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Tachikoma `0.2.x` has four packages and one runtime path:
+Tachikoma `0.2.x` has five packages and one runtime path:
 
 ```text
 @hjqcan/tachikoma-cli            @hjqcan/tachikoma-server (tachikoma-engined sidecar)
@@ -22,9 +22,9 @@ thinking level, compacts, and closes. Each session owns one pi `AgentSession`; e
 model state is forbidden.
 
 `@hjqcan/tachikoma-cli` talks to core in-process. `@hjqcan/tachikoma-server` is the local sidecar
-for remote consumers (the future desktop shell): HTTP RPC plus a WebSocket event stream, speaking
-only the schemas in `@hjqcan/tachikoma-protocol`. The protocol package is renderer-safe: zod-only,
-compiled with an empty `types` list so no bun/node API can leak in.
+for remote consumers (the desktop shell, and any machine client): HTTP RPC plus a WebSocket event
+stream, speaking only the schemas in `@hjqcan/tachikoma-protocol`. The protocol package is
+renderer-safe: zod-only, compiled with an empty `types` list so no bun/node API can leak in.
 
 ## Sources of truth
 
