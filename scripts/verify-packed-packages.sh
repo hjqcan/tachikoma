@@ -23,6 +23,7 @@ mkdir -p "$TACHIKOMA_PACK_DIR" "$TACHIKOMA_UNPACK_DIR" "$TACHIKOMA_CONSUMER_DIR"
 test -f "$TACHIKOMA_REPO_ROOT/packages/protocol/dist/index.js"
 test -f "$TACHIKOMA_REPO_ROOT/packages/core/dist/index.js"
 test -f "$TACHIKOMA_REPO_ROOT/packages/server/dist/engined.js"
+test -f "$TACHIKOMA_REPO_ROOT/packages/server/dist/acp.js"
 test -f "$TACHIKOMA_REPO_ROOT/packages/cli/dist/cli.js"
 
 for TACHIKOMA_PKG in protocol core server cli; do
@@ -76,6 +77,9 @@ tar -xOzf "$TACHIKOMA_SERVER_TGZ" package/package.json | bun -e '
   }
   if (manifest.bin?.["tachikoma-engined"] !== "./dist/engined.js") {
     throw new Error(`unexpected bin target: ${JSON.stringify(manifest.bin)}`);
+  }
+  if (manifest.bin?.["tachikoma-acp"] !== "./dist/acp.js") {
+    throw new Error(`unexpected acp bin target: ${JSON.stringify(manifest.bin)}`);
   }
 ' "$TACHIKOMA_VERSION"
 
@@ -132,6 +136,8 @@ test "$(head -n 1 "$TACHIKOMA_UNPACK_DIR/package/dist/cli.js")" = '#!/usr/bin/en
   ' "$TACHIKOMA_VERSION"
   test -x ./node_modules/.bin/tachikoma-engined
   test "$(head -n 1 ./node_modules/.bin/tachikoma-engined)" = '#!/usr/bin/env bun'
+  test -x ./node_modules/.bin/tachikoma-acp
+  test "$(head -n 1 ./node_modules/.bin/tachikoma-acp)" = '#!/usr/bin/env bun'
   ./node_modules/.bin/tachikoma --version
   ./node_modules/.bin/tachikoma --help
   bun audit

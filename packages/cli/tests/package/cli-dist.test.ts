@@ -205,7 +205,15 @@ describe('built CLI', () => {
     expect(exitCode).toBe(0);
     expect(stderr).toBe('');
     expect(JSON.parse(stdout)).toEqual({
-      core: ['ChatEngine', 'VERSION', 'buildChatSystemPrompt'],
+      core: [
+        'CHAT_THINKING_LEVELS',
+        'ChatEngine',
+        'VERSION',
+        'buildChatSystemPrompt',
+        'mergePresetConfig',
+        'readPromptFile',
+        'resolvePreset',
+      ],
       cli: ['VERSION', 'runCli'],
     });
   });

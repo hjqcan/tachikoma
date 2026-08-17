@@ -1,10 +1,16 @@
-import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CHAT_THINKING_LEVELS,
   ChatEngine,
   VERSION as CORE_VERSION,
+  mergePresetConfig,
+  readPromptFile,
+  resolvePreset,
   type ChatEngineConfig,
   type ChatEvent,
+  type ChatPresetResolved,
 } from '@hjqcan/tachikoma-core';
 import type {
   ChatMemorySnapshot,
@@ -16,8 +22,6 @@ import type {
 } from '@hjqcan/tachikoma-core';
 
 export const VERSION = CORE_VERSION;
-
-const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 /** 与 core 的 APPROVAL_REQUIRED_TOOLS 同集（core 公共面刻意不导出内部策略常量） */
 const APPROVABLE_TOOLS = ['write', 'edit', 'bash'] as const;
@@ -127,6 +131,8 @@ interface ParsedArguments {
   skills?: readonly string[];
   /** --system-prompt-file：整体替换默认系统提示词（文件路径；多行/非 ASCII 友好） */
   systemPromptFile?: string;
+  /** --preset：<configDir>/presets/<name>.json 的命名会话组合；显式 flag/env 覆盖其字段 */
+  preset?: string;
 }
 
 interface TurnResult {
@@ -232,11 +238,11 @@ const defaultDependencies: CliDependencies = {
 };
 
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --skills <path>    grant a SKILL.md file or a skills directory (requires --workdir;\n                     repeatable)\n  --system-prompt-file <path>\n                     replace the default system prompt with the file's content\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session;\n                               does not carry skills — re-grant with /skills)\n  /skills [<path> [path…] | off]\n                               show or grant this session's skills (new session,\n                               keeps the current workspace grant; whitespace-split —\n                               for paths with spaces use the --skills flag)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --skills <path>    grant a SKILL.md file or a skills directory (requires --workdir;\n                     repeatable)\n  --system-prompt-file <path>\n                     replace the default system prompt with the file's content\n  --preset <name>    load <configDir>/presets/<name>.json (named session composition:\n                     prompt/skills/toolset/workDir/model); explicit flags override it\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session;\n                               does not carry skills — re-grant with /skills)\n  /skills [<path> [path…] | off]\n                               show or grant this session's skills (new session,\n                               keeps the current workspace grant; whitespace-split —\n                               for paths with spaces use the --skills flag)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
-  if (!THINKING_LEVELS.includes(value as (typeof THINKING_LEVELS)[number])) {
+  if (!(CHAT_THINKING_LEVELS as readonly string[]).includes(value)) {
     throw new CliUsageError(`Unknown thinking level: ${value}`);
   }
   return value as ChatThinkingLevel;
@@ -263,6 +269,7 @@ function parseArguments(
   let allowTools: readonly string[] | undefined;
   let skills: string[] | undefined;
   let systemPromptFile: string | undefined;
+  let preset: string | undefined;
   let noMemory = false;
   let forceHelp = false;
   let forceVersion = false;
@@ -322,6 +329,10 @@ function parseArguments(
         systemPromptFile = takeValue(args, index, argument);
         index += 1;
         break;
+      case '--preset':
+        preset = takeValue(args, index, argument);
+        index += 1;
+        break;
       case '--no-memory':
         noMemory = true;
         break;
@@ -347,15 +358,8 @@ function parseArguments(
   if (Boolean(provider) !== Boolean(modelId)) {
     throw new CliUsageError('Model selection requires both provider and model');
   }
-  if (allowTools && !workDir) {
-    throw new CliUsageError('--allow requires --workdir');
-  }
-  if (toolset && !workDir) {
-    throw new CliUsageError('--toolset requires --workdir');
-  }
-  if (skills && !workDir) {
-    throw new CliUsageError('--skills requires --workdir');
-  }
+  // 跨字段检查（toolset/skills 需 workspace）不在解析期做：engineConfig 的
+  // mergePresetConfig 是唯一实现——preset 可以补上 workDir，解析期副本只会分叉。
 
   const first = positional[0];
   const command = first === undefined ? 'chat' : first;
@@ -381,47 +385,67 @@ function parseArguments(
     ...(allowTools ? { allowTools } : {}),
     ...(skills ? { skills } : {}),
     ...(systemPromptFile ? { systemPromptFile } : {}),
+    ...(preset ? { preset } : {}),
   };
 }
 
 /** 读提示词文件；读不到/为空是用法错误（退出码 2），不静默回退默认提示词 */
 function readSystemPromptFile(path: string): string {
-  let content: string;
   try {
-    content = readFileSync(path, 'utf8');
+    return readPromptFile(path, '--system-prompt-file');
   } catch (error) {
-    throw new CliUsageError(
-      `--system-prompt-file is not readable: ${path} (${
-        error instanceof Error ? error.message : String(error)
-      })`
-    );
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
   }
-  if (!content.trim()) {
-    throw new CliUsageError(`--system-prompt-file is empty: ${path}`);
-  }
-  return content;
 }
 
 function engineConfig(
   parsed: ParsedArguments,
   env: Readonly<Record<string, string | undefined>>
 ): ChatEngineConfig {
+  // 命名 preset：解析失败是用法错误（退出码 2）。合并与跨字段检查走 core 的
+  // mergePresetConfig——与 engined 同一实现，不在两条边各写一份。
+  let preset: ChatPresetResolved = {};
+  if (parsed.preset) {
+    const configDir =
+      env.TACHIKOMA_CONFIG_DIR ?? env.TACHIKOMA_DATA_DIR ?? join(homedir(), '.tachikoma');
+    try {
+      preset = resolvePreset(configDir, parsed.preset);
+    } catch (error) {
+      throw new CliUsageError(error instanceof Error ? error.message : String(error));
+    }
+  }
+  const explicitToolset =
+    parsed.toolset ?? (parsed.allowTools?.length ? ('coding' as const) : undefined);
+  let merged: ReturnType<typeof mergePresetConfig>;
+  try {
+    merged = mergePresetConfig(
+      {
+        ...(parsed.model ? { model: parsed.model } : {}),
+        ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
+        ...(explicitToolset ? { toolset: explicitToolset } : {}),
+        ...(parsed.skills ? { skills: parsed.skills } : {}),
+        ...(parsed.systemPromptFile
+          ? { systemPrompt: readSystemPromptFile(parsed.systemPromptFile) }
+          : {}),
+        ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
+        memoryOff: parsed.noMemory,
+      },
+      preset
+    );
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    throw new CliUsageError(error instanceof Error ? error.message : String(error));
+  }
   return {
     ...(env.TACHIKOMA_DATA_DIR ? { dataDir: env.TACHIKOMA_DATA_DIR } : {}),
     ...(env.TACHIKOMA_CONFIG_DIR ? { configDir: env.TACHIKOMA_CONFIG_DIR } : {}),
-    ...(parsed.model ? { model: parsed.model } : {}),
-    ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
-    ...(parsed.workDir ? { workDir: parsed.workDir } : {}),
-    ...(parsed.toolset
-      ? { toolset: parsed.toolset }
-      : parsed.allowTools?.length
-        ? { toolset: 'coding' as const }
-        : {}),
-    ...(parsed.skills?.length ? { skills: [...parsed.skills] } : {}),
-    ...(parsed.systemPromptFile
-      ? { systemPrompt: readSystemPromptFile(parsed.systemPromptFile) }
-      : {}),
-    memory: parsed.noMemory
+    ...(merged.model ? { model: merged.model } : {}),
+    ...(merged.thinkingLevel ? { thinkingLevel: merged.thinkingLevel } : {}),
+    ...(merged.workDir ? { workDir: merged.workDir } : {}),
+    ...(merged.toolset ? { toolset: merged.toolset } : {}),
+    ...(merged.skills ? { skills: merged.skills } : {}),
+    ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
+    memory: merged.memoryOff
       ? false
       : {
           ...(env.TACHIKOMA_USER_ID ? { userId: env.TACHIKOMA_USER_ID } : {}),

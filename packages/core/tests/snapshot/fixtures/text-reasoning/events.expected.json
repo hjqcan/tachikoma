@@ -1,0 +1,16 @@
+[
+  {
+    "type": "user",
+    "text": "用一句话解释 write-ahead log 是什么。"
+  },
+  {
+    "type": "text",
+    "text": "预写日志（WAL）是一种先把数据修改记录到日志中、确认落盘后再更新实际数据，从而保证崩溃后可恢复一致性的机制。"
+  },
+  {
+    "type": "complete",
+    "status": "success",
+    "stopReason": "stop",
+    "content": "预写日志（WAL）是一种先把数据修改记录到日志中、确认落盘后再更新实际数据，从而保证崩溃后可恢复一致性的机制。"
+  }
+]

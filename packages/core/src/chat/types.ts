@@ -18,6 +18,17 @@ export interface ChatModelListing {
 
 export type ChatThinkingLevel = ThinkingLevel;
 
+/** 思考级别的唯一权威清单（CLI 解析、preset 校验、历史恢复共用一份，防独立副本漂移） */
+export const CHAT_THINKING_LEVELS: readonly ChatThinkingLevel[] = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
+
 export interface ChatMemoryConfig {
   databasePath?: string;
   userId?: string;

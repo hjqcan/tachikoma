@@ -1,0 +1,33 @@
+[
+  {
+    "type": "user",
+    "text": "Read data.txt and report the exact marker line it contains."
+  },
+  {
+    "type": "tool_call",
+    "call": "t1.c1",
+    "tool": "read",
+    "input": {
+      "path": "data.txt",
+      "offset": 1,
+      "limit": 100
+    }
+  },
+  {
+    "type": "tool_result",
+    "call": "t1.c1",
+    "tool": "read",
+    "output": "header\nMARKER: TACHIKOMA-SNAPSHOT-7739\nfooter\n",
+    "isError": false
+  },
+  {
+    "type": "text",
+    "text": "MARKER: TACHIKOMA-SNAPSHOT-7739"
+  },
+  {
+    "type": "complete",
+    "status": "success",
+    "stopReason": "stop",
+    "content": "MARKER: TACHIKOMA-SNAPSHOT-7739"
+  }
+]

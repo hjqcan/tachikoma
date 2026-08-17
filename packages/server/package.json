@@ -6,7 +6,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tachikoma-engined": "./dist/engined.js"
+    "tachikoma-engined": "./dist/engined.js",
+    "tachikoma-acp": "./dist/acp.js"
   },
   "exports": {
     ".": {

@@ -16,6 +16,7 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 
 import { base64Bytes, ChatSession } from './chat-session';
 import type { ChatMemoryBinding } from './chat-session';
+import { createLoopGuardExtension } from './loop-guard';
 import { createChatMemoryRuntime, projectMemoryBuckets } from './memory';
 import type { ChatMemoryRecord, ChatMemoryRuntime } from './memory';
 import { credentialSafeError, safeErrorMessage } from './safe-error';
@@ -27,6 +28,7 @@ import {
 } from './workspace-guard';
 import type { ToolApprovalBridge } from './workspace-guard';
 import { buildChatSystemPrompt } from './system-prompt';
+import { CHAT_THINKING_LEVELS } from './types';
 import type {
   ChatEngineConfig,
   ChatEvent,
@@ -59,16 +61,9 @@ function sessionIdFromFilename(filename: string): string {
 }
 
 function normalizedThinkingLevel(level: string): ChatThinkingLevel | null {
-  const levels: readonly ThinkingLevel[] = [
-    'off',
-    'minimal',
-    'low',
-    'medium',
-    'high',
-    'xhigh',
-    'max',
-  ];
-  return levels.includes(level as ThinkingLevel) ? (level as ThinkingLevel) : null;
+  return (CHAT_THINKING_LEVELS as readonly string[]).includes(level)
+    ? (level as ThinkingLevel)
+    : null;
 }
 
 function recalledMemoryMessage(value: string): string {
@@ -296,9 +291,10 @@ export class ChatEngine {
         if (!current.meta) {
           events.push({ ...base, type: 'message_start', messageId: current.messageId });
         }
+        let messageText = '';
         for (const part of message.content) {
           if (part.type === 'text' && part.text) {
-            current.content += part.text;
+            messageText += part.text;
             events.push({
               ...base,
               type: 'message_delta',
@@ -315,6 +311,9 @@ export class ChatEngine {
             });
           }
         }
+        // complete.content 与 live 语义一致：最后一条助手消息的文本（textContent(finalMessage)），
+        // 不是回合内全部助手文本的累积——中间消息的文本已作为 message_delta 重建，不丢。
+        current.content = messageText;
         current.meta = {
           model: { provider: message.provider, model: message.model },
           stopReason: message.stopReason,
@@ -559,6 +558,9 @@ export class ChatEngine {
         memoryExtension,
         ...(workspaceRoot
           ? [
+              // 注册序即钩子序：loop-guard 的 tool_call 计数在 workspace-guard
+              // 拦截之前跑，被拒/越界的调用也计入循环链。
+              createLoopGuardExtension(),
               createWorkspaceGuardExtension(workspaceRoot, {
                 approvalRequired: new Set(toolset === 'coding' ? APPROVAL_REQUIRED_TOOLS : []),
                 approvalBridge,

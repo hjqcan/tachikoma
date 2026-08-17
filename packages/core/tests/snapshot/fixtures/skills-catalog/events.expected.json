@@ -1,0 +1,50 @@
+[
+  {
+    "type": "user",
+    "text": "Use the demo skill to find the workspace marker, then report it."
+  },
+  {
+    "type": "tool_call",
+    "call": "t1.c1",
+    "tool": "read",
+    "input": {
+      "path": "{{workspace}}/skills/demo/SKILL.md",
+      "offset": 1,
+      "limit": 200
+    }
+  },
+  {
+    "type": "tool_result",
+    "call": "t1.c1",
+    "tool": "read",
+    "output": "---\nname: demo\ndescription: Finds the workspace marker. Use when asked for the workspace marker.\n---\n\nRead the file `secret.txt` in the workspace root and report the marker line it contains.\n",
+    "isError": false
+  },
+  {
+    "type": "tool_call",
+    "call": "t1.c2",
+    "tool": "read",
+    "input": {
+      "path": "{{workspace}}/secret.txt",
+      "offset": 1,
+      "limit": 100
+    }
+  },
+  {
+    "type": "tool_result",
+    "call": "t1.c2",
+    "tool": "read",
+    "output": "MARKER: SKILL-PATH-4181\n",
+    "isError": false
+  },
+  {
+    "type": "text",
+    "text": "SKILL-PATH-4181"
+  },
+  {
+    "type": "complete",
+    "status": "success",
+    "stopReason": "stop",
+    "content": "SKILL-PATH-4181"
+  }
+]

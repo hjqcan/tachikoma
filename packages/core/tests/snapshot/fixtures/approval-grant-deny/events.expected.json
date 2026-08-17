@@ -1,0 +1,88 @@
+[
+  {
+    "type": "user",
+    "text": "Create a file named note.txt containing exactly the text APPROVED-OK."
+  },
+  {
+    "type": "reasoning",
+    "text": "**Seeking write approval**"
+  },
+  {
+    "type": "tool_call",
+    "call": "t1.c1",
+    "tool": "write",
+    "input": {
+      "path": "note.txt",
+      "content": "APPROVED-OK"
+    }
+  },
+  {
+    "type": "approval_request",
+    "call": "t1.c1",
+    "tool": "write"
+  },
+  {
+    "type": "approval_resolved",
+    "call": "t1.c1",
+    "approved": true,
+    "reason": "reply"
+  },
+  {
+    "type": "tool_result",
+    "call": "t1.c1",
+    "tool": "write",
+    "output": "Successfully wrote 11 bytes to note.txt",
+    "isError": false
+  },
+  {
+    "type": "text",
+    "text": "Created `note.txt` containing exactly `APPROVED-OK`."
+  },
+  {
+    "type": "complete",
+    "status": "success",
+    "stopReason": "stop",
+    "content": "Created `note.txt` containing exactly `APPROVED-OK`."
+  },
+  {
+    "type": "user",
+    "text": "Run the shell command `echo done`. If the call is denied, say so and stop."
+  },
+  {
+    "type": "tool_call",
+    "call": "t2.c1",
+    "tool": "bash",
+    "input": {
+      "command": "echo done",
+      "timeout": 10
+    }
+  },
+  {
+    "type": "approval_request",
+    "call": "t2.c1",
+    "tool": "bash"
+  },
+  {
+    "type": "approval_resolved",
+    "call": "t2.c1",
+    "approved": false,
+    "reason": "reply"
+  },
+  {
+    "type": "tool_result",
+    "call": "t2.c1",
+    "tool": "bash",
+    "output": "Tool call was not approved: bash",
+    "isError": true
+  },
+  {
+    "type": "text",
+    "text": "The shell command call was denied."
+  },
+  {
+    "type": "complete",
+    "status": "success",
+    "stopReason": "stop",
+    "content": "The shell command call was denied."
+  }
+]

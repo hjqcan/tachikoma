@@ -442,7 +442,7 @@ describe('runCli', () => {
 
     const noWorkdir = createHarness();
     expect(await runCli(['run', 'x', '--allow', 'write'], noWorkdir.dependencies)).toBe(2);
-    expect(noWorkdir.stderr.join('')).toContain('--allow requires --workdir');
+    expect(noWorkdir.stderr.join('')).toContain('a workspace');
   });
 
   test('--allow switches the engine to the coding toolset', async () => {
@@ -644,7 +644,7 @@ describe('runCli', () => {
 
     const missing = createHarness();
     expect(await runCli(['run', 'x', '--toolset', 'coding'], missing.dependencies)).toBe(2);
-    expect(missing.stderr.join('')).toContain('--toolset requires --workdir');
+    expect(missing.stderr.join('')).toContain('a workspace');
 
     const invalid = createHarness();
     expect(
@@ -752,7 +752,7 @@ describe('runCli', () => {
 
     const noWorkdir = createHarness();
     expect(await runCli(['run', 'x', '--skills', '/skills/a'], noWorkdir.dependencies)).toBe(2);
-    expect(noWorkdir.stderr.join('')).toContain('--skills requires --workdir');
+    expect(noWorkdir.stderr.join('')).toContain('a workspace');
   });
 
   test('--system-prompt-file replaces the system prompt; unreadable or empty file exits 2', async () => {
@@ -982,5 +982,91 @@ describe('runCli', () => {
     expect(await runCli(['--version'], harness.dependencies)).toBe(0);
     expect(created).toBe(false);
     expect(harness.stdout.join('')).toContain(`Tachikoma ${VERSION}`);
+  });
+});
+
+describe('--preset', () => {
+  async function makePreset(): Promise<{ configDir: string; workDir: string; skillDir: string }> {
+    const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-cli-preset-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'tachikoma-cli-preset-ws-'));
+    const presetsDir = join(configDir, 'presets');
+    await import('node:fs/promises').then((fs) => fs.mkdir(presetsDir, { recursive: true }));
+    await writeFile(join(presetsDir, 'review.prompt.md'), 'You review changes carefully.\n');
+    const skillDir = join(presetsDir, 'skills');
+    await import('node:fs/promises').then((fs) => fs.mkdir(skillDir, { recursive: true }));
+    await writeFile(
+      join(presetsDir, 'review.json'),
+      JSON.stringify({
+        systemPromptFile: './review.prompt.md',
+        skills: ['./skills'],
+        toolset: 'coding',
+        workDir,
+        model: { provider: 'preset-p', model: 'preset-m' },
+        thinkingLevel: 'high',
+        memory: false,
+      })
+    );
+    return { configDir, workDir, skillDir };
+  }
+
+  test('preset 全字段进引擎配置（prompt 内容、skills 绝对路径、工具集、模型、思考、记忆关）', async () => {
+    const { configDir, workDir, skillDir } = await makePreset();
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({ onConfig: (received) => (config = received) });
+    harness.dependencies.env = { TACHIKOMA_CONFIG_DIR: configDir };
+
+    const code = await runCli(['run', 'hi', '--preset', 'review'], harness.dependencies);
+    expect(code).toBe(0);
+    expect(config?.systemPrompt).toBe('You review changes carefully.\n');
+    expect(config?.skills).toEqual([skillDir]);
+    expect(config?.toolset).toBe('coding');
+    expect(config?.workDir).toBe(workDir);
+    expect(config?.model).toEqual({ provider: 'preset-p', model: 'preset-m' });
+    expect(config?.thinkingLevel).toBe('high');
+    expect(config?.memory).toBeFalse();
+  });
+
+  test('显式 flag 覆盖 preset 对应字段，其余保留', async () => {
+    const { configDir, workDir } = await makePreset();
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({ onConfig: (received) => (config = received) });
+    harness.dependencies.env = { TACHIKOMA_CONFIG_DIR: configDir };
+
+    const code = await runCli(
+      ['run', 'hi', '--preset', 'review', '--toolset', 'read-only', '--thinking', 'off'],
+      harness.dependencies
+    );
+    expect(code).toBe(0);
+    expect(config?.toolset).toBe('read-only');
+    expect(config?.thinkingLevel).toBe('off');
+    expect(config?.workDir).toBe(workDir);
+    expect(config?.systemPrompt).toBe('You review changes carefully.\n');
+  });
+
+  test('preset 的 workDir 满足 --skills 的工作区前置（跨字段检查在合并后）', async () => {
+    const { configDir } = await makePreset();
+    const extraSkills = await mkdtemp(join(tmpdir(), 'tachikoma-cli-extra-skill-'));
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({ onConfig: (received) => (config = received) });
+    harness.dependencies.env = { TACHIKOMA_CONFIG_DIR: configDir };
+
+    const code = await runCli(
+      ['run', 'hi', '--preset', 'review', '--skills', extraSkills],
+      harness.dependencies
+    );
+    expect(code).toBe(0);
+    // 显式 --skills 覆盖 preset 的 skills（替换语义，不合并）。
+    expect(config?.skills).toEqual([extraSkills]);
+    expect(config?.workDir).toBeDefined();
+  });
+
+  test('缺 preset 是用法错误：退出码 2，报可用名', async () => {
+    const { configDir } = await makePreset();
+    const harness = createHarness({});
+    harness.dependencies.env = { TACHIKOMA_CONFIG_DIR: configDir };
+
+    const code = await runCli(['run', 'hi', '--preset', 'ghost'], harness.dependencies);
+    expect(code).toBe(2);
+    expect(harness.stderr.join('')).toContain('available: review');
   });
 });

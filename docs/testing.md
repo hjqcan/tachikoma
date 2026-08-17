@@ -21,6 +21,32 @@ activation, workspace escape and symlink blocking, approval grant/deny/timeout/a
 round-trips with snapshot and core type-compat guards, sidecar auth/frames/WAL replay/crash
 synthesis, CLI commands, signals, exit codes, and built package imports.
 
+## Snapshot replay
+
+`packages/core/tests/snapshot/` is the whole-engine regression layer between unit tests and live
+tests. The fixture is the product's own persisted pi transcript: `snapshot:record` runs a scenario
+against a real model once (explicit opt-in below), tokenizes recording-machine paths to
+`{{workspace}}`/`{{data}}`, and stores the transcript plus a normalized expected event projection
+under `tests/snapshot/fixtures/<scenario>/`. The default offline suite replays the transcript's
+assistant messages through the faux provider, re-runs the full engine (tools execute for real
+against a checked-in workspace fixture, approvals answered from the scenario table), and diffs the
+normalized projection. `roundtrip.test.ts` proves the converter/normalizer/runner pipeline without
+any fixture, including a tamper test.
+
+Recording discipline: a snapshot refresh is fixture production, not correctness review. The recorder
+rejects non-success turn endings and undeclared `isError` tool results (the sentinel that keeps a
+regression from being committed as a new expectation); the resulting fixture diff must still be
+reviewed by a human. Scenario listing and the fixtures directory must agree in both directions —
+replay fails loudly instead of skipping.
+
+```bash
+TACHIKOMA_RUN_LIVE_TESTS=1 bun run snapshot:record [scenario…]
+```
+
+Model selection follows `eval:chat`: `TACHIKOMA_LIVE_PROVIDER`/`TACHIKOMA_LIVE_MODEL`, falling back
+to `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`; custom endpoints via `TACHIKOMA_LIVE_MODELS_JSON`
+(falling back to `~/.tachikoma/models.json`).
+
 ## Live gate
 
 Live tests are opt-in and are never run for pull requests:
@@ -31,6 +57,15 @@ TACHIKOMA_RUN_LIVE_TESTS=1 bun run test:live
 
 They test only text chat streaming, usage, and interruption. They do not call tools or write inside
 a project. A credential existing in `.env` is insufficient to enable this suite.
+
+## Machine-face smoke
+
+`bun run eval:engined` (`packages/server/evals/engined-smoke.ts`) is a real-network pass through the
+**spawned** sidecar binary: stdin token handshake, `engine.hello`, a read turn over WS frames, a
+write turn approved over RPC and verified on disk, a full `fromSeq: 0` replay, and a bounded
+shutdown. Protocol mechanics stay covered offline by `packages/server/tests`; this adds the one
+thing they cannot — the real engine behind the real binary. Same model-selection convention as
+`eval:chat`; not part of `verify`; pass/fail only, no baseline.
 
 ## Full local verification
 

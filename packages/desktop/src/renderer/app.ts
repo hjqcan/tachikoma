@@ -655,11 +655,15 @@ async function boot(): Promise<void> {
         break;
       case 'message_complete': {
         setGenerating(false);
-        // 以权威全文重渲染一次：流式期间未闭合的结构（围栏等）在此收口
+        // 收口重渲染（流式期间未闭合的围栏等在此闭合）以**累积原文**为准：
+        // complete.content 只是末条助手消息的文本，多消息回合（文本+工具+收尾）
+        // 用它重渲会丢掉工具前的过程文本；仅当本端一条 delta 都没收到
+        // （迟订阅漏帧）时才以它兜底。
         const body = assistantBlock?.querySelector('.body') as HTMLElement | null;
-        if (body && event.content) {
-          renderMarkdown(event.content, body);
-          if (assistantBlock) assistantBlock.dataset.raw = event.content;
+        const finalRaw = assistantRaw || event.content;
+        if (body && finalRaw) {
+          renderMarkdown(finalRaw, body);
+          if (assistantBlock) assistantBlock.dataset.raw = finalRaw;
         }
         if (event.status !== 'success') {
           block('status-line error').textContent = `[${event.status}] ${event.error ?? ''}`;

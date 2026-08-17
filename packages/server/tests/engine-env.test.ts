@@ -53,7 +53,7 @@ describe('enginedOptionsFromEnv', () => {
 
   it('TACHIKOMA_SKILLS 无 TACHIKOMA_WORKDIR 时启动即失败——不允许健康启动后逐请求报错', () => {
     expect(() => enginedOptionsFromEnv({ TACHIKOMA_SKILLS: '/skills/a' })).toThrow(
-      'TACHIKOMA_SKILLS requires TACHIKOMA_WORKDIR'
+      'Skills require a workspace'
     );
   });
 
@@ -90,5 +90,127 @@ describe('enginedOptionsFromEnv', () => {
     expect(() => enginedOptionsFromEnv({ TACHIKOMA_SYSTEM_PROMPT_FILE: empty })).toThrow(
       'TACHIKOMA_SYSTEM_PROMPT_FILE is empty'
     );
+  });
+});
+
+describe('enginedOptionsFromEnv + TACHIKOMA_PRESET', () => {
+  async function makePresetDir(): Promise<{ configDir: string; workDir: string }> {
+    const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-preset-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-preset-ws-'));
+    const presetsDir = join(configDir, 'presets');
+    await import('node:fs/promises').then((fs) => fs.mkdir(presetsDir, { recursive: true }));
+    await writeFile(join(presetsDir, 'demo.prompt.md'), 'Preset persona.\n');
+    await writeFile(
+      join(presetsDir, 'demo.json'),
+      JSON.stringify({
+        systemPromptFile: './demo.prompt.md',
+        toolset: 'coding',
+        workDir,
+        model: { provider: 'preset-p', model: 'preset-m' },
+        thinkingLevel: 'low',
+        memory: false,
+      })
+    );
+    return { configDir, workDir };
+  }
+
+  it('preset 字段进引擎配置与 sessionDefaults；未被 env 覆盖的原样生效', async () => {
+    const { configDir, workDir } = await makePresetDir();
+    const options = enginedOptionsFromEnv({
+      TACHIKOMA_DATA_DIR: '/data',
+      TACHIKOMA_CONFIG_DIR: configDir,
+      TACHIKOMA_PRESET: 'demo',
+    });
+    expect(options.engineConfig.model).toEqual({ provider: 'preset-p', model: 'preset-m' });
+    expect(options.engineConfig.workDir).toBe(workDir);
+    expect(options.engineConfig.toolset).toBe('coding');
+    expect(options.engineConfig.systemPrompt).toBe('Preset persona.\n');
+    expect(options.engineConfig.thinkingLevel).toBe('low');
+    expect(options.engineConfig.memory).toBeFalse();
+    expect(options.sessionDefaults.workDir).toBe(workDir);
+    expect(options.sessionDefaults.toolset).toBe('coding');
+  });
+
+  it('显式 TACHIKOMA_* 覆盖 preset 字段（与 CLI 合并序同构）', async () => {
+    const { configDir } = await makePresetDir();
+    const options = enginedOptionsFromEnv({
+      TACHIKOMA_DATA_DIR: '/data',
+      TACHIKOMA_CONFIG_DIR: configDir,
+      TACHIKOMA_PRESET: 'demo',
+      TACHIKOMA_PROVIDER: 'env-p',
+      TACHIKOMA_MODEL: 'env-m',
+      TACHIKOMA_WORKDIR: '/explicit/ws',
+      TACHIKOMA_TOOLSET: 'read-only',
+    });
+    expect(options.engineConfig.model).toEqual({ provider: 'env-p', model: 'env-m' });
+    expect(options.engineConfig.workDir).toBe('/explicit/ws');
+    expect(options.engineConfig.toolset).toBe('read-only');
+  });
+
+  it('preset 的 workDir 满足 env 提供的 skills（跨字段检查在合并后）', async () => {
+    const { configDir } = await makePresetDir();
+    const skillDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-skill-'));
+    const options = enginedOptionsFromEnv({
+      TACHIKOMA_CONFIG_DIR: configDir,
+      TACHIKOMA_PRESET: 'demo',
+      TACHIKOMA_SKILLS: skillDir,
+    });
+    expect(options.engineConfig.skills).toEqual([skillDir]);
+    expect(options.engineConfig.workDir).toBeDefined();
+  });
+
+  it('坏 preset 启动即败（不静默降级）', () => {
+    expect(() =>
+      enginedOptionsFromEnv({ TACHIKOMA_CONFIG_DIR: '/nonexistent', TACHIKOMA_PRESET: 'ghost' })
+    ).toThrow('Preset not found');
+  });
+});
+
+describe('enginedOptionsFromEnv 快败与合并语义（评审修复）', () => {
+  it('非法 TACHIKOMA_TOOLSET 启动即败——typo 不得静默落到 preset 反转显式限制', () => {
+    expect(() => enginedOptionsFromEnv({ TACHIKOMA_TOOLSET: 'readonly' })).toThrow(
+      'TACHIKOMA_TOOLSET must be read-only | coding'
+    );
+  });
+
+  it('半设的 TACHIKOMA_PROVIDER/MODEL 启动即败——不静默忽略', () => {
+    expect(() => enginedOptionsFromEnv({ TACHIKOMA_PROVIDER: 'p' })).toThrow(
+      'must be set together'
+    );
+    expect(() => enginedOptionsFromEnv({ TACHIKOMA_MODEL: 'm' })).toThrow('must be set together');
+  });
+
+  it('preset 提供 toolset 而全局无 workDir：启动即败，与 CLI 同一行为（不静默零工具）', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-toolset-'));
+    await import('node:fs/promises').then((fs) =>
+      fs.mkdir(join(configDir, 'presets'), { recursive: true })
+    );
+    await writeFile(join(configDir, 'presets', 'toolsonly.json'), '{"toolset":"coding"}');
+    expect(() =>
+      enginedOptionsFromEnv({ TACHIKOMA_CONFIG_DIR: configDir, TACHIKOMA_PRESET: 'toolsonly' })
+    ).toThrow('requires a workspace');
+  });
+
+  it("TACHIKOMA_SKILLS='' 是显式清空：压掉 preset 的 skills，不回落", async () => {
+    const { configDir, workDir } = await (async () => {
+      const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-clear-'));
+      const workDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-clear-ws-'));
+      const presetsDir = join(configDir, 'presets');
+      const skillDir = join(presetsDir, 'skills');
+      await import('node:fs/promises').then((fs) => fs.mkdir(skillDir, { recursive: true }));
+      await writeFile(
+        join(presetsDir, 'withskills.json'),
+        JSON.stringify({ workDir, skills: ['./skills'] })
+      );
+      return { configDir, workDir };
+    })();
+    const options = enginedOptionsFromEnv({
+      TACHIKOMA_CONFIG_DIR: configDir,
+      TACHIKOMA_PRESET: 'withskills',
+      TACHIKOMA_SKILLS: '',
+    });
+    expect(options.engineConfig.skills).toBeUndefined();
+    expect(options.sessionDefaults.skills).toBeUndefined();
+    expect(options.engineConfig.workDir).toBe(workDir);
   });
 });
