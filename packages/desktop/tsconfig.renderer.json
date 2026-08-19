@@ -3,6 +3,9 @@
   "compilerOptions": {
     "composite": false,
     "noEmit": true,
+    "paths": {
+      "@hjqcan/tachikoma-protocol": ["../protocol/src/index.ts"]
+    },
     "types": [],
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },

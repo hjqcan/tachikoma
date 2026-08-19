@@ -4,6 +4,9 @@
     "composite": false,
     "noEmit": true,
     "exactOptionalPropertyTypes": false,
+    "paths": {
+      "@hjqcan/tachikoma-core": ["../core/src/index.ts"]
+    },
     "types": ["bun"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],

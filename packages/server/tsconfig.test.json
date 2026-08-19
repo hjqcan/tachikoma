@@ -3,6 +3,10 @@
   "compilerOptions": {
     "composite": false,
     "noEmit": true,
+    "paths": {
+      "@hjqcan/tachikoma-core": ["../core/src/index.ts"],
+      "@hjqcan/tachikoma-protocol": ["../protocol/src/index.ts"]
+    },
     "types": ["bun"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],
