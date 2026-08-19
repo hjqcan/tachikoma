@@ -39,7 +39,7 @@ cd packages/protocol && bun publish
 cd ../core          && bun publish
 cd ../server        && bun publish
 
-# 4. 打 tag（注意：v0.2.0 在发布流程就绪前已用于源码里程碑，npm 首发从 0.2.1 起）
+# 4. 打 tag（v0.2.0 已发布；后续版本均按本流程执行）
 git tag v0.2.x && git push origin v0.2.x
 ```
 
