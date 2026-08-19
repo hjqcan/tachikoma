@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { VERSION } from '../../src/index.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -89,7 +90,7 @@ describe('built CLI', () => {
   test('returns stable help, version, usage, and runtime failure codes', async () => {
     const dataDir = await temporaryDataDir();
     expect((await runCli(['--help'], { dataDir })).exitCode).toBe(0);
-    expect((await runCli(['--version'], { dataDir })).stdout).toBe('Tachikoma 0.2.0\n');
+    expect((await runCli(['--version'], { dataDir })).stdout).toBe(`Tachikoma ${VERSION}\n`);
     expect((await runCli(['run'], { dataDir })).exitCode).toBe(2);
     expect(
       (
@@ -117,7 +118,7 @@ describe('built CLI', () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(result.stderr).toBe('[memory:session_start] disabled\n');
+    expect(result.stderr).toMatch(/^\[session\] \S+\n\[memory:session_start\] disabled\n$/);
     expect(result.stdout).toBe('tachikoma-dist-run-ok\n');
 
     const listed = await runCli(
@@ -125,7 +126,9 @@ describe('built CLI', () => {
       { dataDir, faux: true, input: '/sessions\n/exit\n' }
     );
     expect(listed.exitCode).toBe(0);
-    expect(listed.stderr).toBe('');
+    expect(listed.stderr).toMatch(
+      /^\[exit\] session saved — resume with: tachikoma --resume \S+\n$/
+    );
     const sessionId = persistedFauxSessionId(listed.stdout);
 
     const continued = await runCli(
@@ -143,7 +146,7 @@ describe('built CLI', () => {
       { dataDir, faux: true }
     );
     expect(continued.exitCode).toBe(0);
-    expect(continued.stderr).toBe('[memory:session_start] disabled\n');
+    expect(continued.stderr).toMatch(/^\[session\] \S+\n\[memory:session_start\] disabled\n$/);
     expect(continued.stdout).toBe('tachikoma-dist-run-ok\n');
 
     const compacted = await runCli(
@@ -160,7 +163,9 @@ describe('built CLI', () => {
       { dataDir, faux: true, input: '/compact keep decisions\n/exit\n' }
     );
     expect(compacted.exitCode).toBe(0);
-    expect(compacted.stderr).toBe('');
+    expect(compacted.stderr).toMatch(
+      /^\[exit\] session saved — resume with: tachikoma --resume \S+\n$/
+    );
     expect(compacted.stdout).toContain(`[session] ${sessionId}`);
     expect(compacted.stdout).toContain('[compaction] complete');
   });
@@ -183,7 +188,8 @@ describe('built CLI', () => {
     ]);
 
     expect(exitCode).toBe(130);
-    expect(stderr).toBe('');
+    // 非 TTY 的 SIGINT 一次即退（双击确认仅交互 TTY）；退出仍打收尾行
+    expect(stderr).toMatch(/^\[exit\] session saved — resume with: tachikoma --resume \S+\n$/);
     expect(stdout).toContain('[session]');
   });
 
@@ -206,6 +212,7 @@ describe('built CLI', () => {
     expect(stderr).toBe('');
     expect(JSON.parse(stdout)).toEqual({
       core: [
+        'CHAT_REASONING_SUMMARIES',
         'CHAT_THINKING_LEVELS',
         'ChatEngine',
         'VERSION',

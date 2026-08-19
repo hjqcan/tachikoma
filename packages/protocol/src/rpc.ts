@@ -12,7 +12,7 @@ import {
   sessionSummarySchema,
   thinkingLevelSchema,
   toolsetSchema,
-} from './dto';
+} from './dto.ts';
 
 export const rpcErrorCodeSchema = z.enum([
   'unauthorized',

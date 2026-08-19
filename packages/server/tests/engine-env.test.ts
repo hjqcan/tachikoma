@@ -73,6 +73,33 @@ describe('enginedOptionsFromEnv', () => {
     });
   });
 
+  it('preset 的 memory 质量档适配器并入 engineConfig.memory；NO_MEMORY 连适配器一起压掉', async () => {
+    const configDir = await mkdtemp(join(tmpdir(), 'tachikoma-env-mem-'));
+    await import('node:fs/promises').then((fs) =>
+      fs.mkdir(join(configDir, 'presets'), { recursive: true })
+    );
+    await writeFile(
+      join(configDir, 'presets', 'mem.json'),
+      JSON.stringify({ memory: { embedding: { model: 'embed-x', apiKeyEnv: 'KEY_ENV' } } })
+    );
+    const options = enginedOptionsFromEnv({
+      TACHIKOMA_CONFIG_DIR: configDir,
+      TACHIKOMA_PRESET: 'mem',
+      TACHIKOMA_USER_ID: 'alice',
+    });
+    expect(options.engineConfig.memory).toEqual({
+      userId: 'alice',
+      embedding: { model: 'embed-x', apiKeyEnv: 'KEY_ENV' },
+    });
+    expect(
+      enginedOptionsFromEnv({
+        TACHIKOMA_CONFIG_DIR: configDir,
+        TACHIKOMA_PRESET: 'mem',
+        TACHIKOMA_NO_MEMORY: '1',
+      }).engineConfig.memory
+    ).toBeFalse();
+  });
+
   it('TACHIKOMA_SYSTEM_PROMPT_FILE 读入 systemPrompt；缺文件/空文件启动即失败', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'tachikoma-prompt-'));
     const promptFile = join(dir, 'persona.md');
@@ -108,6 +135,7 @@ describe('enginedOptionsFromEnv + TACHIKOMA_PRESET', () => {
         workDir,
         model: { provider: 'preset-p', model: 'preset-m' },
         thinkingLevel: 'low',
+        reasoningSummary: 'concise',
         memory: false,
       })
     );
@@ -126,6 +154,7 @@ describe('enginedOptionsFromEnv + TACHIKOMA_PRESET', () => {
     expect(options.engineConfig.toolset).toBe('coding');
     expect(options.engineConfig.systemPrompt).toBe('Preset persona.\n');
     expect(options.engineConfig.thinkingLevel).toBe('low');
+    expect(options.engineConfig.reasoningSummary).toBe('concise');
     expect(options.engineConfig.memory).toBeFalse();
     expect(options.sessionDefaults.workDir).toBe(workDir);
     expect(options.sessionDefaults.toolset).toBe('coding');
@@ -141,10 +170,12 @@ describe('enginedOptionsFromEnv + TACHIKOMA_PRESET', () => {
       TACHIKOMA_MODEL: 'env-m',
       TACHIKOMA_WORKDIR: '/explicit/ws',
       TACHIKOMA_TOOLSET: 'read-only',
+      TACHIKOMA_REASONING_SUMMARY: 'detailed',
     });
     expect(options.engineConfig.model).toEqual({ provider: 'env-p', model: 'env-m' });
     expect(options.engineConfig.workDir).toBe('/explicit/ws');
     expect(options.engineConfig.toolset).toBe('read-only');
+    expect(options.engineConfig.reasoningSummary).toBe('detailed');
   });
 
   it('preset 的 workDir 满足 env 提供的 skills（跨字段检查在合并后）', async () => {

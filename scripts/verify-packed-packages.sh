@@ -43,9 +43,9 @@ TACHIKOMA_CLI_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-cli-$TACHIKOMA_VERSION.t
 tar -xOzf "$TACHIKOMA_CORE_TGZ" package/package.json | bun -e '
   const manifest = await Bun.stdin.json();
   const expected = {
-    "@earendil-works/pi-agent-core": "0.84.1",
-    "@earendil-works/pi-ai": "0.84.1",
-    "@earendil-works/pi-coding-agent": "0.84.1",
+    "@earendil-works/pi-agent-core": "0.84.2",
+    "@earendil-works/pi-ai": "0.84.2",
+    "@earendil-works/pi-coding-agent": "0.84.2",
     goodmemory: "0.7.4",
   };
   for (const [name, version] of Object.entries(expected)) {
@@ -134,6 +134,15 @@ test "$(head -n 1 "$TACHIKOMA_UNPACK_DIR/package/dist/cli.js")" = '#!/usr/bin/en
       throw new Error("protocol package did not expose the expected surface");
     }
   ' "$TACHIKOMA_VERSION"
+  # Node ESM 冒烟：protocol 承诺 renderer/browser 可依赖，core 是库入口——两者必须在
+  # Node 下可 import。bun 的宽松解析曾遮蔽发布物里的无扩展名裸说明符，此通道防回归。
+  node --input-type=module -e '
+    const protocol = await import("@hjqcan/tachikoma-protocol");
+    const core = await import("@hjqcan/tachikoma-core");
+    if (typeof protocol.PROTOCOL_VERSION !== "number" || typeof core.VERSION !== "string") {
+      throw new Error("Node ESM import surface mismatch");
+    }
+  '
   test -x ./node_modules/.bin/tachikoma-engined
   test "$(head -n 1 ./node_modules/.bin/tachikoma-engined)" = '#!/usr/bin/env bun'
   test -x ./node_modules/.bin/tachikoma-acp

@@ -7,10 +7,10 @@ import type { AssistantMessage, Usage } from '@earendil-works/pi-ai';
 import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { randomUUID } from 'node:crypto';
 
-import { EventQueue } from './event-queue';
-import { projectRecalledMemories, recallHasHits } from './memory';
-import { credentialSafeError, safeErrorMessage } from './safe-error';
-import type { ToolApprovalBridge } from './workspace-guard';
+import { EventQueue } from './event-queue.ts';
+import { projectRecalledMemories, recallHasHits } from './memory.ts';
+import { credentialSafeError, safeErrorMessage } from './safe-error.ts';
+import type { ToolApprovalBridge } from './workspace-guard.ts';
 import type {
   ChatCompactionResult,
   ChatEvent,
@@ -25,7 +25,7 @@ import type {
   ChatToolset,
   ChatUsage,
   ChatWorkspaceState,
-} from './types';
+} from './types.ts';
 
 const TITLE_MAX_LENGTH = 60;
 

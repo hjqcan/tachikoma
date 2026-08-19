@@ -1,17 +1,48 @@
-import type { GoodMemory, MemoryScope } from 'goodmemory';
+import type { AISDKModelConfig, GoodMemory, MemoryScope } from 'goodmemory';
 import {
+  createAISDKEmbeddingAdapter,
   createDeterministicMemoryExtractor,
   createGoodMemory,
+  createLLMMemoryExtractor,
   createLocalEmbeddingAdapter,
 } from 'goodmemory';
 import type { GoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 import { createGoodMemoryRuntimeKit } from 'goodmemory/runtime-kit';
 
-import type { ChatRecalledMemory } from './types';
+import type {
+  ChatMemoryEmbeddingConfig,
+  ChatMemoryModelConfig,
+  ChatRecalledMemory,
+} from './types.ts';
 
 export interface CreateChatMemoryRuntimeInput {
   databasePath: string;
   userId: string;
+  /** 质量档（可选）：任一适配器配置即启用 GoodMemory 'recommended' 检索预设 */
+  embedding?: ChatMemoryEmbeddingConfig;
+  extractor?: ChatMemoryModelConfig;
+}
+
+/** apiKeyEnv → 引擎进程环境变量；指了名却为空是配置错误，构造期即失败 */
+function resolveMemoryModel(
+  kind: 'embedding' | 'extractor',
+  config: ChatMemoryModelConfig
+): AISDKModelConfig {
+  let apiKey: string | undefined;
+  if (config.apiKeyEnv) {
+    apiKey = process.env[config.apiKeyEnv];
+    if (!apiKey) {
+      throw new Error(
+        `Memory ${kind} adapter apiKeyEnv is not set in the environment: ${config.apiKeyEnv}`
+      );
+    }
+  }
+  return {
+    provider: 'openai',
+    model: config.model,
+    ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
+    ...(apiKey ? { apiKey } : {}),
+  };
 }
 
 export interface ChatMemoryRuntime {
@@ -198,11 +229,24 @@ export function projectRecalledMemories(
 }
 
 export function createChatMemoryRuntime(input: CreateChatMemoryRuntimeInput): ChatMemoryRuntime {
+  const qualityTier = Boolean(input.embedding ?? input.extractor);
   const memory = createGoodMemory({
     storage: { provider: 'sqlite', url: input.databasePath },
+    // 质量档启用 'recommended' 检索预设（语义候选 + 会话式写回抽取）；
+    // 零成本档不设该键，缺省行为逐字节不变。
+    ...(qualityTier ? { retrieval: { preset: 'recommended' as const } } : {}),
     adapters: {
-      assistedExtractor: createDeterministicMemoryExtractor(),
-      embeddingAdapter: createLocalEmbeddingAdapter(),
+      assistedExtractor: input.extractor
+        ? createLLMMemoryExtractor({ model: resolveMemoryModel('extractor', input.extractor) })
+        : createDeterministicMemoryExtractor(),
+      embeddingAdapter: input.embedding
+        ? createAISDKEmbeddingAdapter({
+            model: resolveMemoryModel('embedding', input.embedding),
+            ...(input.embedding.dimensions !== undefined
+              ? { expectedDimensions: input.embedding.dimensions }
+              : {}),
+          })
+        : createLocalEmbeddingAdapter(),
     },
   });
   const kit = createGoodMemoryRuntimeKit({ memory });

@@ -11,8 +11,17 @@
  * 的 skills），未设置才回落 preset。
  */
 
-import type { ChatEngineConfig, ChatPresetResolved } from '@hjqcan/tachikoma-core';
-import { mergePresetConfig, readPromptFile, resolvePreset } from '@hjqcan/tachikoma-core';
+import type {
+  ChatEngineConfig,
+  ChatPresetResolved,
+  ChatReasoningSummary,
+} from '@hjqcan/tachikoma-core';
+import {
+  CHAT_REASONING_SUMMARIES,
+  mergePresetConfig,
+  readPromptFile,
+  resolvePreset,
+} from '@hjqcan/tachikoma-core';
 import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -64,15 +73,13 @@ export function enginedOptionsFromEnv(
     ? readPromptFile(promptFile, 'TACHIKOMA_SYSTEM_PROMPT_FILE')
     : undefined;
 
-  const reasoningSummary = env.TACHIKOMA_REASONING_SUMMARY;
+  const envReasoningSummary = env.TACHIKOMA_REASONING_SUMMARY;
   if (
-    reasoningSummary !== undefined &&
-    reasoningSummary !== 'auto' &&
-    reasoningSummary !== 'concise' &&
-    reasoningSummary !== 'detailed'
+    envReasoningSummary !== undefined &&
+    !(CHAT_REASONING_SUMMARIES as readonly string[]).includes(envReasoningSummary)
   ) {
     throw new Error(
-      `TACHIKOMA_REASONING_SUMMARY must be auto | concise | detailed, got: ${reasoningSummary}`
+      `TACHIKOMA_REASONING_SUMMARY must be ${CHAT_REASONING_SUMMARIES.join(' | ')}, got: ${envReasoningSummary}`
     );
   }
 
@@ -84,6 +91,9 @@ export function enginedOptionsFromEnv(
       ...(envToolset ? { toolset: envToolset } : {}),
       ...(envSkills !== undefined ? { skills: envSkills } : {}),
       ...(systemPrompt ? { systemPrompt } : {}),
+      ...(envReasoningSummary
+        ? { reasoningSummary: envReasoningSummary as ChatReasoningSummary }
+        : {}),
       memoryOff: env.TACHIKOMA_NO_MEMORY === '1',
     },
     preset
@@ -100,10 +110,14 @@ export function enginedOptionsFromEnv(
       ...(merged.skills ? { skills: merged.skills } : {}),
       ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
       ...(merged.thinkingLevel ? { thinkingLevel: merged.thinkingLevel } : {}),
-      ...(reasoningSummary ? { reasoningSummary } : {}),
+      ...(merged.reasoningSummary ? { reasoningSummary: merged.reasoningSummary } : {}),
       memory: merged.memoryOff
         ? false
-        : { ...(env.TACHIKOMA_USER_ID ? { userId: env.TACHIKOMA_USER_ID } : {}) },
+        : {
+            ...(env.TACHIKOMA_USER_ID ? { userId: env.TACHIKOMA_USER_ID } : {}),
+            // preset 的质量档适配器（embedding/extractor）；身份/库路径仍由部署侧给
+            ...(merged.memory ?? {}),
+          },
     },
     sessionDefaults: {
       ...(merged.workDir ? { workDir: merged.workDir } : {}),

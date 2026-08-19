@@ -14,31 +14,33 @@ import { mkdir, readdir, realpath, stat, unlink } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 
-import { base64Bytes, ChatSession } from './chat-session';
-import type { ChatMemoryBinding } from './chat-session';
-import { createLoopGuardExtension } from './loop-guard';
-import { createChatMemoryRuntime, projectMemoryBuckets } from './memory';
-import type { ChatMemoryRecord, ChatMemoryRuntime } from './memory';
-import { credentialSafeError, safeErrorMessage } from './safe-error';
+import { base64Bytes, ChatSession } from './chat-session.ts';
+import type { ChatMemoryBinding } from './chat-session.ts';
+import { createLoopGuardExtension } from './loop-guard.ts';
+import { createChatMemoryRuntime, projectMemoryBuckets } from './memory.ts';
+import type { ChatMemoryRecord, ChatMemoryRuntime } from './memory.ts';
+import { credentialSafeError, safeErrorMessage } from './safe-error.ts';
 import {
   APPROVAL_REQUIRED_TOOLS,
   CODING_TOOLS,
   createWorkspaceGuardExtension,
   WORKSPACE_TOOLS,
-} from './workspace-guard';
-import type { ToolApprovalBridge } from './workspace-guard';
-import { buildChatSystemPrompt } from './system-prompt';
-import { CHAT_THINKING_LEVELS } from './types';
+} from './workspace-guard.ts';
+import type { ToolApprovalBridge } from './workspace-guard.ts';
+import { buildChatSystemPrompt } from './system-prompt.ts';
+import { CHAT_THINKING_LEVELS } from './types.ts';
 import type {
   ChatEngineConfig,
   ChatEvent,
+  ChatMemoryEmbeddingConfig,
+  ChatMemoryModelConfig,
   ChatModelListing,
   ChatModelRef,
   ChatSessionInit,
   ChatSessionSummary,
   ChatThinkingLevel,
   ChatToolset,
-} from './types';
+} from './types.ts';
 
 const DEFAULT_DATA_DIR = join(homedir(), '.tachikoma');
 const SESSION_EXTENSION = '.jsonl';
@@ -94,6 +96,8 @@ export class ChatEngine {
   private readonly memoryDatabasePath: string | undefined;
   private readonly memoryUserId: string;
   private readonly memoryEnabled: boolean;
+  private readonly memoryAdapters:
+    { embedding?: ChatMemoryEmbeddingConfig; extractor?: ChatMemoryModelConfig } | undefined;
   private readonly configuredModel: ChatModelRef | undefined;
   private readonly configuredThinkingLevel: ChatThinkingLevel | undefined;
   private readonly workDir: string | undefined;
@@ -132,6 +136,14 @@ export class ChatEngine {
       config.memory === false
         ? undefined
         : resolve(config.memory?.databasePath ?? join(this.dataDir, 'memory', 'goodmemory.sqlite'));
+    const memoryAdapterConfig = config.memory === false ? undefined : config.memory;
+    this.memoryAdapters =
+      memoryAdapterConfig?.embedding || memoryAdapterConfig?.extractor
+        ? {
+            ...(memoryAdapterConfig.embedding ? { embedding: memoryAdapterConfig.embedding } : {}),
+            ...(memoryAdapterConfig.extractor ? { extractor: memoryAdapterConfig.extractor } : {}),
+          }
+        : undefined;
     this.injectedMemoryKit = options.memoryRuntimeKit;
     const configDir = resolve(config.configDir ?? this.dataDir);
     this.modelRuntimePromise = options.modelRuntime
@@ -152,7 +164,8 @@ export class ChatEngine {
         ...(model ? { model } : {}),
         ...(init.thinkingLevel ? { thinkingLevel: init.thinkingLevel } : {}),
         ...(init.title ? { title: init.title } : {}),
-        ...(init.workDir ? { workDir: init.workDir } : {}),
+        // null 是显式撤销（压掉引擎默认），不得折叠成 undefined（继承）。
+        ...(init.workDir !== undefined ? { workDir: init.workDir } : {}),
         ...(init.toolset ? { toolset: init.toolset } : {}),
         // `[]` 是显式清空（替换语义），不得折叠成 undefined。
         ...(init.skills !== undefined ? { skills: init.skills } : {}),
@@ -450,7 +463,7 @@ export class ChatEngine {
       model?: ChatModelRef;
       thinkingLevel?: ChatThinkingLevel;
       title?: string;
-      workDir?: string;
+      workDir?: string | null;
       toolset?: ChatToolset;
       skills?: string[];
     }
@@ -660,6 +673,7 @@ export class ChatEngine {
           this.memoryRuntime = createChatMemoryRuntime({
             databasePath: this.memoryDatabasePath,
             userId: this.memoryUserId,
+            ...(this.memoryAdapters ?? {}),
           });
         }
       } catch (error) {
@@ -749,8 +763,12 @@ export class ChatEngine {
     };
   }
 
-  /** 会话级授予优先于引擎默认；canonical（realpath）根是守卫边界的前提 */
-  private async resolveWorkspaceRoot(requested?: string): Promise<string | undefined> {
+  /**
+   * 会话级授予优先于引擎默认（null = 显式撤销，undefined 才回落引擎默认）；
+   * canonical（realpath）根是守卫边界的前提
+   */
+  private async resolveWorkspaceRoot(requested?: string | null): Promise<string | undefined> {
+    if (requested === null) return undefined;
     const workDir = requested ? resolve(requested) : this.workDir;
     if (!workDir) {
       return undefined;

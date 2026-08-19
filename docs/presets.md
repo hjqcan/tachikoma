@@ -13,6 +13,7 @@ content (prompt files, skill directories) beside the JSON and never appear in th
   "workDir": "/path/to/project",
   "model": { "provider": "openai", "model": "gpt-5.2" },
   "thinkingLevel": "medium",
+  "reasoningSummary": "detailed",
   "memory": false
 }
 ```
@@ -20,9 +21,36 @@ content (prompt files, skill directories) beside the JSON and never appear in th
 All fields are optional; unknown keys are rejected. Relative paths resolve against the preset file's
 directory, so a preset directory is a relocatable bundle. Resolution is fail-loud at the edge that
 loads it: a missing preset lists available names, the prompt file is read immediately (empty or
-unreadable throws), every skill path and the workDir must exist. `memory` accepts only `false` —
-identity and database path are deployment concerns, not composition. No `$ENV` interpolation:
-presets carry no secrets (credentials stay with `models.json` / pi).
+unreadable throws), every skill path and the workDir must exist. `reasoningSummary` accepts
+`auto | concise | detailed` (reasoning-summary detail on OpenAI responses-style providers).
+
+`memory` accepts `false` (disable durable memory) or a quality-tier adapters object targeting any
+OpenAI-compatible endpoint:
+
+```json
+{
+  "memory": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://gw.example/v1",
+      "apiKeyEnv": "OPENAI_API_KEY",
+      "dimensions": 1536
+    },
+    "extractor": {
+      "model": "small-model",
+      "baseUrl": "https://gw.example/v1",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+`apiKeyEnv` names an environment variable resolved inside the engine process (named but empty fails
+startup), so presets still carry no secrets. Configuring either adapter also switches GoodMemory to
+its `recommended` retrieval preset (semantic candidates + conversational write-time extraction);
+omitting both keeps the zero-cost tier (deterministic extractor + local lexical embedding)
+byte-identical. Identity and database path remain deployment concerns and are rejected here. No
+`$ENV` interpolation: presets carry no secrets (credentials stay with `models.json` / pi).
 
 Consumers and merge order (one shared implementation, `mergePresetConfig` in core, used by both
 edges): explicit flags / `TACHIKOMA_*` variables override preset fields. Setting `TACHIKOMA_SKILLS`

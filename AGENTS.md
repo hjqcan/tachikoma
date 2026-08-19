@@ -33,6 +33,8 @@ bun run lint
 bun run typecheck
 bun run test
 bun run build
+bun run test:package
+bun run test:pack
 bun run audit
 ```
 
@@ -54,7 +56,8 @@ credentials.
 - Do not commit runtime data under `.tachikoma/`, generated `dist/`, coverage, or local reference
   repositories under `third-party/`.
 
-See [`docs/architecture.md`](docs/architecture.md) for ownership boundaries and
-[`docs/tachikoma-spiral-roadmap.md`](docs/tachikoma-spiral-roadmap.md) for sequencing.
+See [`docs/architecture.md`](docs/architecture.md) for ownership boundaries,
+[`docs/tachikoma-spiral-roadmap.md`](docs/tachikoma-spiral-roadmap.md) for sequencing, and
+[`docs/releasing.md`](docs/releasing.md) for npm publishing.
 
 架构和代码始终秉持极简主义，不要过度设计。

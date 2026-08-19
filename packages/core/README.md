@@ -1,20 +1,18 @@
 # @hjqcan/tachikoma-core
 
-Tachikoma 0.2 的 chat-only 核心。它把 `@earendil-works/pi-coding-agent`
-的模型、流式响应、重试、压缩和 JSONL 会话生命周期收敛成一层很薄的公共 API。
+The Tachikoma chat runtime. It condenses `@earendil-works/pi-coding-agent` — models, streaming,
+retries, compaction, tool execution, and the append-only JSONL session lifecycle — into a thin,
+stable product API: `ChatEngine`, `ChatSession`, and the `ChatEvent` stream.
 
-本版本只接受文本输入，并通过 pi 的 `noTools: 'all'`
-创建会话。它不读取工作目录、不注册工具，也不提供任务规划或调度能力。
-
-## 安装
+## Install
 
 ```bash
 bun add @hjqcan/tachikoma-core
 ```
 
-要求 Bun 1.3.14 或更新版本。
+Requires Bun 1.3.14 or newer.
 
-## 使用
+## Use
 
 ```ts
 import { ChatEngine } from '@hjqcan/tachikoma-core';
@@ -24,7 +22,7 @@ const engine = new ChatEngine({
 });
 const session = await engine.createSession();
 
-for await (const event of session.send('你好')) {
+for await (const event of session.send('hello')) {
   if (event.type === 'message_delta') {
     process.stdout.write(event.text);
   }
@@ -33,47 +31,60 @@ for await (const event of session.send('你好')) {
 await session.close();
 ```
 
-`ChatEngine` 只负责 `createSession`、`openSession`、`listSessions` 与 `deleteSession`。每个
-`ChatSession` 独立持有一个 pi `AgentSession`，并提供：
+`ChatEngine` creates, opens, lists, and deletes sessions, lists the model catalog, and exposes
+memory management (`memoryList`/`memorySearch`/`memoryForget`/`memoryClear`). Each `ChatSession`
+owns one pi `AgentSession` and provides `send`, `abort`, `respondToApproval`, `setModel`,
+`setThinkingLevel`, `rename`, `compact`, and `close`.
 
-- `send`、`abort` 与 `close`
-- `setModel` 与 `setThinkingLevel`
-- `compact`
+The public model reference is only `{ provider, model }`. Credentials stay inside pi (env,
+credential store, `models.json` `$ENV` interpolation) and never appear in Tachikoma configuration,
+session objects, or events.
 
-公共模型引用只有
-`{ provider, model }`。凭证由 pi 自己管理，不进入 Tachikoma 的公共配置、会话对象或事件。
+## Sessions and events
 
-## 会话与事件
+pi `SessionManager`'s append-only JSONL v3 is the single source of truth for transcripts, restore,
+model changes, thinking levels, and compaction records; it lives under `~/.tachikoma/sessions` by
+default. `send()` returns an async stream of `ChatEvent`:
 
-pi `SessionManager` 的 append-only JSONL v3 是 transcript、恢复、模型变更、thinking
-level 与压缩记录的唯一真相，默认位于 `~/.tachikoma/sessions`。
+- `user_message` — the turn's first event (the prompt text)
+- `message_start`, `message_delta`, `reasoning_delta`
+- `retry`, `compaction`, `memory_status`
+- `tool_call`, `tool_update`, `tool_result`
+- `tool_approval_request`, `tool_approval_resolved`
+- `message_complete` — exactly one per turn, with `success` | `interrupted` | `failed` and pi's
+  complete usage
 
-`send()` 返回 `ChatEvent` 异步流。公开事件仅有：
+The union evolves additively only; consumers must tolerate unknown event types.
 
-- `message_start`
-- `message_delta`
-- `reasoning_delta`
-- `retry`
-- `compaction`
-- `memory_status`
-- `message_complete`
+## Tools and approvals
 
-每轮恰好以一个 `message_complete` 结束，状态为 `success`、`interrupted` 或
-`failed`，并携带 pi 的完整 usage。
+The default product has zero tools. Tool enablement is an explicit grant, never an environment
+default:
+
+- `workDir` enables pi's read-only set (`read`, `grep`, `find`, `ls`), scoped by a guard that blocks
+  any path resolving — or symlinking — outside the canonical workspace root.
+- `toolset: 'coding'` adds `write`, `edit`, `bash`; each call emits `tool_approval_request` and
+  blocks until `respondToApproval` (a configurable timeout denies by default).
+- `skills: [<path>…]` grants SKILL.md files or skill directories (requires a workspace grant;
+  nothing is discovered from the environment).
+- Grants are engine-level (`ChatEngineConfig`) or per live session
+  (`createSession({ workDir, toolset, skills })`); session grants never persist across reopen.
+  `workDir: null` explicitly revokes the engine default for that session; `skills: []` explicitly
+  clears it.
+
+Named presets bundle a session composition as data: `resolvePreset(configDir, name)` reads
+`<configDir>/presets/<name>.json` and `mergePresetConfig(overrides, preset)` applies
+explicit-over-preset merge semantics. The engine itself never reads presets — resolution belongs to
+the edges (CLI, sidecar).
 
 ## GoodMemory
 
-GoodMemory 默认开启，SQLite 默认位于 `~/.tachikoma/memory/goodmemory.sqlite`。传入 `memory: false`
-才会关闭。
+Durable memory is on by default (SQLite at `~/.tachikoma/memory/goodmemory.sqlite`); pass
+`memory: false` to disable. Recall or writeback failure never interrupts chat — degradation surfaces
+through `memory_status` events and the `session.memoryStatus` snapshot.
 
-召回或写回失败不会中断聊天；`memory_status` 事件和 `session.memoryStatus` 快照会明确显示 `degraded`
-或 `write-failed`。Tachikoma 直接使用 `goodmemory/runtime-kit`
-的 session、recall 与 writeback 生命周期，不维护第二套记忆状态。
+## Boundaries
 
-## 第一圈边界
-
-- 仅文本聊天
-- 零活动工具
-- 无工作目录或自定义工具配置
-- 无 HTTP、桌面端或调度运行时
-- 不兼容 0.1 API 与旧会话格式
+- Text-only input; images and coordination runtimes are out of scope for `0.2.x`.
+- pi remains the sole model-to-tool loop; this package adds policy, never executors.
+- No compatibility with pre-`0.2.0` APIs or session files.

@@ -29,9 +29,31 @@ export const CHAT_THINKING_LEVELS: readonly ChatThinkingLevel[] = [
   'max',
 ];
 
+/**
+ * 记忆适配器的模型端点（OpenAI 兼容）。密钥经 apiKeyEnv 指名环境变量、
+ * 在引擎进程内解析——配置面与 preset 数据绝不携密。
+ */
+export interface ChatMemoryModelConfig {
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv?: string;
+}
+
+export interface ChatMemoryEmbeddingConfig extends ChatMemoryModelConfig {
+  /** 端点返回的向量维度（配置后交 GoodMemory 做一致性校验） */
+  dimensions?: number;
+}
+
 export interface ChatMemoryConfig {
   databasePath?: string;
   userId?: string;
+  /**
+   * 质量档适配器（可选；缺省零成本档：确定性抽取 + 本地词法向量）。
+   * 配置任一适配器即启用 GoodMemory 的 'recommended' 检索预设
+   * （语义候选 + 会话式写回抽取）；零成本档行为保持逐字节不变。
+   */
+  embedding?: ChatMemoryEmbeddingConfig;
+  extractor?: ChatMemoryModelConfig;
 }
 
 export interface ChatEngineConfig {
@@ -73,8 +95,17 @@ export interface ChatEngineConfig {
    * 设 'detailed' 可看到更完整的思考摘要；effort 仍由 thinkingLevel 逐回合决定。
    * 不支持该参数的 provider 会忽略此项。
    */
-  reasoningSummary?: 'auto' | 'concise' | 'detailed';
+  reasoningSummary?: ChatReasoningSummary;
 }
+
+export type ChatReasoningSummary = 'auto' | 'concise' | 'detailed';
+
+/** 合法推理摘要档位（CLI --reasoning-summary / engined env / preset 校验共用一份） */
+export const CHAT_REASONING_SUMMARIES: readonly ChatReasoningSummary[] = [
+  'auto',
+  'concise',
+  'detailed',
+];
 
 export type ChatToolset = 'read-only' | 'coding';
 
@@ -90,10 +121,11 @@ export interface ChatSessionInit {
   model?: ChatModelRef;
   thinkingLevel?: ChatThinkingLevel;
   /**
-   * 本会话的工作区授予，覆盖引擎默认。授予只对这个 live 会话有效，
+   * 本会话的工作区授予，覆盖引擎默认（`null` = 显式无工作区，压掉引擎默认；
+   * undefined = 继承）。授予只对这个 live 会话有效，
    * 不写入会话文件——重开（openSession）回到引擎默认，需要重新授予。
    */
-  workDir?: string;
+  workDir?: string | null;
   /** 本会话工具集；缺省用引擎配置。仅在（本会话或引擎）设置了 workDir 时生效 */
   toolset?: ChatToolset;
   /**

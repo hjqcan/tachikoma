@@ -26,7 +26,8 @@
 ## 每次发布
 
 ```bash
-# 1. 版本对齐（手动编辑三包 package.json + cli/desktop 的依赖区间，保持锁步）
+# 1. 版本对齐（手动编辑：protocol/core/server/cli 四个 package.json、根 package.json、
+#    core src/index.ts 的 VERSION 常量。cli/desktop 对内依赖是 workspace:*，无需改动）
 # 2. 全量验证（含打包验证：tarball 内容、workspace 重写、scratch 消费者安装）
 bun run verify
 
@@ -38,7 +39,7 @@ cd packages/protocol && bun publish
 cd ../core          && bun publish
 cd ../server        && bun publish
 
-# 4. 打 tag
+# 4. 打 tag（注意：v0.2.0 在发布流程就绪前已用于源码里程碑，npm 首发从 0.2.1 起）
 git tag v0.2.x && git push origin v0.2.x
 ```
 

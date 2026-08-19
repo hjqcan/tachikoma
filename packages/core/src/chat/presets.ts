@@ -15,8 +15,15 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { CHAT_THINKING_LEVELS } from './types';
-import type { ChatModelRef, ChatThinkingLevel, ChatToolset } from './types';
+import { CHAT_REASONING_SUMMARIES, CHAT_THINKING_LEVELS } from './types.ts';
+import type {
+  ChatMemoryEmbeddingConfig,
+  ChatMemoryModelConfig,
+  ChatModelRef,
+  ChatReasoningSummary,
+  ChatThinkingLevel,
+  ChatToolset,
+} from './types.ts';
 
 const PRESET_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u;
 const KNOWN_KEYS: readonly string[] = [
@@ -26,8 +33,15 @@ const KNOWN_KEYS: readonly string[] = [
   'workDir',
   'model',
   'thinkingLevel',
+  'reasoningSummary',
   'memory',
 ];
+
+/** preset 可组合的记忆面：仅质量档适配器（身份/库路径是部署关切，不进组合面） */
+export interface ChatPresetMemoryAdapters {
+  embedding?: ChatMemoryEmbeddingConfig;
+  extractor?: ChatMemoryModelConfig;
+}
 
 export interface ChatPresetResolved {
   /** systemPromptFile 在解析期读出的内容（快败：不可读/空文件即抛） */
@@ -38,8 +52,12 @@ export interface ChatPresetResolved {
   workDir?: string;
   model?: ChatModelRef;
   thinkingLevel?: ChatThinkingLevel;
-  /** preset 只允许显式关闭记忆；身份/库路径是部署关切，不进组合面 */
-  memory?: false;
+  reasoningSummary?: ChatReasoningSummary;
+  /**
+   * false = 显式关闭记忆；对象 = 质量档适配器（embedding/extractor）。
+   * 身份/库路径仍是部署关切，不进组合面；apiKeyEnv 只携环境变量名，preset 不携密。
+   */
+  memory?: false | ChatPresetMemoryAdapters;
 }
 
 function presetError(name: string, detail: string): Error {
@@ -71,7 +89,7 @@ export function readPromptFile(path: string, label: string): string {
 export function resolvePreset(configDir: string, name: string): ChatPresetResolved {
   if (!PRESET_NAME.test(name)) {
     throw new Error(
-      `Invalid preset name: ${JSON.stringify(name)} (allowed: letters, digits, ".", "_", "-").`
+      `Invalid preset name: ${JSON.stringify(name)} (allowed: letters, digits, ".", "_", "-")`
     );
   }
   const presetsDir = join(resolve(configDir), 'presets');
@@ -101,12 +119,12 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
     );
   }
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw presetError(name, 'top level must be a JSON object.');
+    throw presetError(name, 'top level must be a JSON object');
   }
   const record = raw as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (!KNOWN_KEYS.includes(key)) {
-      throw presetError(name, `unknown key "${key}" (known: ${KNOWN_KEYS.join(', ')}).`);
+      throw presetError(name, `unknown key "${key}" (known: ${KNOWN_KEYS.join(', ')})`);
     }
   }
 
@@ -117,7 +135,7 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
 
   if (record.systemPromptFile !== undefined) {
     if (typeof record.systemPromptFile !== 'string' || record.systemPromptFile.length === 0) {
-      throw presetError(name, 'systemPromptFile must be a non-empty string.');
+      throw presetError(name, 'systemPromptFile must be a non-empty string');
     }
     try {
       resolved.systemPrompt = readPromptFile(
@@ -134,7 +152,7 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
       !Array.isArray(record.skills) ||
       record.skills.some((entry) => typeof entry !== 'string' || entry.length === 0)
     ) {
-      throw presetError(name, 'skills must be an array of non-empty strings.');
+      throw presetError(name, 'skills must be an array of non-empty strings');
     }
     const skills = (record.skills as string[]).map(resolveEntry);
     for (const skill of skills) {
@@ -157,7 +175,7 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
 
   if (record.workDir !== undefined) {
     if (typeof record.workDir !== 'string' || record.workDir.length === 0) {
-      throw presetError(name, 'workDir must be a non-empty string.');
+      throw presetError(name, 'workDir must be a non-empty string');
     }
     const workDir = resolveEntry(record.workDir);
     if (!existsSync(workDir)) {
@@ -175,7 +193,7 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
       typeof model.model !== 'string' ||
       Object.keys(model).length !== 2
     ) {
-      throw presetError(name, 'model must be { "provider": string, "model": string }.');
+      throw presetError(name, 'model must be { "provider": string, "model": string }');
     }
     resolved.model = { provider: model.provider, model: model.model };
   }
@@ -193,17 +211,108 @@ export function resolvePreset(configDir: string, name: string): ChatPresetResolv
     resolved.thinkingLevel = record.thinkingLevel as ChatThinkingLevel;
   }
 
-  if (record.memory !== undefined) {
-    if (record.memory !== false) {
+  if (record.reasoningSummary !== undefined) {
+    if (
+      typeof record.reasoningSummary !== 'string' ||
+      !(CHAT_REASONING_SUMMARIES as readonly string[]).includes(record.reasoningSummary)
+    ) {
       throw presetError(
         name,
-        'memory only accepts false (identity and database path are deployment concerns, not preset composition).'
+        `reasoningSummary must be one of ${CHAT_REASONING_SUMMARIES.join(' | ')}, got: ${String(record.reasoningSummary)}`
       );
     }
-    resolved.memory = false;
+    resolved.reasoningSummary = record.reasoningSummary as ChatReasoningSummary;
+  }
+
+  if (record.memory !== undefined) {
+    resolved.memory = parsePresetMemory(name, record.memory);
   }
 
   return resolved;
+}
+
+/** memory 适配器条目校验：model 必填非空；baseUrl/apiKeyEnv 可选非空；未知键拒绝 */
+function parsePresetMemoryAdapter(
+  name: string,
+  field: 'embedding' | 'extractor',
+  value: unknown,
+  extraKeys: readonly string[]
+): { model: string; baseUrl?: string; apiKeyEnv?: string; dimensions?: number } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw presetError(name, `memory.${field} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  const known = ['model', 'baseUrl', 'apiKeyEnv', ...extraKeys];
+  for (const key of Object.keys(record)) {
+    if (!known.includes(key)) {
+      throw presetError(name, `memory.${field} unknown key "${key}" (known: ${known.join(', ')})`);
+    }
+  }
+  if (typeof record.model !== 'string' || record.model.length === 0) {
+    throw presetError(name, `memory.${field}.model must be a non-empty string`);
+  }
+  for (const key of ['baseUrl', 'apiKeyEnv'] as const) {
+    const entry = record[key];
+    if (entry !== undefined && (typeof entry !== 'string' || entry.length === 0)) {
+      throw presetError(name, `memory.${field}.${key} must be a non-empty string`);
+    }
+  }
+  if (
+    record.dimensions !== undefined &&
+    (typeof record.dimensions !== 'number' ||
+      !Number.isInteger(record.dimensions) ||
+      record.dimensions <= 0)
+  ) {
+    throw presetError(name, `memory.${field}.dimensions must be a positive integer`);
+  }
+  return {
+    model: record.model,
+    ...(record.baseUrl !== undefined ? { baseUrl: record.baseUrl as string } : {}),
+    ...(record.apiKeyEnv !== undefined ? { apiKeyEnv: record.apiKeyEnv as string } : {}),
+    ...(record.dimensions !== undefined ? { dimensions: record.dimensions } : {}),
+  };
+}
+
+function parsePresetMemory(name: string, value: unknown): false | ChatPresetMemoryAdapters {
+  if (value === false) return false;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw presetError(
+      name,
+      'memory accepts false or { embedding?, extractor? } (identity and database path are deployment concerns, not preset composition)'
+    );
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== 'embedding' && key !== 'extractor') {
+      throw presetError(
+        name,
+        `memory unknown key "${key}" (known: embedding, extractor; identity and database path are deployment concerns)`
+      );
+    }
+  }
+  const adapters: ChatPresetMemoryAdapters = {};
+  if (record.embedding !== undefined) {
+    adapters.embedding = parsePresetMemoryAdapter(name, 'embedding', record.embedding, [
+      'dimensions',
+    ]);
+  }
+  if (record.extractor !== undefined) {
+    const { model, baseUrl, apiKeyEnv } = parsePresetMemoryAdapter(
+      name,
+      'extractor',
+      record.extractor,
+      []
+    );
+    adapters.extractor = {
+      model,
+      ...(baseUrl !== undefined ? { baseUrl } : {}),
+      ...(apiKeyEnv !== undefined ? { apiKeyEnv } : {}),
+    };
+  }
+  if (!adapters.embedding && !adapters.extractor) {
+    throw presetError(name, 'memory object must configure embedding and/or extractor');
+  }
+  return adapters;
 }
 
 /** 边缘的显式覆盖面（flag / TACHIKOMA_* 变量）；skills 的 [] 是显式清空，undefined 是缺席 */
@@ -214,6 +323,7 @@ export interface ChatPresetOverrides {
   skills?: readonly string[];
   systemPrompt?: string;
   thinkingLevel?: ChatThinkingLevel;
+  reasoningSummary?: ChatReasoningSummary;
   memoryOff?: boolean;
 }
 
@@ -225,7 +335,10 @@ export interface ChatPresetMerged {
   skills?: string[];
   systemPrompt?: string;
   thinkingLevel?: ChatThinkingLevel;
+  reasoningSummary?: ChatReasoningSummary;
   memoryOff: boolean;
+  /** preset 的质量档适配器；显式关闭（memoryOff）时被压掉 */
+  memory?: ChatPresetMemoryAdapters;
 }
 
 /**
@@ -244,14 +357,17 @@ export function mergePresetConfig(
   const skills = overrides.skills !== undefined ? [...overrides.skills] : preset.skills;
   const systemPrompt = overrides.systemPrompt ?? preset.systemPrompt;
   const thinkingLevel = overrides.thinkingLevel ?? preset.thinkingLevel;
+  const reasoningSummary = overrides.reasoningSummary ?? preset.reasoningSummary;
+  // 报错点名各入口的归属：TACHIKOMA_WORKDIR 只在 engined 生效，CLI 刻意不读它——
+  // 不加归属的并列会给 CLI 用户指一条死路。
   if (toolset && !workDir) {
     throw new Error(
-      'A toolset requires a workspace: provide workDir (--workdir / TACHIKOMA_WORKDIR / preset workDir).'
+      'A toolset requires a workspace: grant workDir (CLI --workdir, engined TACHIKOMA_WORKDIR, or preset workDir)'
     );
   }
   if (skills?.length && !workDir) {
     throw new Error(
-      'Skills require a workspace: provide workDir (--workdir / TACHIKOMA_WORKDIR / preset workDir).'
+      'Skills require a workspace: grant workDir (CLI --workdir, engined TACHIKOMA_WORKDIR, or preset workDir)'
     );
   }
   return {
@@ -261,6 +377,10 @@ export function mergePresetConfig(
     ...(skills?.length ? { skills } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(reasoningSummary ? { reasoningSummary } : {}),
     memoryOff: overrides.memoryOff === true || preset.memory === false,
+    ...(overrides.memoryOff !== true && preset.memory !== undefined && preset.memory !== false
+      ? { memory: preset.memory }
+      : {}),
   };
 }

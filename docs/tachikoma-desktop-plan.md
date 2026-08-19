@@ -14,10 +14,9 @@
 
 ### 1.1 背景
 
-Tachikoma 已在 ChatEngine 直接接入 pi-mono 0.84.1 的模型与工具循环；此前
-`docs/tachikoma-pi-mono-fusion-plan.md` 的自研 Tool
-Runtime 路线已停止推进。下一个产品方向是把 Tachikoma 演进为一个类似 [alma.now](https://alma.now)
-的桌面应用：Local-First、Memory-First 的 AI Agent 桌面端。
+Tachikoma 已在 ChatEngine 直接接入 pi-mono 的模型与工具循环；此前的自研 Tool
+Runtime 路线（其计划文档已删除）已停止推进。下一个产品方向是把 Tachikoma 演进为一个类似 Alma 的桌面应用：Local-First、Memory-First 的 AI
+Agent 桌面端。
 
 Alma 的产品要素（来自官方文档）：统一多 Provider 接入（一键切换模型）、隐私（API
 key 与会话史留在本机）、跨会话持久记忆、文件/Shell/网络搜索工具、自定义 Prompt、工作区关联（会话绑定项目目录做编码辅助）、MCP 第三方集成、插件；macOS/Windows/Linux；流式 Markdown 聊天界面。

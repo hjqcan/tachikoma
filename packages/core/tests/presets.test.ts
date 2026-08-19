@@ -42,6 +42,7 @@ describe('命名 preset', () => {
         workDir,
         model: { provider: 'openai', model: 'gpt-5.2' },
         thinkingLevel: 'medium',
+        reasoningSummary: 'detailed',
         memory: false,
       });
 
@@ -52,6 +53,7 @@ describe('命名 preset', () => {
       expect(resolved.workDir).toBe(workDir);
       expect(resolved.model).toEqual({ provider: 'openai', model: 'gpt-5.2' });
       expect(resolved.thinkingLevel).toBe('medium');
+      expect(resolved.reasoningSummary).toBe('detailed');
       expect(resolved.memory).toBeFalse();
       await rm(workDir, { recursive: true, force: true });
     } finally {
@@ -125,6 +127,45 @@ describe('命名 preset', () => {
     }
   });
 
+  it('memory 质量档：适配器解析；部署键/空对象/缺 model/错位 dimensions 拒绝', async () => {
+    const configDir = await makeConfigDir();
+    try {
+      await writePreset(configDir, 'mem', {
+        memory: {
+          embedding: {
+            model: 'embed-x',
+            baseUrl: 'https://gw.example/v1',
+            apiKeyEnv: 'KEY_ENV',
+            dimensions: 1024,
+          },
+          extractor: { model: 'small-x' },
+        },
+      });
+      expect(resolvePreset(configDir, 'mem').memory).toEqual({
+        embedding: {
+          model: 'embed-x',
+          baseUrl: 'https://gw.example/v1',
+          apiKeyEnv: 'KEY_ENV',
+          dimensions: 1024,
+        },
+        extractor: { model: 'small-x' },
+      });
+
+      await writePreset(configDir, 'memdeploy', { memory: { userId: 'a' } });
+      expect(() => resolvePreset(configDir, 'memdeploy')).toThrow('deployment concerns');
+      await writePreset(configDir, 'memempty', { memory: {} });
+      expect(() => resolvePreset(configDir, 'memempty')).toThrow('embedding and/or extractor');
+      await writePreset(configDir, 'memnomodel', { memory: { embedding: { baseUrl: 'x' } } });
+      expect(() => resolvePreset(configDir, 'memnomodel')).toThrow('memory.embedding.model');
+      await writePreset(configDir, 'memdim', {
+        memory: { extractor: { model: 'm', dimensions: 8 } },
+      });
+      expect(() => resolvePreset(configDir, 'memdim')).toThrow('unknown key "dimensions"');
+    } finally {
+      await rm(configDir, { recursive: true, force: true });
+    }
+  });
+
   it('枚举与形状校验：toolset/thinkingLevel/model/memory', async () => {
     const configDir = await makeConfigDir();
     try {
@@ -132,10 +173,12 @@ describe('命名 preset', () => {
       expect(() => resolvePreset(configDir, 'badtool')).toThrow('toolset must be');
       await writePreset(configDir, 'badthink', { thinkingLevel: 'ultra' });
       expect(() => resolvePreset(configDir, 'badthink')).toThrow('thinkingLevel must be');
+      await writePreset(configDir, 'badsummary', { reasoningSummary: 'verbose' });
+      expect(() => resolvePreset(configDir, 'badsummary')).toThrow('reasoningSummary must be');
       await writePreset(configDir, 'badmodel', { model: { provider: 'p' } });
       expect(() => resolvePreset(configDir, 'badmodel')).toThrow('model must be');
       await writePreset(configDir, 'badmem', { memory: true });
-      expect(() => resolvePreset(configDir, 'badmem')).toThrow('memory only accepts false');
+      expect(() => resolvePreset(configDir, 'badmem')).toThrow('memory accepts false or');
     } finally {
       await rm(configDir, { recursive: true, force: true });
     }
@@ -171,5 +214,13 @@ describe('mergePresetConfig（CLI 与 engined 的唯一合并实现）', () => {
   it('跨字段检查：toolset/skills 无 workDir 一律抛（文案中立，不点名单一入口）', () => {
     expect(() => mergePresetConfig({}, { toolset: 'coding' })).toThrow('requires a workspace');
     expect(() => mergePresetConfig({ skills: ['/s'] }, {})).toThrow('require a workspace');
+  });
+
+  it('memory 适配器随 preset 流入合并结果；显式 memoryOff 连适配器一起压掉', () => {
+    const adapters = { embedding: { model: 'embed-x' } };
+    expect(mergePresetConfig({}, { memory: adapters }).memory).toEqual(adapters);
+    const off = mergePresetConfig({ memoryOff: true }, { memory: adapters });
+    expect(off.memoryOff).toBeTrue();
+    expect(off.memory).toBeUndefined();
   });
 });

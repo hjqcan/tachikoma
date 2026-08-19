@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { VERSION } from '../src/index.ts';
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dir, '../../..');
@@ -38,6 +39,6 @@ describe('CLI process', () => {
     const result = await run(['--version']);
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
-    expect(result.stdout).toBe('Tachikoma 0.2.0\n');
+    expect(result.stdout).toBe(`Tachikoma ${VERSION}\n`);
   });
 });

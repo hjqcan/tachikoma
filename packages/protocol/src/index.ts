@@ -1,5 +1,5 @@
-export { CAPABILITIES, PROTOCOL_VERSION } from './version';
-export type { Capability } from './version';
+export { CAPABILITIES, PROTOCOL_VERSION } from './version.ts';
+export type { Capability } from './version.ts';
 
 export {
   compactionResultSchema,
@@ -14,7 +14,7 @@ export {
   toolsetSchema,
   usageSchema,
   workspaceStateSchema,
-} from './dto';
+} from './dto.ts';
 export type {
   CompactionResult,
   MemoryRecord,
@@ -28,20 +28,20 @@ export type {
   Toolset,
   Usage,
   WorkspaceState,
-} from './dto';
+} from './dto.ts';
 
 export {
   chatEventWireSchema,
   FRAME_VERSION,
   parseSessionEventFrame,
   sessionEventFrameSchema,
-} from './events';
+} from './events.ts';
 export type {
   ChatEventWire,
   ParsedSessionEventFrame,
   SessionEventFrame,
   UnknownEventFrame,
-} from './events';
+} from './events.ts';
 
 export {
   helloRequestSchema,
@@ -52,7 +52,7 @@ export {
   rpcRequestSchema,
   rpcResponseSchema,
   subscribeRequestSchema,
-} from './rpc';
+} from './rpc.ts';
 export type {
   HelloRequest,
   HelloResponse,
@@ -61,4 +61,4 @@ export type {
   RpcRequest,
   RpcResponse,
   SubscribeRequest,
-} from './rpc';
+} from './rpc.ts';

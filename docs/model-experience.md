@@ -56,3 +56,7 @@ includes blocked and denied calls (hammering a denial is also a loop); the count
 new user turn.
 
 Token cost: zero until a repeat chain forms; then one short block per threshold crossing.
+
+User visibility (deliberate): the CLI renders tool results as a summary line (`ok (N chars)`), so
+the reminder is invisible there; the desktop's expandable tool output shows the raw tag — what you
+see is exactly what the model saw. No consumer special-cases the tag.

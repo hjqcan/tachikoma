@@ -81,9 +81,11 @@ bun run test:pack
 bun run audit
 ```
 
-`test:pack` installs the generated Core and CLI tarballs into a clean temporary consumer. It checks
-workspace-version rewriting, package contents, the CLI bin and shebang, public imports,
-`--help`/`--version`, and the packed dependency audit.
+`test:pack` packs all four publishable packages (protocol, core, server, cli) and installs the
+tarballs into a clean temporary consumer. It checks workspace-version rewriting, package contents,
+every bin and shebang (tachikoma / tachikoma-engined / tachikoma-acp), public imports under both Bun
+and Node ESM (Bun's lenient resolution once masked bare extensionless specifiers in the published
+output), `--help`/`--version`, and the packed dependency audit.
 
 Release evidence must report each command separately. A successful build or faux test is not proof
 that a live provider was exercised.

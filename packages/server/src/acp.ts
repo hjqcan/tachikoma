@@ -25,7 +25,7 @@ import {
   promptText,
   sessionUpdateOf,
   stopReasonOf,
-} from './acp-map';
+} from './acp-map.ts';
 
 interface JsonRpcMessage {
   jsonrpc?: string;

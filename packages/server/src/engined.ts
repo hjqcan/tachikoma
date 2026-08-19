@@ -10,8 +10,8 @@
 
 import { ChatEngine, VERSION } from '@hjqcan/tachikoma-core';
 import { PROTOCOL_VERSION } from '@hjqcan/tachikoma-protocol';
-import { enginedOptionsFromEnv } from './engine-env';
-import { startTachikomaServer } from './server';
+import { enginedOptionsFromEnv } from './engine-env.ts';
+import { startTachikomaServer } from './server.ts';
 
 async function readTokenLine(): Promise<string> {
   const reader = Bun.stdin.stream().getReader();

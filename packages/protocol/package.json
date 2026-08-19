@@ -1,6 +1,6 @@
 {
   "name": "@hjqcan/tachikoma-protocol",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The Tachikoma wire contract: zod schemas for events, frames, and RPC.",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,7 +8,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -39,10 +40,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hjqcan/tachikoma.git",
+    "url": "git+https://github.com/hjqcan/tachikoma.git",
     "directory": "packages/protocol"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "homepage": "https://github.com/hjqcan/tachikoma#readme",
+  "bugs": {
+    "url": "https://github.com/hjqcan/tachikoma/issues"
   }
 }

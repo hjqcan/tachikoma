@@ -10,7 +10,11 @@ import { join } from 'node:path';
 
 import { ChatEngine } from '../src';
 import type { ChatEvent, ChatMessageCompleteEvent } from '../src';
-import { projectMemoryBuckets, projectRecalledMemories } from '../src/chat/memory';
+import {
+  createChatMemoryRuntime,
+  projectMemoryBuckets,
+  projectRecalledMemories,
+} from '../src/chat/memory';
 import { createFauxHarness } from './helpers';
 
 async function collect(events: AsyncIterable<ChatEvent>): Promise<ChatEvent[]> {
@@ -26,6 +30,44 @@ function complete(events: ChatEvent[]): ChatMessageCompleteEvent {
   expect(event?.type).toBe('message_complete');
   return event as ChatMessageCompleteEvent;
 }
+
+describe('createChatMemoryRuntime 质量档（离线：仅构造，不外呼）', () => {
+  it('apiKeyEnv 指名却为空：构造期即失败', () => {
+    delete process.env.TACHIKOMA_TEST_MEMORY_KEY;
+    expect(() =>
+      createChatMemoryRuntime({
+        databasePath: ':memory:',
+        userId: 'u',
+        embedding: { model: 'embed-x', apiKeyEnv: 'TACHIKOMA_TEST_MEMORY_KEY' },
+      })
+    ).toThrow('TACHIKOMA_TEST_MEMORY_KEY');
+  });
+
+  it('双适配器构造成功（含 recommended 检索预设路径）', () => {
+    process.env.TACHIKOMA_TEST_MEMORY_KEY = 'test-key';
+    try {
+      const runtime = createChatMemoryRuntime({
+        databasePath: ':memory:',
+        userId: 'u',
+        embedding: {
+          model: 'embed-x',
+          baseUrl: 'http://127.0.0.1:1/v1',
+          apiKeyEnv: 'TACHIKOMA_TEST_MEMORY_KEY',
+          dimensions: 8,
+        },
+        extractor: {
+          model: 'small-x',
+          baseUrl: 'http://127.0.0.1:1/v1',
+          apiKeyEnv: 'TACHIKOMA_TEST_MEMORY_KEY',
+        },
+      });
+      expect(runtime.memory).toBeDefined();
+      expect(runtime.kit).toBeDefined();
+    } finally {
+      delete process.env.TACHIKOMA_TEST_MEMORY_KEY;
+    }
+  });
+});
 
 describe('memory projections', () => {
   it('preserves lifecycle and merges fragment record refs into recall details', () => {

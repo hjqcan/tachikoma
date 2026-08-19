@@ -25,8 +25,8 @@ import type {
   SessionEventFrame,
   SessionSummary,
 } from '@hjqcan/tachikoma-protocol';
-import type { ServerEnginePort, ServerSessionPort } from './ports';
-import { SessionWal } from './wal';
+import type { ServerEnginePort, ServerSessionPort } from './ports.ts';
+import { SessionWal } from './wal.ts';
 
 const TICKET_TTL_MS = 30_000;
 

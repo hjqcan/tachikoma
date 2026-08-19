@@ -16,13 +16,13 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "isolatedModules": true,
     "noEmitOnError": true,
     "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
     "types": ["bun", "node"]
   },
   "exclude": ["node_modules", "dist", "coverage"]

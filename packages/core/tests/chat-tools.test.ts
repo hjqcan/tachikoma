@@ -267,6 +267,32 @@ describe('第二圈：会话级工作区授予', () => {
     }
   });
 
+  it('引擎有默认工作区时，workDir: null 显式撤销授予（undefined 才继承默认）', async () => {
+    const harness = await createFauxHarness();
+    const workDir = await makeWorkspace();
+    try {
+      const engine = new ChatEngine(
+        {
+          dataDir: harness.dataDir,
+          model: { provider: harness.faux.provider.id, model: 'chat' },
+          memory: false,
+          workDir,
+        },
+        { modelRuntime: harness.modelRuntime }
+      );
+      const inherited = await engine.createSession();
+      const revoked = await engine.createSession({ workDir: null });
+      expect(inherited.workspace).toMatchObject({ root: await realpath(workDir) });
+      expect(revoked.workspace).toBeNull();
+      expect(revoked.activeTools).toHaveLength(0);
+      await inherited.close();
+      await revoked.close();
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+      await harness.cleanup();
+    }
+  });
+
   it('会话级 toolset: coding 启用写/执行工具，且授予不外溢到其他会话', async () => {
     const harness = await createFauxHarness();
     const workDir = await makeWorkspace();

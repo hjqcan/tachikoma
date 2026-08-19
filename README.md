@@ -34,6 +34,20 @@ bun install --frozen-lockfile
 cp .env.example .env
 ```
 
+## Install as packages
+
+`@hjqcan/tachikoma-protocol`, `@hjqcan/tachikoma-core`, and `@hjqcan/tachikoma-server` are published
+to npm (MIT):
+
+```bash
+bun add @hjqcan/tachikoma-core        # ChatEngine / ChatSession / ChatEvent
+bun add @hjqcan/tachikoma-protocol    # renderer-safe wire schemas (zod-only)
+bun add @hjqcan/tachikoma-server      # tachikoma-engined + tachikoma-acp bins
+```
+
+The CLI is not published yet — run it from this repository. Release process:
+[`docs/releasing.md`](docs/releasing.md).
+
 ## CLI
 
 ```bash
@@ -48,9 +62,10 @@ bun run packages/cli/src/cli.ts run "Explain why append-only sessions help recov
 bun run packages/cli/src/cli.ts chat --no-memory
 ```
 
-The REPL supports `/new`, `/sessions`, `/resume`, `/model`, `/models`, `/thinking`, `/tools`,
-`/workspace` (grant or revoke a workspace at runtime — opens a new session with the grant),
-`/compact`, `/memory`, `/help`, and `/exit`. API keys are never accepted as command-line arguments.
+The REPL supports `/new`, `/sessions`, `/resume`, `/rename`, `/delete`, `/model`, `/models`,
+`/thinking`, `/tools`, `/workspace` (grant or revoke a workspace at runtime — opens a new session
+with the grant), `/skills`, `/compact`, `/memory`, `/help`, and `/exit`. API keys are never accepted
+as command-line arguments.
 
 ## Custom models and endpoints
 
@@ -97,9 +112,10 @@ Passing `workDir` to `ChatEngine` (CLI: `--workdir <dir>`) enables pi's read-onl
 symlinks — outside the canonical workspace root. `toolset: 'coding'` (CLI: `--toolset coding`, or
 implied by `--allow`) adds write/execute tools: each call emits `tool_approval_request` and waits
 for `respondToApproval`; timeouts deny by default, and the guard runs before approval is ever asked.
-In the interactive REPL, ungranted requests prompt `approve <tool>? [y/N]`;
-`--allow write,edit,bash` pre-grants for the invocation, and `run` mode / non-TTY denies ungranted
-requests immediately. Tool output streams as it happens (`tool_update`).
+In the interactive REPL, ungranted requests prompt `approve <tool>? [y/N/a]` (`a` approves the tool
+for the rest of the session); `--allow write,edit,bash` pre-grants for the invocation (and implies
+the coding toolset), and `run` mode / non-TTY denies ungranted requests immediately. Tool output
+streams as it happens (`tool_update`).
 
 Skills follow the same explicit-grant shape: `skills: [<path>…]` (CLI: `--skills <path>`,
 repeatable; REPL: `/skills`) loads the listed SKILL.md files or skill directories — nothing is
@@ -119,18 +135,18 @@ default.
 
 ## Local sidecar
 
-`tachikoma-engined` hosts one engine on `127.0.0.1` for remote consumers (the future desktop shell).
-The supervising shell injects a Bearer token as the first stdin line — never via argv or env — and
-reads one `listening` JSON line from stdout. Engine configuration comes from shell-controlled env
-(`TACHIKOMA_DATA_DIR`, `TACHIKOMA_CONFIG_DIR` — user-level config such as models.json when the data
-dir is per-workspace — `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`, `TACHIKOMA_WORKDIR`,
-`TACHIKOMA_TOOLSET`, `TACHIKOMA_SKILLS` — skill grant paths joined with the platform PATH delimiter
-— `TACHIKOMA_SYSTEM_PROMPT_FILE` — replaces the default system prompt with the file's content,
-unreadable or empty fails startup; the engine always appends one factual tool-posture sentence
-(zero-tool / read-only / coding) after any prompt — and `TACHIKOMA_NO_MEMORY=1`). Clients speak
-`@hjqcan/tachikoma-protocol`: HTTP `POST /v1/rpc`, one-time WS tickets from
-`POST /v1/auth/ws-ticket`, and `subscribe {sessionId, fromSeq}` for lossless replay over the
-per-session WAL.
+`tachikoma-engined` hosts one engine on `127.0.0.1` for remote consumers (the desktop shell and any
+machine client). The supervising shell injects a Bearer token as the first stdin line — never via
+argv or env — and reads one `listening` JSON line from stdout. Engine configuration comes from
+shell-controlled env (`TACHIKOMA_DATA_DIR`, `TACHIKOMA_CONFIG_DIR` — user-level config such as
+models.json when the data dir is per-workspace — `TACHIKOMA_PROVIDER`/`TACHIKOMA_MODEL`,
+`TACHIKOMA_WORKDIR`, `TACHIKOMA_TOOLSET`, `TACHIKOMA_SKILLS` — skill grant paths joined with the
+platform PATH delimiter — `TACHIKOMA_SYSTEM_PROMPT_FILE` — replaces the default system prompt with
+the file's content, unreadable or empty fails startup; the engine always appends one factual
+tool-posture sentence (zero-tool / read-only / coding) after any prompt — and
+`TACHIKOMA_NO_MEMORY=1`). Clients speak `@hjqcan/tachikoma-protocol`: HTTP `POST /v1/rpc`, one-time
+WS tickets from `POST /v1/auth/ws-ticket`, and `subscribe {sessionId, fromSeq}` for lossless replay
+over the per-session WAL.
 
 The sidecar also compiles to a single binary: `bun run --cwd packages/server build:bin` produces
 `packages/server/dist/tachikoma-engined` (bun runtime embedded; real model turns and the GoodMemory
@@ -176,4 +192,9 @@ Normal tests are structurally offline. See [`docs/testing.md`](docs/testing.md) 
 explicit live suite.
 
 More detail: [`docs/architecture.md`](docs/architecture.md) and
-[`docs/tachikoma-spiral-roadmap.md`](docs/tachikoma-spiral-roadmap.md).
+[`docs/tachikoma-spiral-roadmap.md`](docs/tachikoma-spiral-roadmap.md). Publishing:
+[`docs/releasing.md`](docs/releasing.md).
+
+## License
+
+[MIT](LICENSE)

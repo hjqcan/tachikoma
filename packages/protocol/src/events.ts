@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod';
-import { modelRefSchema, memoryStatusSchema, usageSchema } from './dto';
+import { modelRefSchema, memoryStatusSchema, usageSchema } from './dto.ts';
 
 const base = {
   sessionId: z.string(),

@@ -2,6 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import {
+  CHAT_REASONING_SUMMARIES,
   CHAT_THINKING_LEVELS,
   ChatEngine,
   VERSION as CORE_VERSION,
@@ -16,6 +17,7 @@ import type {
   ChatMemorySnapshot,
   ChatModelListing,
   ChatModelRef,
+  ChatReasoningSummary,
   ChatSession,
   ChatSessionSummary,
   ChatThinkingLevel,
@@ -55,7 +57,8 @@ export interface ChatEnginePort {
     model?: ChatModelRef;
     thinkingLevel?: ChatThinkingLevel;
     title?: string;
-    workDir?: string;
+    /** null = 显式撤销（压掉引擎默认的 --workdir/preset workDir）；undefined = 继承 */
+    workDir?: string | null;
     toolset?: 'read-only' | 'coding';
     skills?: string[];
   }): Promise<ChatSessionPort>;
@@ -133,6 +136,8 @@ interface ParsedArguments {
   systemPromptFile?: string;
   /** --preset：<configDir>/presets/<name>.json 的命名会话组合；显式 flag/env 覆盖其字段 */
   preset?: string;
+  /** --reasoning-summary：OpenAI responses 系 reasoning.summary 详略档位 */
+  reasoningSummary?: ChatReasoningSummary;
 }
 
 interface TurnResult {
@@ -237,13 +242,90 @@ const defaultDependencies: CliDependencies = {
   writeError: (text) => process.stderr.write(text),
 };
 
+const REPL_COMMANDS_HELP = `REPL commands:
+  /new                         create a new session
+  /sessions                    list sessions
+  /resume <id>                 open a session
+  /rename <title>              rename the active session
+  /delete <id>                 delete a session (and its event log)
+  /model [<provider>/<model>]  show or change the session model
+  /models                      list available models
+  /thinking [<level>]          show or change the thinking level
+  /tools                       show active tools
+  /workspace [<dir> [read-only|coding] | off]
+                               show, grant, or revoke this session's workspace (new
+                               session; does not carry skills — re-grant with /skills)
+  /skills [<path> [path…] | off]
+                               show or grant this session's skills (new session,
+                               keeps the current workspace grant; whitespace-split —
+                               for paths with spaces use the --skills flag)
+  /compact [instructions]      compact the active session
+  /memory [list|search <q>|forget <id>]
+                               durable-memory status and management
+  /help                        show REPL commands
+  /exit                        close the session and exit
+`;
+
 function helpText(): string {
-  return `Tachikoma ${VERSION}\n\nUsage:\n  tachikoma [chat] [options]\n  tachikoma run [options] <prompt>\n  tachikoma help\n  tachikoma --version\n\nOptions:\n  --provider <id>    pi provider id\n  --model <id>       pi model id (requires --provider)\n  --thinking <level> off|minimal|low|medium|high|xhigh|max\n  --resume <id>      resume a JSONL session\n  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>\n  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call approval;\n                     requires --workdir)\n  --allow <tools>    grant write,edit,bash for this invocation (requires --workdir);\n                     without --allow, the REPL asks y/N per call (TTY only);\n                     run mode and non-TTY deny ungranted requests immediately\n  --skills <path>    grant a SKILL.md file or a skills directory (requires --workdir;\n                     repeatable)\n  --system-prompt-file <path>\n                     replace the default system prompt with the file's content\n  --preset <name>    load <configDir>/presets/<name>.json (named session composition:\n                     prompt/skills/toolset/workDir/model); explicit flags override it\n  --no-memory        disable GoodMemory for this process\n  -h, --help         show help\n  -v, --version      show version\n\nREPL commands:\n  /new                         create a new session\n  /sessions                    list sessions\n  /resume <id>                 open a session\n  /rename <title>              rename the active session\n  /delete <id>                 delete a session (and its event log)\n  /model [<provider>/<model>]  show or change the session model\n  /models                      list available models\n  /thinking [<level>]          show or change the thinking level\n  /tools                       show active tools\n  /workspace [<dir> [read-only|coding] | off]\n                               show or grant this session's workspace (new session;\n                               does not carry skills — re-grant with /skills)\n  /skills [<path> [path…] | off]\n                               show or grant this session's skills (new session,\n                               keeps the current workspace grant; whitespace-split —\n                               for paths with spaces use the --skills flag)\n  /compact [instructions]      compact the active session\n  /memory [list|search <q>|forget <id>]\n                               durable-memory status and management\n  /help                        show REPL help\n  /exit                        close the session and exit\n`;
+  return `Tachikoma ${VERSION}
+
+Usage:
+  tachikoma [chat] [options]
+  tachikoma run [options] <prompt>
+  tachikoma help
+  tachikoma --version
+
+Options:
+  --provider <id>    pi provider id (default: TACHIKOMA_PROVIDER)
+  --model <id>       pi model id (requires --provider; default: TACHIKOMA_MODEL)
+  --thinking <level> ${CHAT_THINKING_LEVELS.join('|')}
+  --resume <id>      resume a saved session (it keeps its recorded model and
+                     thinking level; --provider/--model/--thinking are ignored)
+  --workdir <dir>    enable read-only workspace tools (read/grep/find/ls) in <dir>
+  --toolset <set>    read-only (default) | coding (adds write/edit/bash, per-call
+                     approval; requires --workdir)
+  --allow <tools>    pre-approve write,edit,bash for this invocation (implies
+                     --toolset coding; requires --workdir); without --allow, the
+                     REPL asks approve? [y/N/a] per call (TTY only); run mode and
+                     non-TTY deny ungranted requests immediately
+  --skills <path>    grant a SKILL.md file or a skills directory (requires --workdir;
+                     repeatable)
+  --system-prompt-file <path>
+                     replace the default system prompt with the file's content
+  --preset <name>    load <configDir>/presets/<name>.json — a named session
+                     composition (systemPromptFile/skills/toolset/workDir/model/
+                     thinkingLevel/reasoningSummary/memory); explicit flags
+                     override its fields
+  --reasoning-summary <mode>
+                     ${CHAT_REASONING_SUMMARIES.join('|')} — reasoning-summary detail
+                     on OpenAI responses-style providers
+  --no-memory        disable GoodMemory for this process
+  -h, --help         show help
+  -v, --version      show version
+
+Environment:
+  TACHIKOMA_PROVIDER, TACHIKOMA_MODEL
+                     default model selection (flags win)
+  TACHIKOMA_DATA_DIR sessions, event log, and memory location (default: ~/.tachikoma)
+  TACHIKOMA_CONFIG_DIR
+                     models.json and presets/ location (default: the data dir)
+  TACHIKOMA_USER_ID  durable-memory identity (default: the OS user)
+
+Exit codes:
+  0 success · 1 runtime error or failed turn · 2 usage error · 130 interrupted
+
+${REPL_COMMANDS_HELP}`;
+}
+
+function replHelpText(): string {
+  return `${REPL_COMMANDS_HELP}Startup flags (model, workspace, presets…): tachikoma --help\n`;
 }
 
 function parseThinkingLevel(value: string): ChatThinkingLevel {
   if (!(CHAT_THINKING_LEVELS as readonly string[]).includes(value)) {
-    throw new CliUsageError(`Unknown thinking level: ${value}`);
+    throw new CliUsageError(
+      `Unknown thinking level: ${value} (accepts ${CHAT_THINKING_LEVELS.join('|')})`
+    );
   }
   return value as ChatThinkingLevel;
 }
@@ -270,6 +352,7 @@ function parseArguments(
   let skills: string[] | undefined;
   let systemPromptFile: string | undefined;
   let preset: string | undefined;
+  let reasoningSummary: ChatReasoningSummary | undefined;
   let noMemory = false;
   let forceHelp = false;
   let forceVersion = false;
@@ -333,6 +416,17 @@ function parseArguments(
         preset = takeValue(args, index, argument);
         index += 1;
         break;
+      case '--reasoning-summary': {
+        const requested = takeValue(args, index, argument);
+        if (!(CHAT_REASONING_SUMMARIES as readonly string[]).includes(requested)) {
+          throw new CliUsageError(
+            `--reasoning-summary accepts ${CHAT_REASONING_SUMMARIES.join('|')}; got: ${requested}`
+          );
+        }
+        reasoningSummary = requested as ChatReasoningSummary;
+        index += 1;
+        break;
+      }
       case '--no-memory':
         noMemory = true;
         break;
@@ -345,7 +439,9 @@ function parseArguments(
         forceVersion = true;
         break;
       default:
-        if (argument?.startsWith('-')) throw new CliUsageError(`Unknown option: ${argument}`);
+        if (argument?.startsWith('-')) {
+          throw new CliUsageError(`Unknown option: ${argument} (run: tachikoma --help)`);
+        }
         if (argument) positional.push(argument);
     }
   }
@@ -356,7 +452,9 @@ function parseArguments(
   provider ??= env.TACHIKOMA_PROVIDER || undefined;
   modelId ??= env.TACHIKOMA_MODEL || undefined;
   if (Boolean(provider) !== Boolean(modelId)) {
-    throw new CliUsageError('Model selection requires both provider and model');
+    throw new CliUsageError(
+      'Model selection requires both --provider and --model (or TACHIKOMA_PROVIDER and TACHIKOMA_MODEL)'
+    );
   }
   // 跨字段检查（toolset/skills 需 workspace）不在解析期做：engineConfig 的
   // mergePresetConfig 是唯一实现——preset 可以补上 workDir，解析期副本只会分叉。
@@ -364,7 +462,7 @@ function parseArguments(
   const first = positional[0];
   const command = first === undefined ? 'chat' : first;
   if (!['chat', 'help', 'run', 'version'].includes(command)) {
-    throw new CliUsageError(`Unknown command: ${command}`);
+    throw new CliUsageError(`Unknown command: ${command} (run: tachikoma --help)`);
   }
 
   if (command === 'chat' && positional.length > 1) {
@@ -386,6 +484,7 @@ function parseArguments(
     ...(skills ? { skills } : {}),
     ...(systemPromptFile ? { systemPromptFile } : {}),
     ...(preset ? { preset } : {}),
+    ...(reasoningSummary ? { reasoningSummary } : {}),
   };
 }
 
@@ -428,6 +527,7 @@ function engineConfig(
           ? { systemPrompt: readSystemPromptFile(parsed.systemPromptFile) }
           : {}),
         ...(parsed.thinkingLevel ? { thinkingLevel: parsed.thinkingLevel } : {}),
+        ...(parsed.reasoningSummary ? { reasoningSummary: parsed.reasoningSummary } : {}),
         memoryOff: parsed.noMemory,
       },
       preset
@@ -445,10 +545,13 @@ function engineConfig(
     ...(merged.toolset ? { toolset: merged.toolset } : {}),
     ...(merged.skills ? { skills: merged.skills } : {}),
     ...(merged.systemPrompt ? { systemPrompt: merged.systemPrompt } : {}),
+    ...(merged.reasoningSummary ? { reasoningSummary: merged.reasoningSummary } : {}),
     memory: merged.memoryOff
       ? false
       : {
           ...(env.TACHIKOMA_USER_ID ? { userId: env.TACHIKOMA_USER_ID } : {}),
+          // preset 的质量档适配器（embedding/extractor）；身份/库路径仍由部署侧给
+          ...(merged.memory ?? {}),
         },
   };
 }
@@ -785,10 +888,11 @@ async function handleSlashCommand(
         return { exit: false, session };
       }
       const [dir, toolsetArg, extra] = value.split(/\s+/);
-      if (extra || (toolsetArg && toolsetArg !== 'read-only' && toolsetArg !== 'coding')) {
+      if (!dir || extra || (toolsetArg && toolsetArg !== 'read-only' && toolsetArg !== 'coding')) {
         throw new CliUsageError('Use /workspace <dir> [read-only|coding], or /workspace off');
       }
-      // 授予是会话级的：换工作区 = 显式开一个带授予的新会话（模型/thinking 延续）
+      // 授予是会话级的：换工作区 = 显式开一个带授予的新会话（模型/thinking 延续）。
+      // off 传 null（显式撤销）：undefined 会回落引擎默认的 --workdir/preset workDir。
       const next = await engine.createSession({
         model: session.model,
         thinkingLevel: session.thinkingLevel,
@@ -797,7 +901,7 @@ async function handleSlashCommand(
               workDir: dir,
               ...(toolsetArg ? { toolset: toolsetArg as 'read-only' | 'coding' } : {}),
             }
-          : {}),
+          : { workDir: null }),
       });
       await session.close();
       const workspace = next.workspace;
@@ -842,12 +946,12 @@ async function handleSlashCommand(
       return { exit: false, session: next };
     }
     case 'help':
-      dependencies.write(helpText());
+      dependencies.write(replHelpText());
       return { exit: false, session };
     case 'exit':
       return { exit: true, session };
     default:
-      throw new CliUsageError(`Unknown REPL command: /${command ?? ''}`);
+      throw new CliUsageError(`Unknown REPL command: /${command ?? ''} (try /help)`);
   }
 }
 
@@ -857,6 +961,8 @@ async function runOneShot(
   dependencies: CliDependencies
 ): Promise<number> {
   const session = await openInitialSession(engine, parsed);
+  // run 面向脚本：session id 走 stderr（stdout 只有模型输出），方便 --resume 接续。
+  dependencies.writeError(`[session] ${session.id}\n`);
   let interrupted = false;
   const removeInterrupt = dependencies.onInterrupt(() => {
     interrupted = true;
@@ -885,13 +991,23 @@ async function runRepl(
   const terminal = dependencies.createTerminal();
   let processing = false;
   let signalExit = false;
+  // 空闲态误按保护（仅交互 TTY，question 的存在即 TTY 代理）：第一次 Ctrl+C 提示，
+  // 连续第二次才退出；任何新输入行解除。非 TTY / 脚本发来的 SIGINT 一次即退。
+  const interactive = Boolean(terminal.question);
+  let armedExit = false;
   const removeInterrupt = terminal.onInterrupt(() => {
     if (processing) {
       void session.abort();
       return;
     }
-    signalExit = true;
-    terminal.close();
+    if (!interactive || armedExit) {
+      signalExit = true;
+      terminal.close();
+      return;
+    }
+    armedExit = true;
+    dependencies.writeError('\n(press Ctrl+C again to exit)\n');
+    terminal.prompt();
   });
 
   // 交互终端上，未经 --allow 预授予的审批走 y/N 提问；核心超时/中止会取消提问并释放输入流。
@@ -915,14 +1031,17 @@ async function runRepl(
   };
 
   dependencies.write(
-    `Tachikoma ${VERSION}\n[session] ${session.id}\n[memory] ${formatMemorySnapshot(session.memoryStatus)}\n${
-      session.activeTools.length > 0 ? `[tools] ${session.activeTools.join(', ')}\n` : ''
-    }`
+    `Tachikoma ${VERSION}\n[session] ${session.id}\n[model] ${session.model.provider}/${session.model.model} (thinking: ${session.thinkingLevel})\n${
+      parsed.preset ? `[preset] ${parsed.preset}\n` : ''
+    }[memory] ${formatMemorySnapshot(session.memoryStatus)}\n[tools] ${
+      session.activeTools.length > 0 ? session.activeTools.join(', ') : 'none'
+    }\ntype /help for commands\n`
   );
   terminal.prompt();
 
   try {
     for await (const rawLine of terminal.lines) {
+      armedExit = false;
       const line = rawLine.trim();
       if (!line) {
         terminal.prompt();
@@ -941,8 +1060,9 @@ async function runRepl(
         }
       } catch (error) {
         processing = false;
+        const prefix = error instanceof CliUsageError ? '[usage]' : '[error]';
         dependencies.writeError(
-          `[error] ${error instanceof Error ? error.message : String(error)}\n`
+          `${prefix} ${error instanceof Error ? error.message : String(error)}\n`
         );
       }
       terminal.prompt();
@@ -950,6 +1070,10 @@ async function runRepl(
   } finally {
     removeInterrupt();
     terminal.close();
+    // 会话落盘由 pi 追加式保证；这行是给用户的收尾——告知怎么接续。
+    dependencies.writeError(
+      `[exit] session saved — resume with: tachikoma --resume ${session.id}\n`
+    );
     await session.close();
   }
 
@@ -983,7 +1107,10 @@ export async function runCli(
       ? await runOneShot(engine, parsed, dependencies)
       : await runRepl(engine, parsed, dependencies);
   } catch (error) {
-    dependencies.writeError(`${error instanceof Error ? error.message : String(error)}\n`);
+    const prefix = error instanceof CliUsageError ? '[usage]' : '[error]';
+    dependencies.writeError(
+      `${prefix} ${error instanceof Error ? error.message : String(error)}\n`
+    );
     return error instanceof CliUsageError ? 2 : 1;
   }
 }

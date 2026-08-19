@@ -1,6 +1,6 @@
 {
   "name": "@hjqcan/tachikoma-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The Tachikoma conversation-first CLI.",
   "type": "module",
   "main": "./dist/index.js",
@@ -11,7 +11,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -23,7 +24,8 @@
     "dev": "bun src/cli.ts",
     "test": "bun test tests --path-ignore-patterns 'tests/package/**'",
     "test:package": "bun test tests/package",
-    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "prepublishOnly": "echo \"@hjqcan/tachikoma-cli is not published yet (docs/releasing.md)\" && exit 1"
   },
   "dependencies": {
     "@hjqcan/tachikoma-core": "workspace:*"
@@ -44,7 +46,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hjqcan/tachikoma.git",
+    "url": "git+https://github.com/hjqcan/tachikoma.git",
     "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/hjqcan/tachikoma#readme",
+  "bugs": {
+    "url": "https://github.com/hjqcan/tachikoma/issues"
   }
 }

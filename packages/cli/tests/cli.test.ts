@@ -251,8 +251,8 @@ function createHarness(
       };
     },
     prompt: () => {
+      // 持续触发 = 模拟连续 Ctrl+C（第一次 arm 提示后 runRepl 会再 prompt，第二次退出）
       if (input.interruptOnPrompt) {
-        input.interruptOnPrompt = false;
         interruptHandler?.();
       }
     },
@@ -723,9 +723,9 @@ describe('runCli', () => {
       '[workspace] /tmp/ws (coding: read, grep, find, ls, write, edit, bash)'
     );
     expect(engine.createInputs.at(1)).toMatchObject({ workDir: '/tmp/ws', toolset: 'coding' });
-    // /workspace off 开的新会话不带授予
-    const last = engine.createInputs.at(-1) as { workDir?: string };
-    expect(last.workDir).toBeUndefined();
+    // /workspace off 传显式撤销（null）：undefined 会回落引擎默认的 --workdir
+    const last = engine.createInputs.at(-1) as { workDir?: string | null };
+    expect(last.workDir).toBeNull();
     // 旧会话随切换关闭：初始 + 两次切换 = 3 个会话，前两个已 close
     expect(engine.created).toHaveLength(3);
     expect(engine.created[0]?.closeCount).toBe(1);
@@ -753,6 +753,25 @@ describe('runCli', () => {
     const noWorkdir = createHarness();
     expect(await runCli(['run', 'x', '--skills', '/skills/a'], noWorkdir.dependencies)).toBe(2);
     expect(noWorkdir.stderr.join('')).toContain('a workspace');
+  });
+
+  test('--reasoning-summary flows into engine config and rejects unknown modes', async () => {
+    let config: ChatEngineConfig | undefined;
+    const harness = createHarness({
+      onConfig: (received) => {
+        config = received;
+      },
+    });
+    expect(
+      await runCli(['run', 'hi', '--reasoning-summary', 'detailed'], harness.dependencies)
+    ).toBe(0);
+    expect(config?.reasoningSummary).toBe('detailed');
+
+    const invalid = createHarness();
+    expect(await runCli(['run', 'x', '--reasoning-summary', 'verbose'], invalid.dependencies)).toBe(
+      2
+    );
+    expect(invalid.stderr.join('')).toContain('--reasoning-summary accepts');
   });
 
   test('--system-prompt-file replaces the system prompt; unreadable or empty file exits 2', async () => {
@@ -956,9 +975,13 @@ describe('runCli', () => {
     const harness = createHarness({
       engine: new FakeEngine(session),
       interruptOnPrompt: true,
+      // question 的存在 = 交互 TTY：双击确认路径只在这里生效
+      question: async () => 'n',
     });
 
     expect(await runCli([], harness.dependencies)).toBe(130);
+    // 第一次 Ctrl+C 只提示，连续第二次才退出
+    expect(harness.stderr.join('')).toContain('press Ctrl+C again to exit');
     expect(session.closeCount).toBe(1);
   });
 
