@@ -138,6 +138,7 @@ export const memorySnapshotFixture: MemorySnapshot = {
 };
 
 export const memoryRecordFixtures: MemoryRecord[] = [
+  { id: 'gmprofile:v1:user-1', type: 'profile', content: 'Lin', tags: ['shared-user-profile'] },
   {
     id: 'feedback-1',
     type: 'feedback',

@@ -25,6 +25,7 @@ async function temporaryDataDir(): Promise<string> {
 function processEnvironment(dataDir: string): Record<string, string> {
   return {
     PATH: process.env.PATH ?? '',
+    HOME: dataDir,
     TACHIKOMA_DATA_DIR: dataDir,
     TACHIKOMA_PROVIDER: 'anthropic',
     TACHIKOMA_MODEL: 'claude-sonnet-5',

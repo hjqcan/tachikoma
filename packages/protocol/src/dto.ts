@@ -81,7 +81,16 @@ export type MemoryStatus = z.infer<typeof memoryStatusSchema>;
 /** 记忆管理面的扁平记录行（GoodMemory 各桶投影；score 仅搜索结果携带） */
 export const memoryRecordSchema = z.strictObject({
   id: z.string(),
-  type: z.enum(['fact', 'preference', 'reference', 'episode', 'feedback', 'archive', 'experience']),
+  type: z.enum([
+    'fact',
+    'preference',
+    'reference',
+    'episode',
+    'feedback',
+    'archive',
+    'experience',
+    'profile',
+  ]),
   content: z.string(),
   tags: z.array(z.string()).optional(),
   importance: z.number().optional(),

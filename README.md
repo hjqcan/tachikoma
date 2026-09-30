@@ -175,6 +175,23 @@ configuration or events. The `ChatEvent` union covers the user prompt (`user_mes
 of each turn), streaming, reasoning, retry, compaction, memory status, tool calls, approvals, and
 exactly one terminal `message_complete` per turn.
 
+### Memory scope and controls
+
+Tachikoma pins the published `goodmemory@0.8.0` package. Source changes in the GoodMemory repository
+do not become installed fixes until a corresponding package release is available.
+
+`memoryList()` and `/memory list` include the shared user profile alongside Tachikoma workspace
+records. The profile has a `gmprofile:v1:...` ID and can be explicitly removed with `memoryForget()`
+or `/memory forget <id>`. Removing a profile affects that user's shared profile in this database;
+other users and workspace records are preserved. `memoryClear()` and the desktop's
+**清空工作区记忆** only clear the Tachikoma workspace, preserving the shared profile. Delete its
+profile row separately when that is intended. Conversation transcripts remain separate from durable
+memory.
+
+For relative dates, set `memory: { timezone: 'Asia/Shanghai' }` to the actual user's IANA timezone,
+or let GoodMemory use a timezone the user has explicitly remembered. The server's local timezone is
+not used as a substitute.
+
 ## Development
 
 ```bash

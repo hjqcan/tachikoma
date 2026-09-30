@@ -80,7 +80,15 @@ export function recallHasHits(recall: unknown): boolean {
 /** 记忆管理面/召回明细共用的扁平 UI 行（GoodMemory 各桶记录的投影） */
 export interface ChatMemoryRecord {
   id: string;
-  type: 'fact' | 'preference' | 'reference' | 'episode' | 'feedback' | 'archive' | 'experience';
+  type:
+    | 'fact'
+    | 'preference'
+    | 'reference'
+    | 'episode'
+    | 'feedback'
+    | 'archive'
+    | 'experience'
+    | 'profile';
   content: string;
   tags?: string[];
   importance?: number;
@@ -118,15 +126,45 @@ function recordContent(record: Record<string, unknown>): string {
   if (typeof record.category === 'string' && 'value' in record) {
     return `${record.category}: ${JSON.stringify(record.value)}`;
   }
-  // UserProfile：拼 identity 里的可读字段
-  const identity = record.identity;
-  if (identity && typeof identity === 'object') {
-    const parts = Object.values(identity as Record<string, unknown>).filter(
-      (value): value is string => typeof value === 'string' && value.length > 0
-    );
+  // Every populated profile section must remain visible/searchable in management.
+  if (record.identity && typeof record.identity === 'object') {
+    const parts: string[] = [];
+    for (const section of ['identity', 'expertise', 'activeContext']) {
+      const values = record[section];
+      if (!values || typeof values !== 'object' || Array.isArray(values)) continue;
+      for (const [key, value] of Object.entries(values)) {
+        const text =
+          typeof value === 'string'
+            ? value
+            : Array.isArray(value)
+              ? value.filter((item): item is string => typeof item === 'string').join(', ')
+              : '';
+        if (text.trim()) parts.push(`${section}.${key}: ${text}`);
+      }
+    }
     if (parts.length > 0) return parts.join(' · ');
   }
   return JSON.stringify(record);
+}
+
+/** Profile is a user-level singleton, not a workspace-owned record. */
+export function profileMemoryId(userId: string): string {
+  return `gmprofile:v1:${encodeURIComponent(userId)}`;
+}
+
+export function projectMemoryProfile(profile: unknown): ChatMemoryRecord[] {
+  if (!profile || typeof profile !== 'object') return [];
+  const record = profile as Record<string, unknown>;
+  if (typeof record.userId !== 'string') return [];
+  return [
+    {
+      id: profileMemoryId(record.userId),
+      type: 'profile',
+      content: recordContent(record),
+      tags: ['shared-user-profile'],
+      ...(typeof record.updatedAt === 'string' ? { createdAt: record.updatedAt } : {}),
+    },
+  ];
 }
 
 /** 把 exportMemory/recall 的记录桶投影成扁平行；未知桶与非记录条目静默跳过 */

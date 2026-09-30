@@ -21,6 +21,25 @@ activation, workspace escape and symlink blocking, approval grant/deny/timeout/a
 round-trips with snapshot and core type-compat guards, sidecar auth/frames/WAL replay/crash
 synthesis, CLI commands, signals, exit codes, and built package imports.
 
+## Offline memory-quality diagnostics
+
+```bash
+bun run eval:memory
+# Optional machine-readable evidence (outside the repository):
+TACHIKOMA_MEMORY_EVAL_OUTPUT=/tmp/tachikoma-memory-quality.json bun run eval:memory
+```
+
+This exercises real ChatEngine → GoodMemory extraction → temporary SQLite → cross-session recall →
+model input, using a deterministic faux chat provider and the same offline egress guard. It does not
+measure live-model answers or use real user memory. Nineteen checked-in Chinese/English cases cover
+attribution, corrections, uncertainty, omission, time, and retrieval. Any unmet memory expectation
+produces exit code 1; transport success is not counted as memory accuracy.
+
+This diagnostic is intentionally separate from `verify`: published GoodMemory 0.8.0 still fails
+several semantic expectations. See [the investigation](notes/memory-quality-2026-09-30.md). The
+ordinary regression suite checks the host-level fixes (fresh recall, legacy compaction filtering,
+profile management, scope preservation, and timestamp/source propagation).
+
 ## Snapshot replay
 
 `packages/core/tests/snapshot/` is the whole-engine regression layer between unit tests and live

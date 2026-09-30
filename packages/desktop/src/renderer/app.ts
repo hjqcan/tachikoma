@@ -1062,7 +1062,7 @@ async function boot(): Promise<void> {
     feedback: '反馈',
     archive: '会话档案',
     experience: '系统经验',
-    profile: '画像',
+    profile: '用户画像（跨工作区共享）',
   };
 
   function memoryRow(record: MemoryRecordView): HTMLElement {
@@ -1102,7 +1102,7 @@ async function boot(): Promise<void> {
       bar.className = 'confirm-bar';
       const yes = document.createElement('button');
       yes.className = 'yes';
-      yes.textContent = '确认删除';
+      yes.textContent = record.type === 'profile' ? '确认删除共享画像' : '确认删除';
       yes.onclick = () => {
         void rpc('memory.forget', { memoryId: record.id }).then((result) => {
           if (!result.ok) {
@@ -1196,7 +1196,7 @@ async function boot(): Promise<void> {
     bar.className = 'confirm-bar';
     const yes = document.createElement('button');
     yes.className = 'yes';
-    yes.textContent = '确认清空全部';
+    yes.textContent = '清空工作区记忆（保留共享画像）';
     yes.onclick = () => {
       void rpc('memory.clear').then((result) => {
         if (!result.ok) {

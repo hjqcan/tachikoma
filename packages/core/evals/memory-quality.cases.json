@@ -1,0 +1,181 @@
+[
+  {
+    "id": "name_control",
+    "seed": ["我的名字是 Lin，请记住。"],
+    "query": "我叫什么名字？",
+    "expect": {
+      "profileName": "Lin",
+      "recallIncludes": ["Lin"]
+    }
+  },
+  {
+    "id": "zh_simple_preference",
+    "seed": ["我喜欢喝无糖咖啡。"],
+    "query": "给我推荐一种饮料。",
+    "expect": {
+      "recallIncludes": ["无糖咖啡"]
+    }
+  },
+  {
+    "id": "en_simple_preference",
+    "seed": ["I prefer unsweetened coffee."],
+    "query": "What drink should you recommend to me?",
+    "expect": {
+      "recallIncludes": ["unsweetened coffee"]
+    }
+  },
+  {
+    "id": "zh_quoted_identity",
+    "seed": ["小说里的人物说：“我的名字是夏雨”。这不是我的名字。"],
+    "query": "我叫什么名字？",
+    "expect": {
+      "profileName": null,
+      "storedExcludes": ["夏雨"],
+      "recallExcludes": ["夏雨"]
+    }
+  },
+  {
+    "id": "en_hypothetical_identity",
+    "seed": [
+      "If I were a designer at Acme, I would prefer Figma. This is only a hypothetical example."
+    ],
+    "query": "Where do I work and what design tool do I prefer?",
+    "expect": {
+      "profileName": null,
+      "recallExcludes": ["Acme", "Figma"]
+    }
+  },
+  {
+    "id": "zh_uncertain_identity",
+    "seed": ["我可能是产品经理，也许在 Acme 工作，但这只是猜测。"],
+    "query": "我的职业和公司是什么？",
+    "expect": {
+      "profileName": null,
+      "recallExcludes": ["Acme", "产品经理"]
+    }
+  },
+  {
+    "id": "zh_third_party_name",
+    "seed": ["我的朋友说：“我的名字是小王，请记住。” 我自己叫 Lin。"],
+    "query": "我叫什么名字？",
+    "expect": {
+      "profileName": "Lin",
+      "recallIncludes": ["Lin"],
+      "recallExcludes": ["小王"]
+    }
+  },
+  {
+    "id": "en_third_party_name",
+    "seed": ["My friend said \"My name is Alice.\" My name is Bob."],
+    "query": "What is my name?",
+    "expect": {
+      "profileName": "Bob",
+      "recallIncludes": ["Bob"],
+      "recallExcludes": ["Alice"]
+    }
+  },
+  {
+    "id": "zh_name_correction",
+    "seed": ["我的名字是小王，请记住。", "更正一下，我的名字是小李，不是小王。"],
+    "query": "我叫什么名字？",
+    "expect": {
+      "profileName": "小李",
+      "recallIncludes": ["小李"],
+      "recallExcludes": ["小王"]
+    }
+  },
+  {
+    "id": "en_preference_correction",
+    "seed": [
+      "I prefer Python for backend services.",
+      "I no longer prefer Python. I now prefer Go for backend services."
+    ],
+    "query": "Which language should I use for a new backend service?",
+    "expect": {
+      "recallIncludes": ["Go for backend services"],
+      "recallExcludes": ["Python"]
+    }
+  },
+  {
+    "id": "zh_negated_preference",
+    "seed": ["我不喜欢喝咖啡，请记住。"],
+    "query": "我喜欢喝什么？",
+    "expect": {
+      "recallIncludes": ["不喜欢", "咖啡"]
+    }
+  },
+  {
+    "id": "zh_conditional_preference",
+    "seed": ["如果我喜欢喝咖啡，你会推荐哪种？只是举例，我并不喝咖啡。"],
+    "query": "给我推荐一种饮料。",
+    "expect": {
+      "storedExcludes": ["喝咖啡"],
+      "recallExcludes": ["喝咖啡"]
+    }
+  },
+  {
+    "id": "assistant_hallucination",
+    "seed": ["我叫什么名字？"],
+    "query": "我叫什么名字，在哪里工作？",
+    "responses": ["你叫王小明，在北京工作。"],
+    "expect": {
+      "profileName": null,
+      "recallExcludes": ["王小明", "北京"]
+    }
+  },
+  {
+    "id": "zh_recent_move",
+    "seed": ["我现在住在上海，请记住。", "我已经从上海搬到杭州，现在住在杭州。"],
+    "query": "我现在住在哪里？",
+    "expect": {
+      "recallIncludes": ["杭州"],
+      "recallExcludes": ["上海"]
+    }
+  },
+  {
+    "id": "zh_project_attributes",
+    "seed": ["请记住，项目甲使用 PostgreSQL；项目乙使用 SQLite。"],
+    "query": "项目乙使用什么数据库？",
+    "expect": {
+      "recallIncludes": ["SQLite"],
+      "recallExcludes": ["PostgreSQL"]
+    }
+  },
+  {
+    "id": "en_project_attributes",
+    "seed": ["Remember: project Alpha uses PostgreSQL; project Beta uses SQLite."],
+    "query": "Which database does project Beta use?",
+    "expect": {
+      "recallIncludes": ["SQLite"],
+      "recallExcludes": ["PostgreSQL"]
+    }
+  },
+  {
+    "id": "zh_ambiguous_followup",
+    "seed": ["请记住项目代号是 Tachikoma。", "它现在改名为 Sakura，请记住。"],
+    "query": "项目最新的代号是什么？",
+    "expect": {
+      "recallIncludes": ["Sakura"],
+      "recallExcludes": ["Tachikoma"]
+    }
+  },
+  {
+    "id": "en_relative_time",
+    "seed": ["Yesterday I moved to Paris. Remember that."],
+    "query": "When did I move to Paris?",
+    "expect": {
+      "recallIncludes": ["Paris"],
+      "recallExcludes": ["Yesterday"]
+    },
+    "timezone": "Asia/Shanghai"
+  },
+  {
+    "id": "zh_one_off_vs_durable",
+    "seed": ["这一次请用英文回答。", "我平时更喜欢中文回答。"],
+    "query": "你好，我们聊聊音乐。",
+    "expect": {
+      "recallIncludes": ["中文"],
+      "recallExcludes": ["英文"]
+    }
+  }
+]

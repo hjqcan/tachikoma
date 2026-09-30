@@ -47,6 +47,8 @@ export interface ChatMemoryEmbeddingConfig extends ChatMemoryModelConfig {
 export interface ChatMemoryConfig {
   databasePath?: string;
   userId?: string;
+  /** Explicit user IANA timezone; otherwise GoodMemory uses the remembered profile timezone. */
+  timezone?: string;
   /**
    * 质量档适配器（可选；缺省零成本档：确定性抽取 + 本地词法向量）。
    * 配置任一适配器即启用 GoodMemory 的 'recommended' 检索预设

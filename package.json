@@ -56,7 +56,8 @@
     "build:server": "bun run --cwd packages/server build",
     "build:desktop": "bun run --cwd packages/desktop build",
     "desktop": "bun run --cwd packages/desktop start",
-    "desktop:smoke": "bun run --cwd packages/desktop smoke"
+    "desktop:smoke": "bun run --cwd packages/desktop smoke",
+    "eval:memory": "bun run --preload ./packages/core/tests/offline-guard.ts packages/core/evals/memory-quality.ts"
   },
   "type": "module",
   "workspaces": [

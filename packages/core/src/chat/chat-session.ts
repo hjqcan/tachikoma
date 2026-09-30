@@ -45,6 +45,7 @@ interface EnabledMemoryBinding {
     sessionId: string;
   };
   startupError?: string;
+  timezone?: string;
 }
 
 interface DisabledMemoryBinding {
@@ -242,6 +243,7 @@ export class ChatSession {
       throw new Error(`Session ${this.id} is already generating a response.`);
     }
 
+    const observedAt = new Date().toISOString();
     const turnId = randomUUID();
     const messageId = randomUUID();
     const events = new EventQueue<ChatEvent>();
@@ -280,7 +282,7 @@ export class ChatSession {
       onAbort();
     }
 
-    const run = this.runTurn(text, turnId, messageId, events, options.images);
+    const run = this.runTurn(text, turnId, messageId, events, observedAt, options.images);
     this.activeRun = run;
     try {
       for await (const event of events) {
@@ -413,6 +415,7 @@ export class ChatSession {
     turnId: string,
     messageId: string,
     events: EventQueue<ChatEvent>,
+    observedAt: string,
     images?: ChatImageAttachment[]
   ): Promise<void> {
     let finalMessage: AssistantMessage | undefined;
@@ -433,7 +436,7 @@ export class ChatSession {
         }
       }
 
-      await this.prepareMemory(text, turnId, emit);
+      await this.prepareMemory(text, turnId, observedAt, emit);
       this.throwIfTurnAborted();
       await this.agentSession.prompt(text, {
         expandPromptTemplates: false,
@@ -462,7 +465,14 @@ export class ChatSession {
           : rawStatus;
       const content = textContent(finalMessage);
       if (status === 'success') {
-        await this.finishMemory(text, content, turnId, emit);
+        await this.finishMemory(
+          text,
+          content,
+          turnId,
+          observedAt,
+          new Date(finalMessage.timestamp).toISOString(),
+          emit
+        );
       }
 
       const complete: ChatMessageCompleteEvent = {
@@ -599,6 +609,7 @@ export class ChatSession {
   private async prepareMemory(
     text: string,
     turnId: string,
+    observedAt: string,
     emit: (event: ChatEvent) => void
   ): Promise<void> {
     const base = { sessionId: this.id, turnId, timestamp: Date.now() };
@@ -645,7 +656,9 @@ export class ChatSession {
         scope: this.memory.scope,
         query: text,
         retrievalProfile: 'general_chat',
-        messages: [{ role: 'user', content: text }],
+        messages: [{ role: 'user', content: text, id: `${turnId}:user`, observedAt }],
+        referenceTime: observedAt,
+        ...(this.memory.timezone ? { timezone: this.memory.timezone } : {}),
       });
       const recordRefs = result.context.recordRefs ?? [];
       // fragment/progressive 上下文可能只给 recordRefs，不回填 recall 桶；两者都是真实命中。
@@ -684,6 +697,8 @@ export class ChatSession {
     userText: string,
     assistantText: string,
     turnId: string,
+    observedAt: string,
+    assistantObservedAt: string,
     emit: (event: ChatEvent) => void
   ): Promise<void> {
     if (!this.memory.enabled || !this.memory.kit || !this.memoryStarted) {
@@ -693,8 +708,11 @@ export class ChatSession {
     try {
       await this.memory.kit.afterModelCall({
         scope: this.memory.scope,
-        messages: [{ role: 'user', content: userText }],
+        messages: [{ role: 'user', content: userText, id: `${turnId}:user`, observedAt }],
         assistantText,
+        assistantObservedAt,
+        referenceTime: observedAt,
+        ...(this.memory.timezone ? { timezone: this.memory.timezone } : {}),
         writeback: { mode: 'selective', annotation: 'durable_candidate', policy: 'allow' },
       });
       this.setMemoryState('ready');
