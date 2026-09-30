@@ -31,7 +31,7 @@
     "type": "tool_result",
     "call": "t1.c1",
     "tool": "write",
-    "output": "Successfully wrote 11 bytes to note.txt",
+    "output": "Successfully wrote to note.txt",
     "isError": false
   },
   {

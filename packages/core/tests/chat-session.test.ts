@@ -1,5 +1,11 @@
-import { fauxAssistantMessage, fauxText, fauxThinking } from '@earendil-works/pi-ai';
-import { describe, expect, it } from 'bun:test';
+import {
+  getCurrentTools,
+  fauxAssistantMessage,
+  fauxText,
+  fauxThinking,
+} from '@earendil-works/pi-ai';
+import { describe, expect, it, spyOn } from 'bun:test';
+import { SettingsManager } from '@earendil-works/pi-coding-agent';
 
 import { ChatEngine } from '../src';
 import type { ChatEvent, ChatMessageCompleteEvent } from '../src';
@@ -272,7 +278,7 @@ describe('ChatSession', () => {
       let advertisedTools: unknown[] | undefined;
       harness.faux.setResponses([
         (context) => {
-          advertisedTools = context.tools;
+          advertisedTools = getCurrentTools(context.messages);
           return fauxAssistantMessage('I cannot access files or run commands.');
         },
       ]);
@@ -295,4 +301,28 @@ describe('ChatSession', () => {
       await harness.cleanup();
     }
   });
+});
+
+it('keeps pi cache warming off instead of adding implicit provider requests', async () => {
+  const harness = await createFauxHarness();
+  const settings = spyOn(SettingsManager, 'inMemory');
+  try {
+    const engine = new ChatEngine(
+      {
+        dataDir: harness.dataDir,
+        model: { provider: harness.faux.provider.id, model: 'chat' },
+        memory: false,
+      },
+      { modelRuntime: harness.modelRuntime }
+    );
+    const session = await engine.createSession();
+    expect(settings).toHaveBeenCalled();
+    const entry = settings.mock.results.find((result) => result.type === 'return');
+    expect(entry?.value.getCacheWarmingMode()).toBe('off');
+    expect(harness.faux.state.callCount).toBe(0);
+    await session.close();
+  } finally {
+    settings.mockRestore();
+    await harness.cleanup();
+  }
 });

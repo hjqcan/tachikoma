@@ -1,4 +1,4 @@
-import { fauxAssistantMessage } from '@earendil-works/pi-ai';
+import { getCurrentSystemPrompt, fauxAssistantMessage } from '@earendil-works/pi-ai';
 import {
   createDeterministicMemoryExtractor,
   createGoodMemory,
@@ -144,7 +144,7 @@ describe('GoodMemory lifecycle', () => {
           return fauxAssistantMessage('记住了。');
         },
         (context) => {
-          secondSystemPrompt = context.systemPrompt ?? '';
+          secondSystemPrompt = getCurrentSystemPrompt(context.messages);
           secondMessages = JSON.stringify(context.messages);
           return fauxAssistantMessage('你叫 Lin。');
         },
@@ -170,7 +170,7 @@ describe('GoodMemory lifecycle', () => {
           hasContext: false,
         })
       );
-      expect(firstMessages).not.toContain('recalled_user_context');
+      expect(firstMessages).not.toContain('<recalled_user_context>');
       expect(firstEvents).toContainEqual(
         expect.objectContaining({ type: 'memory_status', phase: 'writeback', status: 'ready' })
       );
@@ -551,7 +551,7 @@ describe('GoodMemory lifecycle', () => {
     try {
       harness.faux.setResponses([
         (context) => {
-          systemPrompt = context.systemPrompt ?? '';
+          systemPrompt = getCurrentSystemPrompt(context.messages);
           messages = JSON.stringify(context.messages);
           return fauxAssistantMessage('safe answer');
         },

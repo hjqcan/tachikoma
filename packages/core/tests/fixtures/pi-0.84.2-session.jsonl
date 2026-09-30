@@ -1,0 +1,7 @@
+{"type":"session","version":3,"id":"01a0f169-4a76-724c-a01f-07211a84c49c","timestamp":"2026-09-30T08:23:24.534Z","cwd":"{{legacy-workspace}}"}
+{"type":"model_change","id":"e6ecbe21","parentId":null,"timestamp":"2026-09-30T08:23:24.548Z","provider":"tachikoma-legacy-upgrade-faux","modelId":"chat"}
+{"type":"thinking_level_change","id":"64c559c9","parentId":"e6ecbe21","timestamp":"2026-09-30T08:23:24.548Z","thinkingLevel":"medium"}
+{"type":"session_info","id":"b698157e","parentId":"64c559c9","timestamp":"2026-09-30T08:23:24.552Z","name":"Legacy user prompt."}
+{"type":"message","id":"8375a116","parentId":"b698157e","timestamp":"2026-09-30T08:23:24.557Z","message":{"role":"user","content":[{"type":"text","text":"Legacy user prompt."}],"timestamp":1790756604554}}
+{"type":"message","id":"5a27e6ec","parentId":"8375a116","timestamp":"2026-09-30T08:23:24.563Z","message":{"role":"assistant","content":[{"type":"text","text":"Legacy assistant reply."}],"api":"faux:1790756604527:oboztkouuk","provider":"tachikoma-legacy-upgrade-faux","model":"chat","usage":{"input":1523,"output":6,"cacheRead":0,"cacheWrite":1523,"totalTokens":3052,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"stop","timestamp":1790756604528}}
+{"type":"custom_message","customType":"tachikoma-recalled-memory","content":"<recalled_user_context>obsolete synthetic legacy profile</recalled_user_context>","display":false,"id":"85b6a40c","parentId":"5a27e6ec","timestamp":"2026-09-30T08:23:24.582Z"}

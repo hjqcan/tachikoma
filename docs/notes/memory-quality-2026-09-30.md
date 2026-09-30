@@ -57,7 +57,7 @@ chat. The broader quality diagnostic remains red until its semantic expectations
 not replace those expectations with the observed wrong values or claim unpublished GoodMemory source
 changes are present in the pinned npm artifact.
 
-## Validation and release limits
+## Integration checkpoint `73e8911`: validation and release limits
 
 The reviewed source checkpoint passes format, lint, typecheck, all workspace builds, 194 offline
 regression tests (798 assertions), and five built-CLI package tests (26 assertions). Clean tarball
@@ -90,3 +90,45 @@ compatible dependency updates and a later published GoodMemory artifact are need
 clean consumer to receive those fixes. The semantic diagnostic is separately **6/19**, with 13 unmet
 expectations still recorded. No npm publication, deployment, or real-model validation is part of
 this checkpoint.
+
+## Dependency-safety follow-up (2026-09-30)
+
+The preceding audit counts describe `73e8911`, not this follow-up's dependency tree. This change
+pins the three pi packages to 0.86.1 and Electron to 43.5.0, then regenerates and clean-installs the
+lock without overrides. Consumer-anchored resolution confirms:
+
+- pi-coding-agent 0.86.1 → undici 8.10.2
+- minimatch 10.2.6 → brace-expansion 5.0.12, covering the
+  [brace-expansion advisory](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)
+- Electron 43.5.0 → @electron/get 5.1.0 → undici 7.30.0. The Electron release covers the
+  [sandboxed preload cache advisory](https://github.com/advisories/GHSA-qmv3-fv6v-rmhq)
+
+This pi upgrade changes provider input to transcript-carried system prompts and tools. Tests and the
+offline diagnostic now use pi's official `getCurrentSystemPrompt`/`getCurrentTools` helpers and
+`TranscriptContext`. The zero-tool, skill, recall trust-boundary, and restored-session checks retain
+their assertions. A synthetic JSONL fixture recorded by actual pi 0.84.2 also reopens under 0.86.1:
+user/assistant history survives, the previous seven-tool coding grant does not survive, the current
+no-tools prompt is used, and legacy hidden recall is absent from model input. The write-tool success
+text drops its byte-count wording; the snapshot changes only that text and now additionally verifies
+exact file contents on disk.
+
+pi 0.86 defaults to cache warming, which can issue extra paid provider requests on long turns.
+Tachikoma explicitly sets `cacheWarming: 'off'` and tests the effective setting, preserving its
+prior cost and network behavior. This security refresh does not authorize new background calls.
+
+The fresh lock audit has one remaining low-severity provider-utils advisory from published
+GoodMemory 0.8.0. The semantic diagnostic remains 6/19; this dependency refresh is not a semantic
+memory fix. No npm publish or deployment was performed.
+
+The official Electron 43.5.0 binary was installed, but this cloud executor's desktop smoke launch
+was blocked before app startup by a D-Bus socket permission error and SIGTRAP. Electron's sandbox
+was not disabled. Native GUI/smoke execution therefore remains unverified in this environment;
+TypeScript/build checks and desktop view/supervisor tests are separate evidence.
+
+Final follow-up validation: format, lint, typecheck, all workspace builds, **196 offline tests (814
+assertions)**, and **five built-CLI package tests (26 assertions)** pass. The clean tarball consumer
+installs and passes Bun/Node import and CLI checks; its final audit now reports only the same **one
+low-severity GoodMemory provider-utils advisory**, so `test:pack` remains failed. Root `bun audit`
+likewise remains failed on that one low advisory. No high/moderate finding remains in these checked
+dependency graphs. The offline semantic diagnostic is still **6/19** and exits 1. These remaining
+red gates are not bypassed or reported as passing.

@@ -1,6 +1,6 @@
 /** Offline quality evidence, not a simulated model-accuracy benchmark. */
 import { fauxAssistantMessage } from '@earendil-works/pi-ai';
-import type { Context } from '@earendil-works/pi-ai';
+import type { TranscriptContext } from '@earendil-works/pi-ai';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
@@ -48,10 +48,10 @@ async function turn(session: ChatSession, text: string): Promise<ChatEvent[]> {
 const results = [];
 for (const scenario of cases as QualityCase[]) {
   const harness = await createFauxHarness();
-  const contexts: Context['messages'][] = [];
+  const contexts: TranscriptContext['messages'][] = [];
   const sessions: ChatSession[] = [];
   try {
-    const response = (text: string) => (context: Context) => {
+    const response = (text: string) => (context: TranscriptContext) => {
       contexts.push(context.messages);
       return fauxAssistantMessage(text);
     };

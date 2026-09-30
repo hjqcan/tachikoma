@@ -6,7 +6,7 @@
  * 工作区外 skill 根 read 放行 / write 拦截、会话授予替换引擎默认、[] 显式清空。
  */
 
-import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import { getCurrentSystemPrompt, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { describe, expect, it } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -73,7 +73,7 @@ describe('Skills 通道：显式授予', () => {
       let systemPrompt = '';
       harness.faux.setResponses([
         (context) => {
-          systemPrompt = context.systemPrompt ?? '';
+          systemPrompt = getCurrentSystemPrompt(context.messages);
           return fauxAssistantMessage('ok');
         },
       ]);

@@ -8,6 +8,8 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import { ChatEngine } from '../../src';
 import { createFauxHarness } from '../helpers';
@@ -51,6 +53,9 @@ describe('快照回放', () => {
         );
         const events = await runScenarioTurns(engine, scenario, workspace.root);
         const projected = projectScenarioEvents(events, workspace);
+        if (scenario.name === 'approval-grant-deny') {
+          expect(await readFile(join(workspace.root, 'note.txt'), 'utf8')).toBe('APPROVED-OK');
+        }
         // 逐场景断言；失败信息带场景名，方便定位是哪个 fixture 漂移。
         expect({ scenario: scenario.name, projected }).toEqual({
           scenario: scenario.name,

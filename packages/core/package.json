@@ -21,9 +21,9 @@
     "clean": "rm -rf ./dist && rm -f ./tsconfig.tsbuildinfo ./tsconfig.build.tsbuildinfo"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.84.2",
-    "@earendil-works/pi-ai": "0.84.2",
-    "@earendil-works/pi-coding-agent": "0.84.2",
+    "@earendil-works/pi-agent-core": "0.86.1",
+    "@earendil-works/pi-ai": "0.86.1",
+    "@earendil-works/pi-coding-agent": "0.86.1",
     "goodmemory": "0.8.0"
   },
   "devDependencies": {

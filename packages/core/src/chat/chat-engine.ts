@@ -531,6 +531,8 @@ export class ChatEngine {
     const approvalBridge: ToolApprovalBridge = {};
     const promptMemoryContext: PromptMemoryContext = { value: '', abortRequested: false };
     const settingsManager = SettingsManager.inMemory({
+      // pi 0.86 enables paid cache-warming requests by default; preserve opt-in costs.
+      cacheWarming: 'off',
       compaction: { enabled: true },
       retry: { enabled: true, maxRetries: 2, baseDelayMs: 200 },
       packages: [],
