@@ -35,7 +35,7 @@ measure live-model answers or use real user memory. Nineteen checked-in Chinese/
 attribution, corrections, uncertainty, omission, time, and retrieval. Any unmet memory expectation
 produces exit code 1; transport success is not counted as memory accuracy.
 
-This diagnostic is intentionally separate from `verify`: published GoodMemory 0.8.0 still fails
+This diagnostic is intentionally separate from `verify`: published GoodMemory 0.8.1 still fails
 several semantic expectations. See [the investigation](notes/memory-quality-2026-09-30.md). The
 ordinary regression suite checks the host-level fixes (fresh recall, legacy compaction filtering,
 profile management, scope preservation, and timestamp/source propagation).

@@ -132,3 +132,49 @@ low-severity GoodMemory provider-utils advisory**, so `test:pack` remains failed
 likewise remains failed on that one low advisory. No high/moderate finding remains in these checked
 dependency graphs. The offline semantic diagnostic is still **6/19** and exits 1. These remaining
 red gates are not bypassed or reported as passing.
+
+## Published GoodMemory 0.8.1 consumption (2026-10-01)
+
+Tachikoma now pins the real npm `goodmemory@0.8.1` release. The registry tarball was downloaded and
+matched byte-for-byte to the prepared release: **1,188,349 bytes**, **278 files**, SHA256
+`dccc738258fa7865dc9995b075e2508368fef8c91d503e1a85e30779f03ed19f`. Registry SHA512 and SHA1 checks
+also passed. The final [GitHub release](https://github.com/hjqcan/GoodMemory/releases/tag/v0.8.1)
+manifest identifies GoodMemory commit
+[`b0eaace`](https://github.com/hjqcan/GoodMemory/commit/b0eaacef4295adfe9f511a011c997c76489c8d33),
+tree `7ef877c7854dddbf4f723ad80734fd35b2d46ea9`. Its evidence archive embeds the same manifest, and
+the GitHub tarball is identical to npm and the earlier prepared package. This consumes the published
+artifact; subsequent unpublished preference-management, chronology, and advisory experiments are not
+part of it.
+
+The regenerated lock changes only GoodMemory and its AI SDK dependency subtree. It resolves
+provider-utils 4.0.33, removing the preceding checkpoint's remaining low advisory. A fresh frozen
+install resolves GoodMemory 0.8.1 from npm, and all 278 installed package files match the downloaded
+tarball. All five public GoodMemory entry points import successfully under both Node and Bun.
+
+The unchanged 19-case host diagnostic was rerun against both registry versions in this environment:
+0.8.0 passes **6/19**; 0.8.1 passes **12/19**, with no previously passing case becoming a failure.
+The six newly passing cases cover quoted and third-party identity, explicit preference correction,
+Chinese negation, and conditional preferences. These are deterministic extraction/storage/fresh
+recall results through the real host, not live-model answer scores or a general accuracy estimate.
+
+The diagnostic still exits 1 with seven failing cases. Six cases retain substantive gaps:
+Chinese/English paraphrased drink recall, a recent move, the second English project fact, a pronoun
+follow-up rename, and a durable Chinese response-language preference. The seventh case's original
+strict exclusion rejects any mention of PostgreSQL: 0.8.1 now correctly stores and recalls both
+`项目乙使用 SQLite` and `项目甲使用 PostgreSQL`, with the requested project first. That result fixes
+the old missing-fact behavior while preserving correct project labels but still fails the unchanged
+relevance assertion. The fixture and scoring were preserved instead of relabeling it as a pass.
+
+Only the checked-in diagnostic and regression tests are repeated in this registry upgrade. Earlier
+supplemental local challenge fixtures were not retained across the workspace reset and are not
+claimed as rerun. Exact tarball identity preserves the link to the prior formal package validation;
+it does not substitute for current host checks. Native GUI execution and real-provider answers
+remain outside this offline verification.
+
+Final registry-upgrade validation: format, lint, typecheck, all workspace builds, **196 offline
+regression tests (814 assertions)**, and **five built-CLI package tests (26 assertions)** pass.
+`test:pack` now passes in full: clean installation of the four Tachikoma tarballs, Node/Bun imports,
+package/bin checks, CLI help/version, and the final consumer audit. Both the frozen root audit and
+clean consumer audit report **zero vulnerabilities**. No audit script or threshold was weakened. The
+separate semantic diagnostic remains **12/19** and exits 1 as described above. Tachikoma's npm
+package versions are unchanged; this is a source integration checkpoint, not a Tachikoma release.

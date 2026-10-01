@@ -24,7 +24,7 @@
     "@earendil-works/pi-agent-core": "0.86.1",
     "@earendil-works/pi-ai": "0.86.1",
     "@earendil-works/pi-coding-agent": "0.86.1",
-    "goodmemory": "0.8.0"
+    "goodmemory": "0.8.1"
   },
   "devDependencies": {
     "@types/bun": "1.3.14",
