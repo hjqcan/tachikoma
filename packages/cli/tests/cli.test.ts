@@ -870,6 +870,30 @@ describe('runCli', () => {
     expect(session.closeCount).toBe(1);
   });
 
+  test('reports failed memory writeback while preserving a successful chat answer', async () => {
+    const session = new FakeSession();
+    const answer = successEvents('answer');
+    session.events = [
+      ...answer.slice(0, -1),
+      {
+        ...baseEvent,
+        type: 'memory_status',
+        phase: 'writeback',
+        status: 'write-failed',
+        error: 'Remember write changed repeatedly: evidence/synthetic-record',
+      },
+      answer.at(-1)!,
+    ];
+    const harness = createHarness({ engine: new FakeEngine(session) });
+    const code = await runCli(['run', 'remember the project code'], harness.dependencies);
+    expect(code).toBe(0);
+    expect(harness.stdout.join('')).toContain('answer');
+    expect(harness.stderr.join('')).toContain(
+      '[memory:writeback] write-failed: Remember write changed repeatedly: evidence/synthetic-record'
+    );
+    expect(session.closeCount).toBe(1);
+  });
+
   test('uses the default command for the REPL and handles session controls', async () => {
     const old = new FakeSession('old');
     const engine = new FakeEngine(old);
