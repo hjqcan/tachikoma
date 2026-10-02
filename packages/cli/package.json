@@ -1,6 +1,6 @@
 {
   "name": "@hjqcan/tachikoma-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The Tachikoma conversation-first CLI.",
   "type": "module",
   "main": "./dist/index.js",

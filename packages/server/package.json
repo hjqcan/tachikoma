@@ -1,6 +1,6 @@
 {
   "name": "@hjqcan/tachikoma-server",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The Tachikoma local sidecar: HTTP RPC + WS event frames over a WAL.",
   "type": "module",
   "main": "./dist/index.js",

@@ -27,7 +27,9 @@
 
 ```bash
 # 1. 版本对齐（手动编辑：protocol/core/server/cli 四个 package.json、根 package.json、
-#    core src/index.ts 的 VERSION 常量。cli/desktop 对内依赖是 workspace:*，无需改动）
+#    core src/index.ts 的 VERSION 常量，以及 bun.lock 的对应 workspace version。
+#    bun install 可能保留旧 workspace version；pack 会据此重写依赖，必须显式对齐。
+#    cli/desktop 对内依赖是 workspace:*，无需改动）
 # 2. 全量验证（含打包验证：tarball 内容、workspace 重写、scratch 消费者安装）
 bun run verify
 

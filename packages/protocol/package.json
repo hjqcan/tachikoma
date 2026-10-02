@@ -1,6 +1,6 @@
 {
   "name": "@hjqcan/tachikoma-protocol",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "The Tachikoma wire contract: zod schemas for events, frames, and RPC.",
   "type": "module",
   "main": "./dist/index.js",
