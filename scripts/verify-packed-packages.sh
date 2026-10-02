@@ -43,9 +43,9 @@ TACHIKOMA_CLI_TGZ="$TACHIKOMA_PACK_DIR/hjqcan-tachikoma-cli-$TACHIKOMA_VERSION.t
 tar -xOzf "$TACHIKOMA_CORE_TGZ" package/package.json | bun -e '
   const manifest = await Bun.stdin.json();
   const expected = {
-    "@earendil-works/pi-agent-core": "0.86.1",
-    "@earendil-works/pi-ai": "0.86.1",
-    "@earendil-works/pi-coding-agent": "0.86.1",
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     goodmemory: "0.8.2",
   };
   for (const [name, version] of Object.entries(expected)) {

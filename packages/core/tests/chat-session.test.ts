@@ -96,7 +96,9 @@ describe('ChatSession', () => {
         { modelRuntime: harness.modelRuntime }
       );
       const session = await engine.createSession();
-      const base64 = Buffer.from('fake-png-bytes').toString('base64');
+      // Valid 1×1 PNG: pi now validates/resizes attachments before provider input.
+      const base64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==';
       const events = await collect(
         session.send('这张图里是什么？', {
           images: [{ name: 'lens.png', mimeType: 'image/png', data: base64 }],
@@ -110,7 +112,7 @@ describe('ChatSession', () => {
             kind: 'image',
             mimeType: 'image/png',
             name: 'lens.png',
-            bytes: 'fake-png-bytes'.length,
+            bytes: Buffer.from(base64, 'base64').length,
           },
         ],
       });
