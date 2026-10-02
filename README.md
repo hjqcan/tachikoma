@@ -177,7 +177,7 @@ exactly one terminal `message_complete` per turn.
 
 ### Memory scope and controls
 
-Tachikoma pins the published `goodmemory@0.8.1` package. Source changes in the GoodMemory repository
+Tachikoma pins the published `goodmemory@0.8.2` package. Source changes in the GoodMemory repository
 do not become installed fixes until a corresponding package release is available.
 
 `memoryList()` and `/memory list` include the shared user profile alongside Tachikoma workspace
