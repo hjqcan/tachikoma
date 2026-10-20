@@ -88,3 +88,19 @@ through `memory_status` events and the `session.memoryStatus` snapshot.
 - Text-only input; images and coordination runtimes are out of scope for `0.2.x`.
 - pi remains the sole model-to-tool loop; this package adds policy, never executors.
 - No compatibility with pre-`0.2.0` APIs or session files.
+
+### Trusted host capabilities
+
+`ChatEngineConfig.customTools` accepts a readonly list of pi `ToolDefinition` callbacks. This is an
+explicit, exclusive tool grant for sessions created or opened by that engine. Omitting it preserves
+the existing zero-tool/workspace behavior; an empty list grants no tools. It cannot be combined with
+`workDir` or nonempty `skills`, including session-level overrides. Names must be unique lowercase
+identifiers (`[a-z][a-z0-9_]{0,63}`), cannot use built-in tool names, and the list is limited to 16.
+
+Custom tools use pi's ordinary schema validation, execution and tool events, plus Tachikoma's loop
+reminders. No built-in filesystem or shell tools are enabled. The callbacks are trusted host code,
+not sandboxed code: the host must authorize their effects and implement any necessary approval,
+path, network, cancellation or spending limits. Tool descriptions and model instructions are not a
+security boundary. The grant is not persisted in the transcript: reopening with an engine that does
+not register these tools does not restore them. Custom-tool engines use an agent directory under
+`dataDir`, rather than the ambient pi agent directory.

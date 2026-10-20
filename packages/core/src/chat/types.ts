@@ -1,3 +1,4 @@
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { Usage } from '@earendil-works/pi-ai';
 
@@ -59,6 +60,12 @@ export interface ChatMemoryConfig {
 }
 
 export interface ChatEngineConfig {
+  /**
+   * Trusted host callbacks, exclusive opt-in. No built-in tools/workspace/skills in this mode.
+   * Callbacks are not sandboxed; the host owns authorization and effect limits.
+   */
+  customTools?: readonly ToolDefinition[];
+
   dataDir?: string;
   /**
    * 用户级配置目录（当前仅 models.json）。缺省 = dataDir，即零行为变化；
